@@ -1,15 +1,42 @@
-<<<<<<< HEAD
-﻿**/.venv-1/
-**/.venv/
-**/__pycache__/
-*.pyc
+# 비밀 값 — 절대 커밋하지 않는다 (.env.example은 커밋한다)
 .env
-.vscode/
-=======
+.env.local
+
+# 파이썬
 .venv/
-data/
-.env
+.venv-*/
+venv/
 __pycache__/
+*.pyc
+.pytest_cache/
+.python-version
+
+# 에디터·OS
+.vscode/
+.idea/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# 데이터 — AI Hub 원천, 트레이 사진, 분할 목록, Agent 약품 사전 캐시.
+# 어느 폴더 아래의 data/든 모두 제외한다. 실제 처방전 이미지·OCR 원문은 data/private/에만 둔다.
+data/
+
+# 모델 가중치·학습 결과
 *.pt
+*.onnx
 runs/
->>>>>>> 2d830244a13cffcbc4ff50eaad338b16be6bf8e5
+
+# 실행 중 생기는 파일: SQLite DB·LangGraph 체크포인트, 웹 업로드 이미지
+var/
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# RAG 벡터 인덱스
+**/rag/store/
+
+# 압축 파일 (코드는 zip이 아니라 폴더째 커밋한다)
+*.zip
