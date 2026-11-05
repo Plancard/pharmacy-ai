@@ -1,0 +1,169 @@
+{
+  "rx_001.png": {
+    "patient": "김가상(000000101)",
+    "issue": "2026년11월03일 00012호",
+    "drugs": [
+      {
+        "code": "900000011",
+        "name": "타이레놀정/500mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "900000031",
+        "name": "알모탄정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx_002.png": {
+    "patient": "박샘플(000000102)",
+    "issue": "2026년11월03일 00027호",
+    "drugs": [
+      {
+        "code": "900000021",
+        "name": "게보린정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 2,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "900000051",
+        "name": "프론크논캡슐",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 3,
+        "days": 2,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "900000031",
+        "name": "알모탄정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 2,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx_003.png": {
+    "patient": "정데모(000000103)",
+    "issue": "2026년11월03일 00041호",
+    "drugs": [
+      {
+        "code": "900000041",
+        "name": "트리스펜연질캡슐",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 2,
+        "days": 4,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "900000031",
+        "name": "알모탄정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 4,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx_004.png": {
+    "patient": "윤시험(000000104)",
+    "issue": "2026년11월03일 00058호",
+    "drugs": [
+      {
+        "code": "900000011",
+        "name": "타이레놀정/500mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "900000021",
+        "name": "게보린정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "900000051",
+        "name": "프론크논캡슐",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "900000031",
+        "name": "알모탄정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ],
+    "note": "타이레놀정과 게보린정의 해열진통 성분 중복 (위험 신호 테스트용으로 의도함)"
+  },
+  "rx_005.png": {
+    "patient": "강가명(000000105)",
+    "issue": "2026년11월03일 00063호",
+    "drugs": [
+      {
+        "code": "671805860",
+        "name": "펠루비서방정/45mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "671807390",
+        "name": "에스코텐정/10mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "644500700",
+        "name": "릴렉시아정/250mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "642202200",
+        "name": "타세놀8시간이알서방정/650mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "_note": "rx_001~004의 약품 코드(900000xxx)는 가상 코드. rx_005는 실제 처방전의 약품 코드를 그대로 사용."
+}
