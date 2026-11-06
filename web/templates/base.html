@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}조제 보조{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% if g.user %}
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('main.index') }}">조제 보조</a>
+    <nav>
+      <a href="{{ url_for('main.index') }}" {% if request.endpoint == 'main.index' %}aria-current="page"{% endif %}>메인</a>
+      <a href="{{ url_for('main.history') }}" {% if request.endpoint == 'main.history' %}aria-current="page"{% endif %}>조제 이력</a>
+    </nav>
+    <div class="who">
+      <span>{{ g.user.pharmacy_name }} · {{ g.user.username }}</span>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="link">로그아웃</button>
+      </form>
+    </div>
+  </header>
+  {% endif %}
+  <main class="{% block main_class %}page{% endblock %}">
+    {% for message in get_flashed_messages() %}
+      <p class="flash" role="alert">{{ message }}</p>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

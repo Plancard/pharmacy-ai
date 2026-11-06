@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}로그인 · 조제 보조{% endblock %}
+{% block main_class %}center{% endblock %}
+{% block content %}
+<form class="card login" method="post" action="{{ url_for('auth.login') }}">
+  <h1>조제 보조 서비스</h1>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <label>아이디
+    <input name="username" autocomplete="username" required autofocus>
+  </label>
+  <label>비밀번호
+    <input name="password" type="password" autocomplete="current-password" required>
+  </label>
+  <button type="submit">로그인</button>
+</form>
+{% endblock %}

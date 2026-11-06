@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}조제 이력 · 조제 보조{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>조제 이력</h2>
+  {% if records %}
+  <table>
+    <thead><tr><th>처방 번호</th><th>완료 시각</th><th>위험 단계</th><th>승인 약사</th></tr></thead>
+    <tbody>
+      {% for r in records %}
+      <tr>
+        <td>{{ r.display_no }}</td>
+        <td>{{ r.completed_at | kst }}</td>
+        <td>{{ r.risk_level or '-' }}</td>
+        <td>{{ r.username }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">저장된 조제 기록이 없습니다.</p>
+  {% endif %}
+</section>
+{% endblock %}

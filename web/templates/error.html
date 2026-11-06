@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}오류 · 조제 보조{% endblock %}
+{% block main_class %}center{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>{{ code }}</h1>
+  <p>{{ message }}</p>
+  <p><a href="{{ url_for('main.index') }}">메인으로</a></p>
+</section>
+{% endblock %}

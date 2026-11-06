@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+  <aside class="card">
+    <h2>처방 목록</h2>
+    {% if recent %}
+      <ul class="rx-list">
+        {% for rx in recent %}
+        <li>
+          <strong>{{ rx.display_no }}</strong>
+          <span class="badge {{ rx.status }}">{{ status_label(rx.status) }}</span>
+          <small>{{ rx.created_at | kst }}</small>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">아직 접수한 처방이 없습니다.</p>
+    {% endif %}
+  </aside>
+  <section class="card chat">
+    <h2>대화</h2>
+    <p class="muted">처방전·트레이 사진 업로드와 결과 카드는 2주차에 붙습니다.</p>
+  </section>
+</div>
+{% endblock %}
