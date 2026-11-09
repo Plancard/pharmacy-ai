@@ -18,6 +18,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# 데이터 — AI Hub 원천, 트레이 사진, 분할 목록, Agent 약품 사전 캐시.
+# 어느 폴더 아래의 data/든 모두 제외한다. 실제 처방전 이미지·OCR 원문은 data/private/에만 둔다.
+data/
+
 # 모델 가중치·학습 결과
 *.pt
 *.onnx
