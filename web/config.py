@@ -36,6 +36,12 @@ def load_config() -> dict:
         "PERMANENT_SESSION_LIFETIME": timedelta(hours=int(os.getenv("SESSION_HOURS", "8"))),
         # 2차: 리버스 프록시(Caddy) 뒤에서 실행할 때 1
         "TRUST_PROXY": os.getenv("TRUST_PROXY", "0") == "1",
+        # Agent 연결: fake = 가짜 연결부(web/agent_gateway.py), langgraph = 실제 그래프(interrupt 붙은 뒤)
+        "AGENT_BACKEND": os.getenv("AGENT_BACKEND", "fake"),
+        "FAKE_AGENT_SCENARIO": os.getenv("FAKE_AGENT_SCENARIO", "warning"),
+        # 처방 처리(OCR·Agent)를 돌리는 백그라운드 스레드 수. gunicorn 스레드(4)보다 작게
+        "JOB_WORKERS": int(os.getenv("JOB_WORKERS", "2")),
+        "JOBS_SYNC": False,   # 테스트에서만 True: 요청 안에서 바로 처리
     }
 
 

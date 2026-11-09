@@ -1,25 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="layout">
+<div class="layout" id="app" data-csrf="{{ csrf_token() }}" data-labels='{{ status_labels | tojson }}'>
   <aside class="card">
     <h2>처방 목록</h2>
-    {% if recent %}
-      <ul class="rx-list">
-        {% for rx in recent %}
-        <li>
+    <ul class="rx-list" id="rx-list">
+      {% for rx in recent %}
+      <li>
+        <button type="button" class="rx-item" data-id="{{ rx.id }}">
           <strong>{{ rx.display_no }}</strong>
           <span class="badge {{ rx.status }}">{{ status_label(rx.status) }}</span>
           <small>{{ rx.created_at | kst }}</small>
-        </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="muted">아직 접수한 처방이 없습니다.</p>
-    {% endif %}
+        </button>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted" id="rx-empty" {% if recent %}hidden{% endif %}>아직 접수한 처방이 없습니다.</p>
   </aside>
+
   <section class="card chat">
-    <h2>대화</h2>
-    <p class="muted">처방전·트레이 사진 업로드와 결과 카드는 2주차에 붙습니다.</p>
+    <h2>처방 접수</h2>
+    <form id="upload-form" class="upload">
+      <label for="rx-image">처방전 사진 (JPG·PNG)</label>
+      <div class="upload-row">
+        <input id="rx-image" name="image" type="file" accept="image/jpeg,image/png" required>
+        <button type="submit" id="upload-btn">올리기</button>
+      </div>
+      <p class="form-error" id="upload-error" role="alert" hidden></p>
+    </form>
+
+    <div id="card" class="rx-card" aria-live="polite" hidden></div>
+    <p class="muted" id="card-empty">처방전을 올리거나 왼쪽 목록에서 처방을 고르세요.</p>
   </section>
 </div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}

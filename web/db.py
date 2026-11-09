@@ -7,8 +7,9 @@
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import click
 from flask import Flask, current_app
@@ -55,6 +56,18 @@ def execute(sql: str, params: Any = None) -> dict | None:
     with _pool().connection() as conn:
         cur = conn.execute(sql, params)
         return cur.fetchone() if cur.description else None
+
+
+@contextmanager
+def transaction() -> Iterator[Any]:
+    """여러 문장을 한 트랜잭션으로 묶는다. 블록 안에서 예외가 나면 모두 취소된다.
+
+        with db.transaction() as conn:
+            conn.execute(...); conn.execute(...)
+    """
+    with _pool().connection() as conn:
+        with conn.transaction():
+            yield conn
 
 
 def ping() -> bool:
