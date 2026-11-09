@@ -10,7 +10,7 @@ from agent.errors import ConfigError, StructureError
 
 DATA = Path(__file__).resolve().parent.parent / "data" / "agent"
 SAMPLE_IDS = ["rx_001", "rx_002", "rx_003", "rx_004", "rx_005"]
-DRUG_KEYS = ["name", "printed_code", "dose_per_time", "times_per_day", "days"]
+DRUG_KEYS = ["name", "printed_code", "count_per_dose", "times_per_day", "days"]
 
 
 def expected_of(sample_id):
@@ -22,7 +22,7 @@ def perfect(sample_id):
     expected = expected_of(sample_id)
     return {
         "issue_no": expected["issue_no"],
-        "drugs": [{**{k: d[k] for k in DRUG_KEYS}, "time_slots": []} for d in expected["drugs"]],
+        "items": [{**{k: d[k] for k in DRUG_KEYS}, "times": []} for d in expected["items"]],
     }
 
 
@@ -72,7 +72,7 @@ def test_matching_answer_for_every_sample_exits_zero(sample_id):
     assert code == 0 and "정답과 일치" in text
 
 
-def test_missing_time_slots_are_filled_with_a_warning_and_still_match():
+def test_missing_times_are_filled_with_a_warning_and_still_match():
     # 실제 샘플은 용법에 복용 시점이 없다. 빈 목록을 공통 검증이 채우고 경고를 남긴다.
     code, text = run(["rx_001"], fake_llm(perfect("rx_001")))
     assert code == 0 and text.count("경고:") == 2
@@ -101,7 +101,7 @@ def test_a_four_day_prescription_is_flagged_on_every_line():
 
 def test_names_that_differ_only_by_spaces_or_slashes_count_as_equal():
     answer = perfect("rx_001")
-    answer["drugs"][0]["name"] = "타이레놀정/5oOmg"
+    answer["items"][0]["name"] = "타이레놀정/5oOmg"
     code, text = run(["rx_001"], fake_llm(answer))
     assert code == 0 and "정답과 일치" in text
 
@@ -140,7 +140,7 @@ def test_all_runs_every_sample_and_summarises():
 
 def test_all_exits_nonzero_when_only_one_sample_differs():
     answers = [perfect(s) for s in SAMPLE_IDS]
-    answers[2]["drugs"][0]["days"] += 1
+    answers[2]["items"][0]["days"] += 1
     code, text = run(["--all"], fake_llm(*answers))
     assert code == 1 and "전체 5장 중 4장이 정답과 일치" in text
 
@@ -169,46 +169,46 @@ def test_header_says_when_the_key_is_missing(monkeypatch):
 
 def test_each_difference_is_reported_with_both_values():
     answer = perfect("rx_002")
-    answer["drugs"][0]["days"] = 7
-    answer["drugs"][1]["name"] = "엉뚱한정"
+    answer["items"][0]["days"] = 7
+    answer["items"][1]["name"] = "엉뚱한정"
     answer["issue_no"] = "000"
     code, text = run(["rx_002"], fake_llm(answer))
     expected = expected_of("rx_002")
     assert code == 1
-    assert f"약품 1 days: 정답 {expected['drugs'][0]['days']!r}, LLM 7" in text
-    assert f"약품 2 name: 정답 {expected['drugs'][1]['name']!r}, LLM '엉뚱한정'" in text
+    assert f"약품 1 days: 정답 {expected['items'][0]['days']!r}, LLM 7" in text
+    assert f"약품 2 name: 정답 {expected['items'][1]['name']!r}, LLM '엉뚱한정'" in text
     assert "교부번호" in text and "3곳 다름" in text
 
 
 def test_a_missing_drug_is_reported_as_a_count_difference():
     answer = perfect("rx_001")
-    answer["drugs"].pop()
+    answer["items"].pop()
     code, text = run(["rx_001"], fake_llm(answer))
     assert code == 1 and "약품 수: 정답 2, LLM 1" in text
 
 
 def test_a_wrong_code_shows_up_in_the_code_and_in_the_matched_item_code():
     answer = perfect("rx_001")
-    answer["drugs"][0]["printed_code"] = "900000021"      # 게보린정의 코드
+    answer["items"][0]["printed_code"] = "900000021"      # 게보린정의 코드
     code, text = run(["rx_001"], fake_llm(answer))
     assert code == 1
     assert "약품 1 printed_code: 정답 '900000011', LLM '900000021'" in text
-    assert "약품 1 item_code: 정답 '900000011', LLM '900000021'" in text
+    assert "약품 1 item_code: 정답 '202106092', LLM '197900277'" in text      # 품목기준코드 (타이레놀정 -> 게보린정)
     assert "2곳 다름" in text
 
 
 def test_a_drug_outside_the_dictionary_must_stay_without_a_code():
     # 정답은 알모탄정(사전에 없음)의 item_code가 None이다. LLM이 코드를 사전의 것으로 바꿔 오면 틀린 것이다.
     answer = perfect("rx_001")
-    answer["drugs"][1]["printed_code"] = "900000021"
+    answer["items"][1]["printed_code"] = "900000021"
     code, text = run(["rx_001"], fake_llm(answer))
-    assert code == 1 and "약품 2 item_code: 정답 None, LLM '900000021'" in text
+    assert code == 1 and "약품 2 item_code: 정답 None, LLM '197900277'" in text
 
 
-def test_time_slots_are_not_compared():
+def test_times_are_not_compared():
     # 정답 파일에는 시점이 없다 (처방전에 적혀 있지 않다). 시점은 공통 검증이 채운다.
     answer = perfect("rx_004")
-    answer["drugs"][1]["time_slots"] = ["morning", "noon", "evening"]
+    answer["items"][1]["times"] = ["morning", "noon", "evening"]
     code, _ = run(["rx_004"], fake_llm(answer))
     assert code == 0
 
@@ -226,7 +226,7 @@ def test_compare_returns_nothing_when_identical(sample_id):
 
 def test_response_rejected_by_validation_shows_the_raw_answer():
     answer = copy.deepcopy(perfect("rx_001"))
-    answer["drugs"][0]["days"] = 0
+    answer["items"][0]["days"] = 0
     code, text = run(["rx_001"], fake_llm(answer))
     assert code == 1 and "검증에서 거절" in text and "투약 일수" in text
     assert '"days": 0' in text   # 원본을 보여 줘야 무엇이 잘못 왔는지 알 수 있다

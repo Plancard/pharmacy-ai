@@ -1,0 +1,13 @@
+{
+  "note": "조제 대상 약품 8종 (명세서 v0.3 2.6절). item_code는 식약처 품목기준코드로 모든 모듈이 약을 가리키는 공통 키다. rx_code는 가상 처방전에 인쇄되는 코드(9000000xx, 실제 처방전의 보험코드 자리)로, 처방전에 그 약이 나올 때만 적는다. class_id는 CV 학습 클래스 ID(pharmacy-ai/cv/classes.yaml)와 같다. 명세서에서 노란 칸(잠정)인 코드는 의약품 API로 확인한 뒤 고친다.",
+  "drugs": [
+    {"class_id": 0, "item_code": "202106092", "name": "타이레놀정 500mg", "rx_code": "900000011"},
+    {"class_id": 1, "item_code": "197900277", "name": "게보린정", "rx_code": "900000021"},
+    {"class_id": 2, "item_code": "201110120", "name": "트리스펜연질캡슐", "rx_code": "900000041"},
+    {"class_id": 3, "item_code": "200200099", "name": "프론크논캡슐", "rx_code": "900000051"},
+    {"class_id": 4, "item_code": "200201239", "name": "아르펜정"},
+    {"class_id": 5, "item_code": "201405845", "name": "네프신정"},
+    {"class_id": 6, "item_code": "200002714", "name": "트립라인정"},
+    {"class_id": 7, "item_code": "200308774", "name": "뮤코다인캡슐 200mg"}
+  ]
+}

@@ -20,7 +20,7 @@ import re
 import unicodedata
 from typing import Any
 
-from agent.errors import StructureError   # 다른 파일도 같은 에러를 쓰려고 errors.py로 옮겼다
+from agent.errors import E_OCR_EMPTY, StructureError   # 다른 파일도 같은 에러를 쓰려고 errors.py로 옮겼다
 
 Line = dict[str, Any]   # A.1의 lines 한 칸: {"text": ..., "bbox": [x1, y1, x2, y2], "conf": ...}
 
@@ -206,7 +206,7 @@ SLOT_WORDS: dict[str, tuple[str, ...]] = {
 }
 
 
-def parse_time_slots(text: str) -> list[str]:
+def parse_times(text: str) -> list[str]:
     """용법 글자에서 복용 시점을 찾는다. 항상 morning, noon, evening, bedtime 순서로 돌려준다.
 
     "PO 식후 30분"처럼 아침·점심·저녁·취침 전이 없으면 빈 목록이다.
@@ -247,7 +247,7 @@ def _lowest_conf(lines: list[Line]) -> float | None:
     return min(confs) if confs else None
 
 
-def _read_row(anchor: Line, cells: list[Line], name_edge: float | None) -> dict[str, Any]:
+def _read_row(anchor: Line, cells: list[Line], name_edge: float | None, ids: dict[int, int]) -> dict[str, Any]:
     columns = split_columns(cells, name_edge)
     numbers = {column: _read_number(columns[column], column) for column in COLUMN_LABELS}
     name = _clean_name(anchor["text"], columns["name"])
@@ -256,16 +256,38 @@ def _read_row(anchor: Line, cells: list[Line], name_edge: float | None) -> dict[
     return {
         "name": name,
         "printed_code": _CODE.search(_nfkc(anchor["text"])).group(),
-        "dose_per_time": numbers["dose"],
+        "count_per_dose": numbers["dose"],
         "times_per_day": numbers["times"],
         "days": numbers["days"],
-        "time_slots": parse_time_slots(" ".join(columns["other"])),
-        # 이 줄을 읽는 데 쓴 모든 칸(코드 줄·이름 조각·값 칸·용법)의 최저 신뢰도. 낮으면 약사가 원문과 대조한다.
+        "times": parse_times(" ".join(columns["other"])),
+        # 이 줄을 읽는 데 쓴 모든 칸(코드 줄·이름 조각·값 칸·용법)의 A.1 line_id. 처방 결과 카드가 원문 위치를 표시한다.
+        "source_line_ids": sorted(ids[id(line)] for line in [anchor, *cells]),
+        # 같은 칸들의 최저 신뢰도. 낮으면 약사가 원문과 대조한다.
         "ocr_conf": _lowest_conf([anchor, *cells]),
     }
 
 
 # ---------------------------------------------------------------- 처방전 하나 읽기
+
+
+def line_ids(lines: list[Line]) -> dict[int, int]:
+    """칸마다 A.1의 line_id. {id(칸): line_id}
+
+    명세서 v0.3부터 A.1의 줄마다 line_id(0 이상의 정수)가 있다. 아직 line_id가 없는 OCR 결과는
+    lines 목록에서의 순서(0부터)를 line_id로 쓴다. 일부 줄에만 있거나, 정수가 아니거나, 겹치면 StructureError.
+    """
+    has = ["line_id" in line for line in lines]
+    if not any(has):
+        return {id(line): i for i, line in enumerate(lines)}
+    if not all(has):
+        raise StructureError("OCR 결과의 일부 줄에만 line_id가 있습니다.")
+    values = [line["line_id"] for line in lines]
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in values):
+        raise StructureError("OCR 결과의 line_id는 0 이상의 정수여야 합니다.")
+    if len(set(values)) != len(values):
+        raise StructureError("OCR 결과에 같은 line_id가 두 번 이상 있습니다.")
+    return {id(line): line["line_id"] for line in lines}
+
 
 # 발급 연월일 및 번호의 값. "2026년11월03일 00012호". OCR이 끝의 '호'를 다른 글자로 읽는 일이 있어 숫자까지만 본다.
 _ISSUE_NO = re.compile(r"^\d{4}년\d{1,2}월\d{1,2}일\d+")
@@ -280,10 +302,10 @@ def find_issue_no(lines: list[Line], table_top: float) -> str | None:
 
 
 def _check_lines(ocr: Any) -> list[Line]:
-    """A.1의 lines가 있고 칸마다 text와 bbox(숫자 4개)가 있는지 확인한다."""
+    """A.1의 lines가 있고 칸마다 text와 bbox(숫자 4개)가 있는지 확인한다. line_id는 line_ids()가 확인한다."""
     lines = ocr.get("lines") if isinstance(ocr, dict) else None
     if not isinstance(lines, list) or not lines:
-        raise StructureError("OCR 결과에 글자 줄(lines)이 없습니다.")
+        raise StructureError("OCR 결과에 글자 줄(lines)이 없습니다.", code=E_OCR_EMPTY)
     for line in lines:
         bbox = line.get("bbox") if isinstance(line, dict) else None
         valid = (
@@ -294,7 +316,7 @@ def _check_lines(ocr: Any) -> list[Line]:
             and all(isinstance(v, (int, float)) for v in bbox)
         )
         if not valid:
-            raise StructureError("OCR 결과의 줄 형식(text, bbox)이 올바르지 않습니다.")
+            raise StructureError("OCR 결과의 줄 형식(text, bbox)이 올바르지 않습니다.", code=E_OCR_EMPTY)
     return lines
 
 
@@ -302,9 +324,10 @@ def extract_rule(ocr: dict[str, Any]) -> dict[str, Any]:
     """규칙 기반 구조화: A.1 형식의 OCR 결과 -> 약품 목록.
 
     돌려주는 값은 LLM 경로와 같은 모양이다.
-        {"issue_no": "...", "drugs": [{"name", "printed_code", "dose_per_time",
-                                       "times_per_day", "days", "time_slots", "ocr_conf"}, ...]}
-    name은 OCR이 읽은 글자 그대로다. time_slots는 용법에서 읽은 그대로라서 비어 있을 수 있다.
+        {"issue_no": "...", "items": [{"name", "printed_code", "count_per_dose", "times_per_day",
+                                       "days", "times", "source_line_ids", "ocr_conf"}, ...]}
+    name은 OCR이 읽은 글자 그대로다. times(복용 시점)는 용법에서 읽은 그대로라서 비어 있을 수 있다.
+    source_line_ids는 그 약품 줄을 읽은 칸들의 A.1 line_id다 (line_id가 없는 OCR 결과는 lines 안의 순서).
     ocr_conf는 그 약품 줄을 읽은 칸들의 최저 신뢰도(0~1)다. 칸에 신뢰도가 없으면 None. (LLM 경로는 이 값을 내지 않는다)
     (고치는 일은 약품 매칭 단계, 채우기와 범위 검사는 스키마 단계에서 한다)
 
@@ -314,6 +337,7 @@ def extract_rule(ocr: dict[str, Any]) -> dict[str, Any]:
     - 약품 줄인데 1회량·횟수·일수 칸이 없거나 여러 개, 정수가 아님, 약품명이 비어 있음
     """
     lines = _check_lines(ocr)
+    ids = line_ids(lines)
     top, bottom = find_table(lines)
     body = [l for l in lines if top < _center_y(l) < bottom]
 
@@ -330,13 +354,13 @@ def extract_rule(ocr: dict[str, Any]) -> dict[str, Any]:
         default=None,
     )
 
-    drugs: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
     for number, (anchor, row) in enumerate(zip(anchors, attached), start=1):
         try:
-            drugs.append(_read_row(anchor, row, name_edge))
+            items.append(_read_row(anchor, row, name_edge, ids))
         except StructureError as e:
             raise StructureError(f"{number}번째 약품 줄: {e}") from e
-    return {"issue_no": find_issue_no(lines, top), "drugs": drugs}
+    return {"issue_no": find_issue_no(lines, top), "items": items}
 
 
 # ---------------------------------------------------------------- LLM 경로에 넘길 텍스트

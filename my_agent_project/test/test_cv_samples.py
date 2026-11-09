@@ -90,17 +90,17 @@ def test_cells_of_one_row_do_not_come_in_a_fixed_x_order():
 
 def test_expected_has_the_documented_shape(sample):
     sid, _, expected = sample
-    assert set(expected) == {"image_id", "note", "issue_no", "true_issue_no", "drugs"}
+    assert set(expected) == {"image_id", "note", "issue_no", "true_issue_no", "items"}
     assert expected["image_id"] == sid
-    assert expected["issue_no"].strip() and expected["drugs"]
-    for drug in expected["drugs"]:
+    assert expected["issue_no"].strip() and expected["items"]
+    for drug in expected["items"]:
         assert set(drug) == {
-            "printed_code", "name", "dose_per_time", "dose_unit", "times_per_day", "days",
+            "printed_code", "name", "count_per_dose", "dose_unit", "times_per_day", "days",
             "usage_text", "true_name", "in_target", "item_code",
         }
         assert NINE_DIGITS.fullmatch(drug["printed_code"])
         assert drug["name"].strip()
-        assert isinstance(drug["dose_per_time"], int) and drug["dose_per_time"] >= 1
+        assert isinstance(drug["count_per_dose"], int) and drug["count_per_dose"] >= 1
         assert drug["dose_unit"] in ("TAB", "CAP")
         assert 1 <= drug["times_per_day"] <= 4 and drug["days"] >= 1
         assert isinstance(drug["in_target"], bool)
@@ -112,13 +112,13 @@ def test_expected_has_the_documented_shape(sample):
 def test_codes_in_the_table_match_the_expected_drugs_in_order(sample):
     _, ocr, expected = sample
     found = [m.group() for l in table_band(ocr) for m in [NINE_DIGITS.search(l["text"])] if m]
-    assert found == [d["printed_code"] for d in expected["drugs"]]
+    assert found == [d["printed_code"] for d in expected["items"]]
 
 
 def test_each_code_is_on_exactly_one_line_of_the_table(sample):
     _, ocr, expected = sample
     band_text = [l["text"] for l in table_band(ocr)]
-    for drug in expected["drugs"]:
+    for drug in expected["items"]:
         assert sum(drug["printed_code"] in t for t in band_text) == 1
 
 
@@ -129,19 +129,19 @@ def test_each_code_is_on_exactly_one_line_of_the_table(sample):
 def test_times_and_days_per_row_match(sample, pattern, field):
     _, ocr, expected = sample
     got = [int(m.group(1)) for l in table_band(ocr) for m in [pattern.match(l["text"])] if m]
-    assert got == [d[field] for d in expected["drugs"]]
+    assert got == [d[field] for d in expected["items"]]
 
 
 def test_dose_and_unit_per_row_match(sample):
     _, ocr, expected = sample
     got = [(int(m.group(1)), m.group(2)) for l in table_band(ocr) for m in [DOSE.match(l["text"])] if m]
-    assert got == [(d["dose_per_time"], d["dose_unit"]) for d in expected["drugs"]]
+    assert got == [(d["count_per_dose"], d["dose_unit"]) for d in expected["items"]]
 
 
 def test_usage_text_per_row_matches(sample):
     _, ocr, expected = sample
     got = [l["text"] for l in table_band(ocr) if l["text"] == USAGE]
-    assert got == [d["usage_text"] for d in expected["drugs"]]
+    assert got == [d["usage_text"] for d in expected["items"]]
 
 
 NAME_COLUMN_RIGHT_EDGE = 1250     # 이 샘플들에서 약품명 칸은 x 1250 왼쪽 (용량 칸은 1300부터)
@@ -171,7 +171,7 @@ def names_read_from_ocr(ocr):
 
 def test_expected_names_are_the_ocr_text_cleaned_up(sample):
     _, ocr, expected = sample
-    assert names_read_from_ocr(ocr) == [d["name"] for d in expected["drugs"]]
+    assert names_read_from_ocr(ocr) == [d["name"] for d in expected["items"]]
 
 
 def test_issue_no_is_an_ocr_line(sample):
@@ -183,7 +183,7 @@ def test_issue_no_is_an_ocr_line(sample):
 
 
 def all_expected_drugs():
-    return [d for sid in SAMPLE_IDS for d in load("cv_expected", sid)["drugs"]]
+    return [d for sid in SAMPLE_IDS for d in load("cv_expected", sid)["items"]]
 
 
 def test_a_code_always_means_the_same_drug_across_samples():
@@ -193,10 +193,14 @@ def test_a_code_always_means_the_same_drug_across_samples():
         assert seen.setdefault(d["printed_code"], key) == key, d["printed_code"]
 
 
-def test_in_target_drugs_have_their_printed_code_as_item_code():
+# 처방전 코드 -> 품목기준코드 (명세서 v0.3 2.6절)
+ITEM_CODE_OF = {"900000011": "202106092", "900000021": "197900277", "900000041": "201110120", "900000051": "200200099"}
+
+
+def test_in_target_drugs_have_the_item_code_of_their_printed_code():
     for d in all_expected_drugs():
         if d["in_target"]:
-            assert d["item_code"] == d["printed_code"] and d["true_name"]
+            assert d["item_code"] == ITEM_CODE_OF[d["printed_code"]] and d["true_name"]
             assert d["printed_code"] in IN_TARGET_CODES
         else:
             assert d["item_code"] is None
@@ -204,10 +208,10 @@ def test_in_target_drugs_have_their_printed_code_as_item_code():
 
 
 def test_sample_inventory_covers_the_cases_we_want_to_test():
-    drugs = {sid: load("cv_expected", sid)["drugs"] for sid in SAMPLE_IDS}
-    assert any(d["days"] > 3 for d in drugs["rx_003"])                       # 3일 트레이를 넘는 처방
-    assert not any(d["in_target"] for d in drugs["rx_005"])                  # 전부 대상 외 실제 약품
-    assert {d["printed_code"] for sid in SAMPLE_IDS for d in drugs[sid] if d["in_target"]} == IN_TARGET_CODES
+    items = {sid: load("cv_expected", sid)["items"] for sid in SAMPLE_IDS}
+    assert any(d["days"] > 3 for d in items["rx_003"])                       # 3일 트레이를 넘는 처방
+    assert not any(d["in_target"] for d in items["rx_005"])                  # 전부 대상 외 실제 약품
+    assert {d["printed_code"] for sid in SAMPLE_IDS for d in items[sid] if d["in_target"]} == IN_TARGET_CODES
     # 저신뢰(conf 0.5 미만) 약품명 줄의 수. 약사 확인으로 넘어가야 하는 줄을 시험하는 데 쓴다.
     low_conf_name_lines = {
         sid: sum(
@@ -234,10 +238,10 @@ def test_expected_agrees_with_the_ground_truth(sample):
     sid, _, expected = sample
     truth = ground_truth()[sid]
     assert expected["true_issue_no"] == truth["issue"]
-    assert len(expected["drugs"]) == len(truth["drugs"])
-    for mine, theirs in zip(expected["drugs"], truth["drugs"]):
+    assert len(expected["items"]) == len(truth["drugs"])
+    for mine, theirs in zip(expected["items"], truth["drugs"]):
         assert (
-            mine["printed_code"], mine["dose_per_time"], mine["dose_unit"],
+            mine["printed_code"], mine["count_per_dose"], mine["dose_unit"],
             mine["times_per_day"], mine["days"], mine["usage_text"], mine["true_name"],
         ) == (
             theirs["code"], theirs["dose"], theirs["unit"],
@@ -262,7 +266,7 @@ def test_in_target_flag_agrees_with_the_target_list():
 def test_ocr_names_still_look_like_the_true_names(sample):
     # 이름이 다른 약과 짝지어지는 실수를 막는다. 가장 많이 틀리게 읽은 이름도 이 정도는 비슷하다.
     _, _, expected = sample
-    for drug in expected["drugs"]:
+    for drug in expected["items"]:
         assert similarity(normalize_name(drug["name"]), normalize_name(drug["true_name"])) >= 0.6, drug["name"]
 
 

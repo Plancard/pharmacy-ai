@@ -22,9 +22,15 @@ DRUG_DICTIONARY_PATH = Path(os.getenv("DRUG_DICTIONARY_PATH") or DATA_DIR / "dru
 
 
 # 식약처 의약품 제품 허가정보 API (공공데이터포털 15095677, '의약품 제품 허가 목록').
-# 서비스 버전(…Service07/…Inq07)이 바뀌면 .env에 DRUG_API_URL=... 로 적는다.
-DRUG_API_URL = os.getenv("DRUG_API_URL") or "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnInq07"
+# 11/9 실제 키로 확인한 주소: 활용신청 상세의 End Point …/DrugPrdtPrmsnInfoService08 + 오퍼레이션 getDrugPrdtPrmsnInq08.
+# 게이트웨이는 승인받은 버전과 다른 주소로 부르면 사유 없이 HTTP 403을 돌려준다. 버전이 바뀌면 .env에 DRUG_API_URL=... 로 적는다.
+DRUG_API_URL = os.getenv("DRUG_API_URL") or "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnInq08"
 DRUG_API_TIMEOUT_SECONDS = float(os.getenv("DRUG_API_TIMEOUT_SECONDS", "5"))
+
+
+def drug_api_key() -> str | None:
+    """.env의 DRUG_API_KEY. 없으면 None (약품 API를 쓰지 않고 약품 사전만 쓴다)."""
+    return os.getenv("DRUG_API_KEY", "").strip() or None
 
 
 def require_drug_api_key() -> str:

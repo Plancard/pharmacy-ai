@@ -53,19 +53,37 @@ def row_confs(ocr):
     ]
 
 
+def row_line_ids(ocr):
+    """코드 줄마다, 같은 행(위와 같은 범위)에 있는 칸들의 lines 안 순서. 파서와 따로 만든 검사용 구현."""
+    return [
+        [i for i, l in enumerate(ocr["lines"]) if center_y(a) - 25 <= center_y(l) <= center_y(a) + 45]
+        for a in anchors_of(ocr)
+    ]
+
+
+def with_line_ids(ocr, start=0):
+    """A.1 v0.3처럼 줄마다 line_id를 붙인다 (lines 안 순서 + start)."""
+    ocr = copy.deepcopy(ocr)
+    for i, line in enumerate(ocr["lines"]):
+        line["line_id"] = start + i
+    return ocr
+
+
 def expected_drugs(sample_id):
     confs = row_confs(load_ocr(sample_id))
+    ids = row_line_ids(load_ocr(sample_id))
     return [
         {
             "name": d["name"],
             "printed_code": d["printed_code"],
-            "dose_per_time": d["dose_per_time"],
+            "count_per_dose": d["count_per_dose"],
             "times_per_day": d["times_per_day"],
             "days": d["days"],
-            "time_slots": [],          # 용법이 모두 'PO 식후 30분'이라 시점이 적혀 있지 않다
+            "times": [],          # 용법이 모두 'PO 식후 30분'이라 시점이 적혀 있지 않다
+            "source_line_ids": line_ids,
             "ocr_conf": conf,
         }
-        for d, conf in zip(load_expected(sample_id)["drugs"], confs)
+        for d, conf, line_ids in zip(load_expected(sample_id)["items"], confs, ids)
     ]
 
 
@@ -74,7 +92,7 @@ def expected_drugs(sample_id):
 
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
 def test_drugs_match_the_expected_answer(sample_id):
-    assert extract_rule(load_ocr(sample_id))["drugs"] == expected_drugs(sample_id)
+    assert extract_rule(load_ocr(sample_id))["items"] == expected_drugs(sample_id)
 
 
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
@@ -85,9 +103,11 @@ def test_issue_no_matches_the_expected_answer(sample_id):
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
 def test_only_the_agreed_keys_are_returned(sample_id):
     result = extract_rule(load_ocr(sample_id))
-    assert set(result) == {"issue_no", "drugs"}
-    for drug in result["drugs"]:
-        assert set(drug) == {"name", "printed_code", "dose_per_time", "times_per_day", "days", "time_slots", "ocr_conf"}
+    assert set(result) == {"issue_no", "items"}
+    for drug in result["items"]:
+        assert set(drug) == {
+            "name", "printed_code", "count_per_dose", "times_per_day", "days", "times", "source_line_ids", "ocr_conf",
+        }
 
 
 # 약품 줄마다 그 줄을 읽은 칸들(코드 줄·이름 조각·값 칸·용법)의 최저 신뢰도. 눈으로 센 값이다.
@@ -102,55 +122,55 @@ LOWEST_CONF = {
 
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
 def test_ocr_conf_is_the_lowest_confidence_among_the_cells_of_the_row(sample_id):
-    assert [d["ocr_conf"] for d in extract_rule(load_ocr(sample_id))["drugs"]] == LOWEST_CONF[sample_id]
+    assert [d["ocr_conf"] for d in extract_rule(load_ocr(sample_id))["items"]] == LOWEST_CONF[sample_id]
 
 
 def test_a_low_confidence_cell_other_than_the_name_line_lowers_the_row_confidence():
     ocr = load_ocr("rx_002")
     cell(ocr, 1, "3회")["conf"] = 0.12
-    assert [d["ocr_conf"] for d in extract_rule(ocr)["drugs"]] == [0.57, 0.12, 0.57]
+    assert [d["ocr_conf"] for d in extract_rule(ocr)["items"]] == [0.57, 0.12, 0.57]
 
 
 def test_ocr_conf_is_none_when_no_cell_of_the_row_has_a_confidence():
     ocr = load_ocr("rx_001")
     for line in ocr["lines"]:
         del line["conf"]
-    assert [d["ocr_conf"] for d in extract_rule(ocr)["drugs"]] == [None, None]
+    assert [d["ocr_conf"] for d in extract_rule(ocr)["items"]] == [None, None]
 
 
 def test_cells_without_a_confidence_are_skipped_not_counted_as_zero():
     ocr = load_ocr("rx_001")
     del cell(ocr, 0, "3회")["conf"]
-    assert extract_rule(ocr)["drugs"][0]["ocr_conf"] == 0.43
+    assert extract_rule(ocr)["items"][0]["ocr_conf"] == 0.43
 
 
 def test_a_non_numeric_confidence_is_ignored():
     ocr = load_ocr("rx_001")
     cell(ocr, 0, "3회")["conf"] = False           # bool은 숫자로 세지 않는다 (False를 0으로 세면 최저값이 된다)
     cell(ocr, 0, "3일")["conf"] = "0.01"
-    assert extract_rule(ocr)["drugs"][0]["ocr_conf"] == 0.43
+    assert extract_rule(ocr)["items"][0]["ocr_conf"] == 0.43
 
 
 def test_the_name_is_the_ocr_text_not_a_corrected_one():
     # 약품명 고치기는 약품 매칭 단계의 일이다. 규칙 읽기는 OCR이 읽은 글자 그대로 넘긴다.
-    names = [d["name"] for d in extract_rule(load_ocr("rx_001"))["drugs"]]
+    names = [d["name"] for d in extract_rule(load_ocr("rx_001"))["items"]]
     assert names == ["타이레놀정 5oOmg", "알모란정"]
 
 
 def test_a_name_split_into_two_boxes_is_joined():
     # rx_005 첫 약품: '(1)671805860 필루비서방정'과 같은 행에 떨어져 나온 '145mg'
-    assert extract_rule(load_ocr("rx_005"))["drugs"][0]["name"] == "필루비서방정 145mg"
+    assert extract_rule(load_ocr("rx_005"))["items"][0]["name"] == "필루비서방정 145mg"
 
 
 def test_the_patient_number_with_nine_digits_is_not_a_drug():
     ocr = load_ocr("rx_001")
     assert any("000000101" in l["text"] for l in ocr["lines"])       # 표 위에 9자리 숫자가 있다
-    assert [d["printed_code"] for d in extract_rule(ocr)["drugs"]] == ["900000011", "900000031"]
+    assert [d["printed_code"] for d in extract_rule(ocr)["items"]] == ["900000011", "900000031"]
 
 
 def test_more_than_three_days_is_read_as_it_is():
     # 트레이는 3일이라 약사 확인이 필요하지만, 그 판단은 약품 매칭 단계에서 한다
-    assert [d["days"] for d in extract_rule(load_ocr("rx_003"))["drugs"]] == [4, 4]
+    assert [d["days"] for d in extract_rule(load_ocr("rx_003"))["items"]] == [4, 4]
 
 
 # ------------------------------------------------------------ 순서·원본
@@ -159,13 +179,13 @@ def test_more_than_three_days_is_read_as_it_is():
 @pytest.mark.parametrize("sample_id", ["rx_002", "rx_005"])
 @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
 def test_input_order_does_not_matter(sample_id, seed):
-    ocr = load_ocr(sample_id)
+    ocr = with_line_ids(load_ocr(sample_id))        # CV가 붙인 line_id는 순서가 바뀌어도 그대로다
     shuffled = dict(ocr, lines=random.Random(seed).sample(ocr["lines"], len(ocr["lines"])))
     assert extract_rule(shuffled) == extract_rule(ocr)
 
 
 def test_sorting_by_x_instead_of_y_gives_the_same_result():
-    ocr = load_ocr("rx_004")
+    ocr = with_line_ids(load_ocr("rx_004"))
     by_x = dict(ocr, lines=sorted(ocr["lines"], key=lambda l: l["bbox"][0]))
     assert extract_rule(by_x) == extract_rule(ocr)
 
@@ -180,26 +200,26 @@ def test_the_input_is_not_modified():
 # ------------------------------------------------------------ 샘플을 고쳐 만든 정상 사례
 
 
-def test_time_slots_written_in_the_usage_are_read():
+def test_times_written_in_the_usage_are_read():
     ocr = load_ocr("rx_001")
     cell(ocr, 0, "PO 식후 30분")["text"] = "아침 점심 저녁 취침 전"
     cell(ocr, 0, "3회")["text"] = "4회"
-    drug = extract_rule(ocr)["drugs"][0]
-    assert drug["times_per_day"] == 4 and drug["time_slots"] == ["morning", "noon", "evening", "bedtime"]
-    assert extract_rule(ocr)["drugs"][1]["time_slots"] == []          # 다른 줄은 그대로
+    drug = extract_rule(ocr)["items"][0]
+    assert drug["times_per_day"] == 4 and drug["times"] == ["morning", "noon", "evening", "bedtime"]
+    assert extract_rule(ocr)["items"][1]["times"] == []          # 다른 줄은 그대로
 
 
 def test_full_width_digits_are_read():
     ocr = load_ocr("rx_001")
     cell(ocr, 0, "3회")["text"] = "３회"
     cell(ocr, 0, "1 TAB")["text"] = "２ TAB"
-    drug = extract_rule(ocr)["drugs"][0]
-    assert (drug["times_per_day"], drug["dose_per_time"]) == (3, 2)
+    drug = extract_rule(ocr)["items"][0]
+    assert (drug["times_per_day"], drug["count_per_dose"]) == (3, 2)
 
 
 def test_capsule_dose_is_read_like_a_tablet():
-    drug = extract_rule(load_ocr("rx_002"))["drugs"][1]
-    assert drug["name"] == "프론크논캠술" and drug["dose_per_time"] == 1
+    drug = extract_rule(load_ocr("rx_002"))["items"][1]
+    assert drug["name"] == "프론크논캠술" and drug["count_per_dose"] == 1
 
 
 def test_more_name_pieces_are_joined_left_to_right():
@@ -207,7 +227,7 @@ def test_more_name_pieces_are_joined_left_to_right():
     anchor = anchors_of(ocr)[0]
     y1, y2 = anchor["bbox"][1], anchor["bbox"][3]
     ocr["lines"] += [box("뒤", 900, y1, 950, y2), box("앞", 820, y1, 870, y2)]
-    assert extract_rule(ocr)["drugs"][0]["name"] == "타이레놀정 5oOmg 앞 뒤"
+    assert extract_rule(ocr)["items"][0]["name"] == "타이레놀정 5oOmg 앞 뒤"
 
 
 def test_blank_text_boxes_inside_the_table_are_ignored():
@@ -221,7 +241,7 @@ def test_a_cell_between_the_dose_and_days_columns_is_not_a_name_piece():
     ocr = load_ocr("rx_001")
     anchor = anchors_of(ocr)[0]
     ocr["lines"].append(box("메모", 1420, anchor["bbox"][1], 1460, anchor["bbox"][3]))
-    assert extract_rule(ocr)["drugs"][0]["name"] == "타이레놀정 5oOmg"
+    assert extract_rule(ocr)["items"][0]["name"] == "타이레놀정 5oOmg"
 
 
 def test_name_pieces_are_split_by_x_not_by_y():
@@ -231,28 +251,28 @@ def test_name_pieces_are_split_by_x_not_by_y():
         box("(1)900000011 타이레놀정", 100, 200, 600, 240), box("500mg", 650, 200, 750, 240),
         box("2 TAB", 800, 205), box("3회", 1000, 205), box("5일", 1100, 205),
     ]
-    assert extract_rule({"lines": lines})["drugs"][0]["name"] == "타이레놀정 500mg"
+    assert extract_rule({"lines": lines})["items"][0]["name"] == "타이레놀정 500mg"
 
 
 def test_a_name_piece_with_a_usage_word_is_not_read_as_usage():
     ocr = load_ocr("rx_001")
     anchor = anchors_of(ocr)[0]
     ocr["lines"].append(box("아침", 820, anchor["bbox"][1], 870, anchor["bbox"][3]))
-    drug = extract_rule(ocr)["drugs"][0]
-    assert drug["name"] == "타이레놀정 5oOmg 아침" and drug["time_slots"] == []
+    drug = extract_rule(ocr)["items"][0]
+    assert drug["name"] == "타이레놀정 5oOmg 아침" and drug["times"] == []
 
 
 def test_full_width_characters_in_a_name_piece_are_normalized():
     ocr = load_ocr("rx_001")
     anchor = anchors_of(ocr)[0]
     ocr["lines"].append(box("５００ｍｇ", 820, anchor["bbox"][1], 1000, anchor["bbox"][3]))
-    assert extract_rule(ocr)["drugs"][0]["name"] == "타이레놀정 5oOmg 500mg"
+    assert extract_rule(ocr)["items"][0]["name"] == "타이레놀정 5oOmg 500mg"
 
 
 def test_a_full_width_code_is_returned_as_ascii_digits():
     ocr = load_ocr("rx_001")
     anchors_of(ocr)[0]["text"] = "(1)９００００００１１ 타이레놀정"
-    drug = extract_rule(ocr)["drugs"][0]
+    drug = extract_rule(ocr)["items"][0]
     assert drug["printed_code"] == "900000011" and drug["name"] == "타이레놀정"
 
 
@@ -270,7 +290,7 @@ def test_a_full_width_code_is_returned_as_ascii_digits():
 def test_name_is_what_is_left_after_removing_the_row_number_and_the_code(text, name):
     ocr = load_ocr("rx_001")
     anchors_of(ocr)[0]["text"] = text
-    assert extract_rule(ocr)["drugs"][0]["name"] == name
+    assert extract_rule(ocr)["items"][0]["name"] == name
 
 
 def test_a_line_centered_exactly_on_the_header_bottom_is_not_in_the_table():
@@ -288,7 +308,7 @@ def test_a_line_centered_exactly_on_the_end_marker_line_is_not_in_the_table():
         box("주사제 처방명세", 100, 500),
         box("기타", 100, 480, y2=520),            # 중심 y 500 = 마커 칸의 위쪽 y
     ]
-    assert extract_rule({"lines": lines})["drugs"][0]["name"] == "타이레놀정"
+    assert extract_rule({"lines": lines})["items"][0]["name"] == "타이레놀정"
 
 
 def test_a_nine_digit_number_below_the_table_is_ignored():
@@ -298,9 +318,9 @@ def test_a_nine_digit_number_below_the_table_is_ignored():
 
 
 def test_two_header_words_are_enough_to_read_the_table():
-    ocr = load_ocr("rx_001")
+    ocr = with_line_ids(load_ocr("rx_001"))
     ocr["lines"] = [l for l in ocr["lines"] if l["text"] not in ("횟수", "일수", "구분코드")]   # 투약량·명칭만 남는다
-    assert extract_rule(ocr) == extract_rule(load_ocr("rx_001"))
+    assert extract_rule(ocr) == extract_rule(with_line_ids(load_ocr("rx_001")))
 
 
 def test_a_small_prescription_made_by_hand():
@@ -312,11 +332,73 @@ def test_a_small_prescription_made_by_hand():
     ]
     assert extract_rule({"lines": lines}) == {
         "issue_no": None,
-        "drugs": [{
-            "name": "타이레놀정", "printed_code": "900000011", "dose_per_time": 2,
-            "times_per_day": 3, "days": 5, "time_slots": ["morning", "evening"], "ocr_conf": 0.9,
+        "items": [{
+            "name": "타이레놀정", "printed_code": "900000011", "count_per_dose": 2,
+            "times_per_day": 3, "days": 5, "times": ["morning", "evening"], "source_line_ids": [2, 3, 4, 5, 6],
+            "ocr_conf": 0.9,
         }],
     }
+
+
+# ------------------------------------------------------------ 원문 줄 번호 (source_line_ids, A.5)
+
+# 약품 줄마다 그 줄을 읽은 칸들의 lines 안 순서. rx_001을 눈으로 본 값이다:
+# 1번째 줄 = 코드 줄 '(1)900000011 타이레놀정/ 5oOmg'와 '1 TAB' '3회' '3일' 'PO 식후 30분'
+RX_001_LINES = [
+    ["(1)900000011 타이레놀정/ 5oOmg", "1 TAB", "3회", "3일", "PO 식후 30분"],
+    ["900000031 알모란정", "1 TAB", "3회", "3일", "PO 식후 30분"],
+]
+
+
+def test_source_line_ids_point_to_the_cells_of_each_row():
+    ocr = load_ocr("rx_001")
+    for drug, texts in zip(extract_rule(ocr)["items"], RX_001_LINES):
+        assert sorted(ocr["lines"][i]["text"] for i in drug["source_line_ids"]) == sorted(texts)
+        assert drug["source_line_ids"] == sorted(drug["source_line_ids"])
+
+
+def test_a_split_name_piece_is_part_of_the_row_lines():
+    ocr = load_ocr("rx_005")
+    ids = extract_rule(ocr)["items"][0]["source_line_ids"]
+    assert "145mg" in [ocr["lines"][i]["text"] for i in ids]
+
+
+def test_line_ids_from_the_ocr_are_used_when_present():
+    ocr = with_line_ids(load_ocr("rx_001"), start=100)
+    plain = extract_rule(load_ocr("rx_001"))["items"]
+    got = extract_rule(ocr)["items"]
+    assert [d["source_line_ids"] for d in got] == [[100 + i for i in d["source_line_ids"]] for d in plain]
+
+
+def test_line_ids_need_not_follow_the_list_order():
+    ocr = with_line_ids(load_ocr("rx_002"))
+    for line in ocr["lines"]:
+        line["line_id"] = 1000 - line["line_id"]          # 거꾸로 매겨도 그 값을 그대로 쓴다
+    ids = extract_rule(ocr)["items"][0]["source_line_ids"]
+    texts = {l["line_id"]: l["text"] for l in ocr["lines"]}
+    assert ids == sorted(ids) and "(1)900000021 게보린정" in [texts[i] for i in ids]
+
+
+def test_line_ids_on_only_some_lines_are_refused():
+    ocr = load_ocr("rx_001")
+    ocr["lines"][0]["line_id"] = 0
+    with pytest.raises(StructureError, match="일부 줄에만 line_id"):
+        extract_rule(ocr)
+
+
+@pytest.mark.parametrize("bad", [-1, 1.0, "3", None, True])
+def test_a_line_id_that_is_not_a_non_negative_integer_is_refused(bad):
+    ocr = with_line_ids(load_ocr("rx_001"))
+    ocr["lines"][5]["line_id"] = bad
+    with pytest.raises(StructureError, match="0 이상의 정수"):
+        extract_rule(ocr)
+
+
+def test_duplicate_line_ids_are_refused():
+    ocr = with_line_ids(load_ocr("rx_001"))
+    ocr["lines"][5]["line_id"] = ocr["lines"][6]["line_id"]
+    with pytest.raises(StructureError, match="같은 line_id"):
+        extract_rule(ocr)
 
 
 # ------------------------------------------------------------ 발급번호

@@ -24,6 +24,10 @@ from agent.validate import order_from_extracted
 SAMPLE_IDS = ["rx_001", "rx_002", "rx_003", "rx_004", "rx_005"]
 DICT = load_dictionary()
 
+# 품목기준코드 (명세서 v0.3 2.6절). 처방전에는 가상 코드(9000000xx)가 인쇄되어 있고 사전의 rx_code로 찾는다.
+TYLENOL, GEVORIN, TRISPEN, FRONK = "202106092", "197900277", "201110120", "200200099"
+ARPEN = "200201239"
+
 
 def load(kind, sample_id):
     return json.loads((DATA_DIR / kind / f"{sample_id}.json").read_text(encoding="utf-8"))
@@ -31,8 +35,8 @@ def load(kind, sample_id):
 
 def line(name="게보린정", printed_code="900000021", days=3, ocr_conf=0.9, **extra):
     return DrugLine(
-        name=name, printed_code=printed_code, dose_per_time=1, times_per_day=1,
-        days=days, time_slots=["morning"], ocr_conf=ocr_conf, **extra,
+        name=name, printed_code=printed_code, count_per_dose=1, times_per_day=1,
+        days=days, times=["morning"], ocr_conf=ocr_conf, **extra,
     )
 
 
@@ -53,30 +57,30 @@ def test_thresholds_are_the_agreed_values():
 
 def test_code_in_the_dictionary_with_the_same_name_needs_no_check():
     got = match_line(line(), DICT)
-    assert (got.item_code, got.match_method) == ("900000021", "code")
+    assert (got.item_code, got.match_method) == (GEVORIN, "code")
     assert not got.needs_pharmacist_check and got.check_reasons == [] and got.match_candidates == []
 
 
 @pytest.mark.parametrize("name", ["프론크논캠술", "프론크논램술", "프론크논캡슐", "프론크논 캡슐"])
 def test_ocr_misreadings_of_the_name_still_pass(name):
     got = match_line(line(name, "900000051"), DICT)
-    assert got.item_code == "900000051" and not got.needs_pharmacist_check
+    assert got.item_code == FRONK and not got.needs_pharmacist_check
 
 
 def test_ocr_letter_o_in_the_strength_is_read_as_zero():
     got = match_line(line("타이레놀정 5oOmg", "900000011"), DICT)
-    assert got.item_code == "900000011" and not got.needs_pharmacist_check
+    assert got.item_code == TYLENOL and not got.needs_pharmacist_check
 
 
 def test_a_different_name_for_the_code_keeps_the_code_but_asks_the_pharmacist():
     # 코드가 먼저다. 다만 이름이 다르면 약사가 확인한다
     got = match_line(line("타이레놀정 500mg", "900000021"), DICT)
-    assert (got.item_code, got.match_method) == ("900000021", "code")
+    assert (got.item_code, got.match_method) == (GEVORIN, "code")
     assert got.needs_pharmacist_check
-    assert got.check_reasons == ["처방전의 약품명이 코드(900000021)의 약 '게보린정'과 다릅니다."]
+    assert got.check_reasons == ["처방전의 약품명이 코드(900000021)의 약 '게보린정'과 다릅니다."]   # 이유에는 처방전에 인쇄된 코드
     # 후보: 코드의 약을 먼저, 그다음 이름이 비슷한 약
     assert [(c.item_code, c.reason) for c in got.match_candidates] == [
-        ("900000021", "처방전 코드"), ("900000011", "이름이 비슷함"),
+        (GEVORIN, "처방전 코드"), (TYLENOL, "이름이 비슷함"),
     ]
     assert got.match_candidates[1].score == 1.0
     assert got.match_candidates[0].score < NAME_MATCH_MIN
@@ -85,14 +89,26 @@ def test_a_different_name_for_the_code_keeps_the_code_but_asks_the_pharmacist():
 def test_a_different_strength_for_the_code_asks_the_pharmacist():
     # 이름은 아주 비슷하지만(0.94) 함량이 다르면 다른 약이다
     got = match_line(line("타이레놀정 650mg", "900000011"), DICT)
-    assert got.item_code == "900000011" and got.needs_pharmacist_check
+    assert got.item_code == TYLENOL and got.needs_pharmacist_check
     assert got.check_reasons == ["처방전의 함량이 코드(900000011)의 약 '타이레놀정 500mg'과 다릅니다."]
     assert [c.reason for c in got.match_candidates] == ["처방전 코드"]     # 사전에 같은 코드 말고 비슷한 약은 없다
 
 
 def test_a_name_without_strength_is_not_a_strength_conflict():
     got = match_line(line("타이레놀정", "900000011"), DICT)
-    assert got.item_code == "900000011" and not got.needs_pharmacist_check
+    assert got.item_code == TYLENOL and not got.needs_pharmacist_check
+
+
+def test_the_printed_code_is_looked_up_as_rx_code_not_as_item_code():
+    d = dictionary_from_data({"drugs": [{"item_code": "100000001", "name": "가나다정", "rx_code": "900000001"}]})
+    got = match_line(line("가나다정", "900000001"), d)
+    assert (got.item_code, got.match_method) == ("100000001", "code")
+
+
+def test_a_printed_item_code_also_finds_the_drug():
+    # 처방전에 품목기준코드가 그대로 인쇄되어 있어도 같은 약이다
+    got = match_line(line("게보린정", GEVORIN), DICT)
+    assert (got.item_code, got.match_method, got.needs_pharmacist_check) == (GEVORIN, "code", False)
 
 
 def test_the_name_threshold_for_a_code_match_is_inclusive(monkeypatch):
@@ -111,14 +127,14 @@ def test_the_name_threshold_for_a_code_match_is_inclusive(monkeypatch):
 
 def test_without_a_code_a_clear_name_match_is_chosen_but_always_checked():
     got = match_line(line("게보린정", None), DICT)
-    assert (got.item_code, got.match_method) == ("900000021", "name")
+    assert (got.item_code, got.match_method) == (GEVORIN, "name")
     assert got.check_reasons == ["처방전에서 코드를 읽지 못했습니다. 이름으로 '게보린정'을(를) 골랐습니다."]
     assert got.match_candidates == []
 
 
 def test_a_code_missing_from_the_dictionary_falls_back_to_the_name():
     got = match_line(line("트리스펜연질캡슐", "900000099"), DICT)
-    assert (got.item_code, got.match_method) == ("900000041", "name")
+    assert (got.item_code, got.match_method) == (TRISPEN, "name")
     assert got.check_reasons[0].startswith("처방전 코드(900000099)가 약품 사전에 없습니다.")
 
 
@@ -127,13 +143,13 @@ def test_a_name_below_the_name_only_threshold_is_not_chosen():
     got = match_line(line("게보린", None), DICT)
     assert (got.item_code, got.match_method) == (None, "none")
     assert got.check_reasons == ["처방전에서 코드를 읽지 못했습니다. 이름으로도 사전의 약을 정하지 못했습니다."]
-    assert [(c.item_code, c.reason) for c in got.match_candidates] == [("900000021", "이름이 비슷함")]
+    assert [(c.item_code, c.reason) for c in got.match_candidates] == [(GEVORIN, "이름이 비슷함")]
 
 
 def test_a_name_with_a_different_strength_is_not_chosen_by_name():
     got = match_line(line("타이레놀정 650mg", None), DICT)
     assert got.item_code is None and got.match_method == "none"
-    assert [c.item_code for c in got.match_candidates] == ["900000011"]
+    assert [c.item_code for c in got.match_candidates] == [TYLENOL]
 
 
 def test_two_close_names_are_not_chosen_and_both_are_offered():
@@ -181,7 +197,7 @@ def test_the_candidate_threshold_is_inclusive(monkeypatch):
 
     score = similarity("게보린", "게보린정")
     monkeypatch.setattr(dm, "CANDIDATE_MIN", score)
-    assert [c.item_code for c in match_line(line("게보린", None), DICT).match_candidates] == ["900000021"]
+    assert [c.item_code for c in match_line(line("게보린", None), DICT).match_candidates] == [GEVORIN]
     monkeypatch.setattr(dm, "CANDIDATE_MIN", score + 0.001)
     assert match_line(line("게보린", None), DICT).match_candidates == []
 
@@ -198,9 +214,11 @@ def test_equal_scores_keep_the_dictionary_order():
     assert [c.item_code for c in got.match_candidates] == ["900000002", "900000001"]
 
 
-def test_a_drug_not_in_the_dictionary_has_no_code_and_no_candidates():
+def test_a_drug_not_in_the_dictionary_has_no_code():
     got = match_line(line("알모란정", "900000031"), DICT)
-    assert (got.item_code, got.match_method, got.match_candidates) == (None, "none", [])
+    assert (got.item_code, got.match_method) == (None, "none")
+    # OCR이 알모탄정을 '알모란정'으로 읽었다. 사전의 아르펜정과 0.667이라 고르지는 않고 후보로만 보인다
+    assert [(c.item_code, c.score) for c in got.match_candidates] == [(ARPEN, 0.667)]
     assert got.check_reasons == ["처방전 코드(900000031)가 약품 사전에 없습니다. 이름으로도 사전의 약을 정하지 못했습니다."]
 
 
@@ -223,7 +241,7 @@ def test_an_empty_dictionary_matches_nothing():
 @pytest.mark.parametrize("conf, flagged", [(0.49, True), (0.0, True), (LOW_CONFIDENCE, False), (0.9, False), (None, False)])
 def test_low_ocr_confidence_asks_the_pharmacist(conf, flagged):
     got = match_line(line(ocr_conf=conf), DICT)
-    assert got.item_code == "900000021" and got.needs_pharmacist_check is flagged
+    assert got.item_code == GEVORIN and got.needs_pharmacist_check is flagged
     assert got.check_reasons == ([f"글자 인식 신뢰도가 낮습니다({conf:.2f})."] if flagged else [])
 
 
@@ -242,7 +260,7 @@ def test_reasons_add_up_in_a_fixed_order():
 
 
 def test_old_match_results_are_replaced_not_kept():
-    old = line("알모란정", "900000031", item_code="900000021", match_method="code",
+    old = line("알모란정", "900000031", item_code=GEVORIN, match_method="code",
                needs_pharmacist_check=True, check_reasons=["예전 이유"])
     got = match_line(old, DICT)
     assert got.item_code is None and got.check_reasons == [
@@ -303,12 +321,12 @@ def matched(sample_id):
 
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
 def test_item_codes_of_the_real_samples_are_the_expected_ones(sample_id):
-    assert [d.item_code for d in matched(sample_id).drugs] == [d["item_code"] for d in load("cv_expected", sample_id)["drugs"]]
+    assert [d.item_code for d in matched(sample_id).items] == [d["item_code"] for d in load("cv_expected", sample_id)["items"]]
 
 
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
 def test_drugs_outside_the_target_list_are_never_given_a_code(sample_id):
-    for got, want in zip(matched(sample_id).drugs, load("cv_expected", sample_id)["drugs"]):
+    for got, want in zip(matched(sample_id).items, load("cv_expected", sample_id)["items"]):
         if not want["in_target"]:
             assert got.item_code is None and got.match_method == "none" and got.needs_pharmacist_check
 
@@ -319,7 +337,7 @@ def test_flagged_lines_of_the_real_samples(sample_id):
 
 
 def test_a_four_day_prescription_flags_every_line():
-    assert all("투약 일수 4일" in r for d in matched("rx_003").drugs for r in d.check_reasons[-1:])
+    assert all("투약 일수 4일" in r for d in matched("rx_003").items for r in d.check_reasons[-1:])
 
 
 def test_match_order_keeps_the_order_fields_and_the_input():
@@ -330,13 +348,13 @@ def test_match_order_keeps_the_order_fields_and_the_input():
     assert isinstance(got, DispensingOrder)
     assert (got.prescription_id, got.source, got.issue_no, got.warnings) == (
         order.prescription_id, order.source, order.issue_no, order.warnings)
-    assert [d.name for d in got.drugs] == [d.name for d in order.drugs]
+    assert [d.name for d in got.items] == [d.name for d in order.items]
     assert not got.all_matched          # 사전에 없는 알모탄정이 있다
 
 
 def test_all_matched_when_every_drug_is_in_the_dictionary():
     order = order_from_extracted("P0001", extract_rule(load("cv_samples", "rx_002")), source="rule")
-    order = order.model_copy(update={"drugs": order.drugs[:2]})
+    order = order.model_copy(update={"items": order.items[:2]})
     assert match_order(order, DICT).all_matched
 
 
@@ -356,18 +374,18 @@ class FakeApi:
         return self.products
 
 
-ARPEN = ApiDrug("199900001", "아르펜정(이부프로펜)", "가상제약")
+FESTAL = ApiDrug("199900001", "훼스탈정(소화효소)", "가상제약")
 
 
 def test_a_drug_missing_from_the_dictionary_is_found_through_the_api():
-    api = FakeApi(ARPEN, ApiDrug("199900002", "게보린정", "가상제약"))
-    got = match_line(line("아르펜정", "900000099"), DICT, api=api)
+    api = FakeApi(FESTAL, ApiDrug("199900002", "게보린정", "가상제약"))
+    got = match_line(line("훼스탈정", "900000099"), DICT, api=api)
     assert (got.item_code, got.match_method) == ("199900001", "api")
     assert got.check_reasons == [
-        "처방전 코드(900000099)가 약품 사전에 없습니다. 사전에 없어 의약품 API에서 이름으로 '아르펜정(이부프로펜)'(199900001)을(를) 골랐습니다."
+        "처방전 코드(900000099)가 약품 사전에 없습니다. 사전에 없어 의약품 API에서 이름으로 '훼스탈정(소화효소)'(199900001)을(를) 골랐습니다."
     ]
     assert got.needs_pharmacist_check and got.match_candidates == []
-    assert api.calls == ["아르펜정"]                    # API에는 처방전에서 읽은 이름 그대로 넘긴다 (검색어는 drug_api가 만든다)
+    assert api.calls == ["훼스탈정"]                    # API에는 처방전에서 읽은 이름 그대로 넘긴다 (검색어는 drug_api가 만든다)
 
 
 @pytest.mark.parametrize("drug", [line(), line("게보린정", None), line("프론크논캠술", "900000051")])
@@ -378,14 +396,15 @@ def test_the_api_is_not_called_when_the_dictionary_decides(drug):
 
 
 def test_without_an_api_nothing_changes():
-    assert match_line(line("아르펜정", None), DICT).check_reasons == [
+    # 훼스탈정은 사전 8종 어느 것과도 0.6보다 덜 비슷하다
+    assert match_line(line("훼스탈정", None), DICT).check_reasons == [
         "처방전에서 코드를 읽지 못했습니다. 이름으로도 사전의 약을 정하지 못했습니다."
     ]
 
 
 def test_api_results_that_are_not_clear_become_candidates():
-    api = FakeApi(ApiDrug("199900001", "아르펜정200mg", "가"), ApiDrug("199900003", "아르펜정400mg", "나"))
-    got = match_line(line("아르펜정", None), DICT, api=api)
+    api = FakeApi(ApiDrug("199900001", "훼스탈정200mg", "가"), ApiDrug("199900003", "훼스탈정400mg", "나"))
+    got = match_line(line("훼스탈정", None), DICT, api=api)
     assert got.item_code is None and got.match_method == "none"           # 함량이 다른 두 제품: 2등과 차이가 없다
     assert [(c.item_code, c.reason) for c in got.match_candidates] == [
         ("199900001", "의약품 API 검색"), ("199900003", "의약품 API 검색"),
@@ -394,32 +413,33 @@ def test_api_results_that_are_not_clear_become_candidates():
 
 
 def test_the_strength_written_on_the_prescription_picks_the_product():
-    api = FakeApi(ApiDrug("199900001", "아르펜정200밀리그램", "가"), ApiDrug("199900003", "아르펜정400밀리그램", "가"))
-    got = match_line(line("아르펜정 4OOmg", None), DICT, api=api)
+    api = FakeApi(ApiDrug("199900001", "훼스탈정200밀리그램", "가"), ApiDrug("199900003", "훼스탈정400밀리그램", "가"))
+    got = match_line(line("훼스탈정 4OOmg", None), DICT, api=api)
     assert got.item_code == "199900003" and got.match_method == "api"
 
 
 def test_a_strength_conflict_with_the_only_api_product_is_not_chosen():
-    got = match_line(line("아르펜정 400mg", None), DICT, api=FakeApi(ApiDrug("199900001", "아르펜정200mg", "가")))
+    got = match_line(line("훼스탈정 400mg", None), DICT, api=FakeApi(ApiDrug("199900001", "훼스탈정200mg", "가")))
     assert got.item_code is None and got.match_candidates[0].item_code == "199900001"     # 고르지는 않지만 후보로는 보인다
 
 
 def test_one_clear_api_product_is_enough():
-    got = match_line(line("아르펜정", None), DICT, api=FakeApi(ARPEN))
+    got = match_line(line("훼스탈정", None), DICT, api=FakeApi(FESTAL))
     assert got.item_code == "199900001"
 
 
 def test_no_api_result_leaves_the_line_unmatched():
     got = match_line(line("알모란정", "900000031"), DICT, api=FakeApi())
-    assert (got.item_code, got.match_candidates) == (None, [])
+    assert got.item_code is None
+    assert [c.item_code for c in got.match_candidates] == [ARPEN]       # 사전 후보는 그대로 보인다
     assert got.check_reasons == ["처방전 코드(900000031)가 약품 사전에 없습니다. 사전과 의약품 API 어디에서도 약을 정하지 못했습니다."]
 
 
 def test_an_api_failure_is_a_reason_not_a_crash():
-    got = match_line(line("아르펜정", None, days=5), DICT, api=FakeApi(error=DrugApiError("의약품 API에 연결하지 못했습니다 (URLError).")))
+    got = match_line(line("훼스탈정", None, days=5), DICT, api=FakeApi(error=DrugApiError("의약품 API에 연결하지 못했습니다 (URLError).")))
     assert got.item_code is None and got.needs_pharmacist_check
     assert got.check_reasons == [
-        "처방전에서 코드를 읽지 못했습니다. 사전에 없어 의약품 API로 찾으려 했지만 실패했습니다: 의약품 API에 연결하지 못했습니다 (URLError).",
+        "처방전에서 코드를 읽지 못했습니다. 사전에 없어 의약품 API로 찾으려 했지만 실패했습니다(E_EXT_API): 의약품 API에 연결하지 못했습니다 (URLError).",
         "투약 일수 5일이 트레이 3일보다 깁니다.",
     ]
 
@@ -428,7 +448,7 @@ def test_other_api_errors_are_not_hidden():
     from agent.errors import ConfigError
 
     with pytest.raises(ConfigError):
-        match_line(line("아르펜정", None), DICT, api=FakeApi(error=ConfigError("DRUG_API_KEY가 설정되지 않았습니다.")))
+        match_line(line("훼스탈정", None), DICT, api=FakeApi(error=ConfigError("DRUG_API_KEY가 설정되지 않았습니다.")))
 
 
 def test_dictionary_and_api_candidates_are_shown_together_by_score():
@@ -436,33 +456,33 @@ def test_dictionary_and_api_candidates_are_shown_together_by_score():
     got = match_line(line("게보린", None), DICT, api=api)
     assert got.item_code is None
     assert [(c.item_code, c.reason) for c in got.match_candidates] == [
-        ("900000021", "이름이 비슷함"), ("199900006", "의약품 API 검색"), ("199900005", "의약품 API 검색"),
+        (GEVORIN, "이름이 비슷함"), ("199900006", "의약품 API 검색"), ("199900005", "의약품 API 검색"),
     ]                                       # 0.824 / '게보' 0.727 / '게보린정에스' 0.667
     scores = [c.score for c in got.match_candidates]
     assert scores == sorted(scores, reverse=True)
 
 
 def test_api_candidates_are_limited_too():
-    api = FakeApi(*[ApiDrug(f"19990000{i}", "아르펜정" + "가나다라마"[:i], "가") for i in range(1, 6)])
-    assert len(match_line(line("아르펜정", None), DICT, api=api).match_candidates) == MAX_CANDIDATES
+    api = FakeApi(*[ApiDrug(f"19990000{i}", "훼스탈정" + "가나다라마"[:i], "가") for i in range(1, 6)])
+    assert len(match_line(line("훼스탈정", None), DICT, api=api).match_candidates) == MAX_CANDIDATES
 
 
 def test_api_candidates_below_the_threshold_are_dropped():
-    got = match_line(line("아르펜정", None), DICT, api=FakeApi(ApiDrug("199900009", "전혀다른캡슐", "가")))
+    got = match_line(line("훼스탈정", None), DICT, api=FakeApi(ApiDrug("199900009", "전혀다른캡슐", "가")))
     assert got.match_candidates == []
 
 
 def test_the_api_candidate_threshold_is_inclusive_and_scores_are_rounded(monkeypatch):
     import agent.drug_match as dm
 
-    api = FakeApi(ApiDrug("199900009", "아르펜", "가"))
-    score = similarity("아르펜정", "아르펜")
+    api = FakeApi(ApiDrug("199900009", "훼스탈", "가"))
+    score = similarity("훼스탈정", "훼스탈")
     monkeypatch.setattr(dm, "CANDIDATE_MIN", score)
-    got = match_line(line("아르펜정", None), DICT, api=api)
+    got = match_line(line("훼스탈정", None), DICT, api=api)
     assert [(c.item_code, c.score) for c in got.match_candidates] == [("199900009", round(score, 3))]
     assert round(score, 3) != score                          # 반올림이 실제로 일어나는 값이다
     monkeypatch.setattr(dm, "CANDIDATE_MIN", score + 0.001)
-    assert match_line(line("아르펜정", None), DICT, api=api).match_candidates == []
+    assert match_line(line("훼스탈정", None), DICT, api=api).match_candidates == []
 
 
 def test_equal_api_scores_keep_the_api_order():
@@ -490,8 +510,8 @@ def test_match_order_passes_the_api_on():
     api = FakeApi(ApiDrug("199900031", "알모탄정", "가"))
     got = match_order(order, DICT, api=api)
     # OCR의 '알모란정'과 '알모탄정'은 0.909라 API가 이 제품을 돌려주면 고른다 (언제나 약사 확인 표시와 함께)
-    assert [d.item_code for d in got.drugs] == ["900000011", "199900031"]
-    assert [d.match_method for d in got.drugs] == ["code", "api"] and got.drugs[1].needs_pharmacist_check
+    assert [d.item_code for d in got.items] == [TYLENOL, "199900031"]
+    assert [d.match_method for d in got.items] == ["code", "api"] and got.items[1].needs_pharmacist_check
     assert api.calls == ["알모란정"]                     # 사전에 있는 타이레놀정은 API를 부르지 않는다
 
 
@@ -503,4 +523,4 @@ def test_a_different_strength_in_the_dictionary_is_not_a_rival_either():
 
 def test_the_api_method_needs_an_item_code():
     with pytest.raises(Exception, match="item_code가 있어야"):
-        DrugLine(name="가", dose_per_time=1, times_per_day=1, days=1, time_slots=["morning"], match_method="api")
+        DrugLine(name="가", count_per_dose=1, times_per_day=1, days=1, times=["morning"], match_method="api")

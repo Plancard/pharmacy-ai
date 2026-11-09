@@ -177,8 +177,16 @@ def test_fetch_errors_pass_through():
         search_drugs("게보린정", fetch=FakeFetch(DrugApiError("x")), key="K")
 
 
-def test_default_url_and_timeout():
-    assert config.DRUG_API_URL.startswith("https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService")
+def test_default_url_and_timeout(monkeypatch):
+    # 11/9 실제 키로 확인한 08 버전 (07로 부르면 HTTP 403). .env의 DRUG_API_URL이 없을 때의 기본값을 본다
+    import importlib
+
+    monkeypatch.delenv("DRUG_API_URL", raising=False)
+    fresh = importlib.reload(config)
+    try:
+        assert fresh.DRUG_API_URL == "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnInq08"
+    finally:
+        importlib.reload(config)
     assert config.DRUG_API_TIMEOUT_SECONDS > 0
 
 
@@ -236,3 +244,169 @@ def test_a_non_json_answer_is_an_api_error(monkeypatch, raw):
     monkeypatch.setattr(drug_api.urllib.request, "urlopen", lambda request, timeout: FakeResponse(raw))
     with pytest.raises(DrugApiError, match="인증키"):
         drug_api.http_get_json("https://x", {})
+
+
+# ------------------------------------------------------------ default_api: 매칭에 넘기는 조회 함수
+
+
+def test_default_api_is_none_without_a_key():
+    # conftest가 테스트 동안 DRUG_API_KEY를 지운다
+    from agent.drug_api import default_api
+
+    assert default_api() is None
+
+
+def test_default_api_searches_with_the_key(monkeypatch):
+    from agent.drug_api import default_api
+
+    monkeypatch.setenv("DRUG_API_KEY", "test-key")
+    fetch = FakeFetch(response(product()))
+    search = default_api(fetch=fetch)
+    assert [p.item_code for p in search("타이레놀정 500mg")] == ["202005623"]
+    assert fetch.calls[0][1]["serviceKey"] == "test-key" and fetch.calls[0][1]["item_name"] == "타이레놀정"
+
+
+def test_default_api_asks_each_search_term_only_once(monkeypatch):
+    from agent.drug_api import default_api
+
+    monkeypatch.setenv("DRUG_API_KEY", "test-key")
+    fetch = FakeFetch(response(product()))
+    search = default_api(fetch=fetch)
+    search("타이레놀정 500mg")
+    search("타이레놀정/5oOmg")            # 검색어가 같다 ('타이레놀정')
+    search("게보린정")
+    assert [c[1]["item_name"] for c in fetch.calls] == ["타이레놀정", "게보린정"]
+
+
+def test_default_api_does_not_remember_failures(monkeypatch):
+    from agent.drug_api import default_api
+
+    monkeypatch.setenv("DRUG_API_KEY", "test-key")
+    fetch = FakeFetch(DrugApiError("의약품 API에 연결하지 못했습니다 (URLError)."))
+    search = default_api(fetch=fetch)
+    with pytest.raises(DrugApiError):
+        search("게보린정")
+    fetch.result = response(product("197900277", "게보린정"))
+    assert [p.item_code for p in search("게보린정")] == ["197900277"]     # 다시 묻는다
+    assert len(fetch.calls) == 2
+
+
+def test_remembered_results_cannot_be_changed_by_the_caller(monkeypatch):
+    from agent.drug_api import default_api
+
+    monkeypatch.setenv("DRUG_API_KEY", "test-key")
+    search = default_api(fetch=FakeFetch(response(product())))
+    search("타이레놀정").clear()
+    assert len(search("타이레놀정")) == 1
+
+
+def test_each_default_api_has_its_own_memory(monkeypatch):
+    from agent.drug_api import default_api
+
+    monkeypatch.setenv("DRUG_API_KEY", "test-key")
+    fetch = FakeFetch(response(product()))
+    default_api(fetch=fetch)("타이레놀정")
+    default_api(fetch=fetch)("타이레놀정")
+    assert len(fetch.calls) == 2
+
+
+# ------------------------------------------------------------ 서버의 거절 사유 (11/9: 실제 키로 HTTP 403)
+
+
+@pytest.mark.parametrize(
+    "raw, reason",
+    [
+        (b"<OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>SERVICE ERROR</errMsg>"
+         b"<returnAuthMsg>SERVICE_ACCESS_DENIED_ERROR</returnAuthMsg><returnReasonCode>20</returnReasonCode>"
+         b"</cmmMsgHeader></OpenAPI_ServiceResponse>", "SERVICE ERROR / SERVICE_ACCESS_DENIED_ERROR / 20"),
+        (b"<returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg>", "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"),
+        ('{"response": {"header": {"resultCode": "30", "resultMsg": "등록되지 않은 서비스키"}}}'.encode(), "30 / 등록되지 않은 서비스키"),
+        (b"Forbidden", "Forbidden"),
+        (b"<html><body><h1>403  Forbidden</h1></body></html>", "403 Forbidden"),
+        (b"", None),
+        (b"   ", None),
+        (None, None),
+    ],
+)
+def test_server_reason(raw, reason):
+    assert drug_api.server_reason(raw) == reason
+
+
+def test_server_reason_is_short():
+    assert len(drug_api.server_reason(b"x" * 5000)) == 120
+
+
+def test_server_reason_never_shows_the_key():
+    key = "ab+c/d=="
+    raw = f"<errMsg>bad key {key} / ab%2Bc%2Fd%3D%3D / ab%2Bc%2Fd%3D%3D</errMsg>".encode()
+    reason = drug_api.server_reason(raw, key)
+    assert "ab+c" not in reason and "ab%2B" not in reason and "***" in reason
+
+
+def http_error(code, body):
+    import io
+
+    return urllib.error.HTTPError("https://x?serviceKey=SECRET", code, "err", {}, io.BytesIO(body))
+
+
+def test_an_http_error_shows_the_server_reason_and_keeps_the_status(monkeypatch):
+    def urlopen(request, timeout):
+        raise http_error(403, b"<returnAuthMsg>SERVICE_ACCESS_DENIED_ERROR</returnAuthMsg>")
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    with pytest.raises(DrugApiError) as caught:
+        drug_api.http_get_json("https://x", {"serviceKey": "SECRET"})
+    assert str(caught.value) == "의약품 API 호출에 실패했습니다 (HTTP 403: SERVICE_ACCESS_DENIED_ERROR)."
+    assert caught.value.status == 403 and caught.value.code == "E_EXT_API"
+
+
+def test_an_http_error_body_with_the_key_is_masked(monkeypatch):
+    def urlopen(request, timeout):
+        raise http_error(401, b"invalid serviceKey SECRET")
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    with pytest.raises(DrugApiError) as caught:
+        drug_api.http_get_json("https://x", {"serviceKey": "SECRET"})
+    assert "SECRET" not in str(caught.value) and "invalid serviceKey ***" in str(caught.value)
+
+
+def test_an_unreadable_http_error_body_still_gives_the_status(monkeypatch):
+    class Broken(urllib.error.HTTPError):
+        def read(self, *a):
+            raise OSError("closed")
+
+    def urlopen(request, timeout):
+        raise Broken("https://x", 502, "err", {}, None)
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    with pytest.raises(DrugApiError, match=r"^의약품 API 호출에 실패했습니다 \(HTTP 502\)\.$") as caught:
+        drug_api.http_get_json("https://x", {"serviceKey": "SECRET"})
+    assert caught.value.status == 502
+
+
+def test_other_api_errors_have_no_status():
+    assert DrugApiError("x").status is None
+
+
+def test_a_non_json_answer_shows_the_server_reason(monkeypatch):
+    raw = b"<OpenAPI_ServiceResponse><returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg></OpenAPI_ServiceResponse>"
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", lambda request, timeout: FakeResponse(raw))
+    with pytest.raises(DrugApiError, match="JSON으로 읽을 수 없습니다: SERVICE_KEY_IS_NOT_REGISTERED_ERROR"):
+        drug_api.http_get_json("https://x", {"serviceKey": "SECRET"})
+
+
+def test_requests_have_our_own_user_agent(monkeypatch):
+    seen = {}
+
+    def urlopen(request, timeout):
+        seen["agent"] = request.get_header("User-agent")
+        return FakeResponse(json.dumps(response()).encode())
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    drug_api.http_get_json("https://x", {"serviceKey": "SECRET"})
+    assert seen["agent"] == drug_api.USER_AGENT and "urllib" not in seen["agent"].lower()
+
+
+def test_the_same_reason_twice_is_shown_once():
+    raw = b"<errMsg>SERVICE ERROR</errMsg><resultMsg>SERVICE ERROR</resultMsg>"
+    assert drug_api.server_reason(raw) == "SERVICE ERROR"

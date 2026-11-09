@@ -7,17 +7,17 @@ from agent.schema import DispensingOrder, DrugLine
 def make(**overrides):
     base = dict(
         name="타이레놀정500밀리그램",
-        dose_per_time=1,
+        count_per_dose=1,
         times_per_day=3,
         days=3,
-        time_slots=["morning", "noon", "evening"],
+        times=["morning", "noon", "evening"],
     )
     base.update(overrides)
     return DrugLine(**base)
 
 
 def make_order(**overrides):
-    base = dict(prescription_id="P0001", source="rule", drugs=[make()])
+    base = dict(prescription_id="P0001", source="rule", items=[make()])
     base.update(overrides)
     return DispensingOrder(**base)
 
@@ -36,20 +36,20 @@ def test_slot_values_are_the_four_tray_rows_in_order():
 
 
 def test_four_times_a_day_uses_all_four_rows():
-    line = make(times_per_day=4, time_slots=["morning", "noon", "evening", "bedtime"])
-    assert line.time_slots[-1] == "bedtime"
+    line = make(times_per_day=4, times=["morning", "noon", "evening", "bedtime"])
+    assert line.times[-1] == "bedtime"
 
 
 @pytest.mark.parametrize(
     "bad",
     [
-        {"dose_per_time": 0},
+        {"count_per_dose": 0},
         {"times_per_day": 4},
         {"days": 0},
-        {"time_slots": ["morning"]},
-        {"time_slots": ["morning", "morning", "noon"]},
-        {"times_per_day": 4, "time_slots": ["morning", "noon", "evening", "night"]},   # 모르는 시점 이름
-        {"times_per_day": 5, "time_slots": ["morning", "noon", "evening", "bedtime"]},   # 하루 최대 4회
+        {"times": ["morning"]},
+        {"times": ["morning", "morning", "noon"]},
+        {"times_per_day": 4, "times": ["morning", "noon", "evening", "night"]},   # 모르는 시점 이름
+        {"times_per_day": 5, "times": ["morning", "noon", "evening", "bedtime"]},   # 하루 최대 4회
         {"item_code": "123"},
         {"item_code": "12345678a"},
         {"name": "  "},
@@ -76,7 +76,7 @@ def test_order_survives_dump_and_load():
 @pytest.mark.parametrize(
     "bad",
     [
-        {"drugs": []},
+        {"items": []},
         {"prescription_id": "  "},
         {"source": "manual"},
     ],
@@ -89,8 +89,8 @@ def test_invalid_order(bad):
 def test_all_matched_needs_item_code_on_every_line():
     assert make_order().all_matched is False
     both = [make(item_code="900000011"), make(item_code="900000021")]
-    assert make_order(drugs=both).all_matched is True
-    assert make_order(drugs=[make(item_code="900000011"), make()]).all_matched is False
+    assert make_order(items=both).all_matched is True
+    assert make_order(items=[make(item_code="900000011"), make()]).all_matched is False
 
 
 def test_warnings_are_not_shared_between_orders():
@@ -180,7 +180,7 @@ def test_candidate_lists_are_not_shared_between_lines():
 
 def test_flagged_indices():
     flagged = make(needs_pharmacist_check=True)
-    order = make_order(drugs=[make(), flagged, make(), flagged])
+    order = make_order(items=[make(), flagged, make(), flagged])
     assert order.flagged_indices == [1, 3]
     assert make_order().flagged_indices == []
 
@@ -188,5 +188,32 @@ def test_flagged_indices():
 def test_match_fields_survive_dump_and_load():
     line = make(item_code="900000021", match_method="code", match_candidates=[cand()],
                 needs_pharmacist_check=True, check_reasons=["이유"], ocr_conf=0.43)
-    order = make_order(drugs=[line])
+    order = make_order(items=[line])
     assert DispensingOrder.model_validate_json(order.model_dump_json()) == order
+
+
+
+# ------------------------------------------------------------ 명세서 부록 A.5 (조제지시서)
+
+
+def test_a5_fields_come_first_with_the_spec_names():
+    line = make(item_code="900000021", source_line_ids=[3, 4])
+    keys = list(line.model_dump())
+    assert keys[:6] == ["item_code", "name", "count_per_dose", "times", "days", "source_line_ids"]
+    assert "items" in DispensingOrder.model_fields and "drugs" not in DispensingOrder.model_fields
+
+
+def test_old_field_names_are_gone():
+    assert not {"dose_per_time", "time_slots"} & set(DrugLine.model_fields)
+
+
+def test_source_line_ids_default_to_empty_and_are_not_shared():
+    a, b = make(), make()
+    a.source_line_ids.append(1)
+    assert b.source_line_ids == []
+
+
+@pytest.mark.parametrize("bad", [[-1], ["a"], [1.5]])
+def test_source_line_ids_must_be_non_negative_integers(bad):
+    with pytest.raises(ValidationError):
+        make(source_line_ids=bad)

@@ -23,6 +23,7 @@ from typing import Any, Callable
 
 from agent import config
 from agent.drug_names import fix_ocr_digits, match_key
+from agent.errors import E_EXT_API
 from agent.schema import _is_9_digits
 
 MAX_ROWS = 20   # 한 번에 받아 올 제품 수. 같은 이름의 회사별 제품이 여럿일 수 있다.
@@ -31,7 +32,40 @@ Fetch = Callable[[str, dict[str, Any]], Any]   # (url, 요청 인자) -> JSON으
 
 
 class DrugApiError(Exception):
-    """API 조회 실패. 메시지는 화면에 그대로 보여도 되는 문장이다 (키·처방 내용은 담지 않는다)."""
+    """API 조회 실패. 메시지는 화면에 그대로 보여도 되는 문장이다 (키·처방 내용은 담지 않는다).
+    오류 코드는 언제나 E_EXT_API (명세서 A.7). status는 HTTP 상태 코드 (HTTP 오류가 아니면 None)."""
+
+    code = E_EXT_API
+
+    def __init__(self, message: str = "", status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+# 공공데이터포털이 거절할 때 돌려주는 사유 칸 (XML 또는 JSON)
+_REASON_TAGS = re.compile(r"<(returnAuthMsg|errMsg|resultMsg|returnReasonCode)>\s*([^<]{1,120}?)\s*</\1>")
+_TAG = re.compile(r"<[^>]*>")
+USER_AGENT = "pharmacy-dispensing-agent/1.0"   # 파이썬 기본 이름표(Python-urllib)를 막는 게이트웨이가 있어 바꾼다
+
+
+def server_reason(raw: bytes, secret: str | None = None) -> str | None:
+    """서버가 돌려준 거절 사유를 짧게. 키가 섞여 있으면 가린다. 읽을 게 없으면 None.
+
+    예: b"<returnAuthMsg>SERVICE_ACCESS_DENIED_ERROR</returnAuthMsg>" -> "SERVICE_ACCESS_DENIED_ERROR"
+    """
+    text = (raw or b"")[:4000].decode("utf-8", errors="replace")
+    found = [m.group(2) for m in _REASON_TAGS.finditer(text)]
+    if not found:
+        try:
+            header = json.loads(text).get("response", {}).get("header", {})
+            found = [str(header.get(k)) for k in ("resultCode", "resultMsg") if header.get(k)]
+        except (ValueError, AttributeError):
+            found = [" ".join(_TAG.sub(" ", text).split())[:120]]
+    reason = " / ".join(dict.fromkeys(f for f in found if f.strip()))
+    if secret:
+        for form in {secret, urllib.parse.quote(secret, safe=""), urllib.parse.quote_plus(secret)}:
+            reason = reason.replace(form, "***")
+    return reason or None
 
 
 @dataclass(frozen=True)
@@ -100,19 +134,51 @@ def parse_products(data: Any) -> list[ApiDrug]:
 
 def http_get_json(url: str, params: dict[str, Any]) -> Any:
     """GET 요청을 보내 JSON으로 읽는다. 실패하면 DrugApiError (키가 든 URL은 메시지에 넣지 않는다)."""
-    request = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={"Accept": "application/json"})
+    secret = params.get("serviceKey")
+    request = urllib.request.Request(
+        f"{url}?{urllib.parse.urlencode(params)}",
+        headers={"Accept": "application/json", "User-Agent": USER_AGENT},
+    )
     try:
         with urllib.request.urlopen(request, timeout=config.DRUG_API_TIMEOUT_SECONDS) as response:
             raw = response.read()
     except urllib.error.HTTPError as e:
-        raise DrugApiError(f"의약품 API 호출에 실패했습니다 (HTTP {e.code}).") from None
+        try:
+            reason = server_reason(e.read(), secret)
+        except Exception:
+            reason = None
+        detail = f": {reason}" if reason else ""
+        raise DrugApiError(f"의약품 API 호출에 실패했습니다 (HTTP {e.code}{detail}).", status=e.code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise DrugApiError(f"의약품 API에 연결하지 못했습니다 ({type(e).__name__}).") from None
     try:
         return json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         # 공공데이터포털은 키 오류 등을 JSON이 아닌 XML로 돌려주기도 한다
-        raise DrugApiError("의약품 API 응답을 JSON으로 읽을 수 없습니다 (인증키·서비스 주소를 확인하세요).") from None
+        reason = server_reason(raw, secret)
+        detail = f": {reason}" if reason else ""
+        raise DrugApiError(f"의약품 API 응답을 JSON으로 읽을 수 없습니다{detail} (인증키·서비스 주소를 확인하세요).") from None
+
+
+def default_api(*, fetch: Fetch | None = None) -> Callable[[str], list[ApiDrug]] | None:
+    """약품 매칭에 넘길 API 조회 함수. .env에 DRUG_API_KEY가 없으면 None (사전만 쓴다).
+
+    키가 있을 때만 API를 쓰므로, 키가 없다고 매칭이 실패하지는 않는다.
+    같은 검색어는 한 번만 묻는다: 성공한 결과를 이 함수가 살아 있는 동안 기억한다 (실패는 기억하지 않는다).
+    여러 처방전에 같은 약이 나와도 API를 다시 부르지 않아 1분 기준(REQ-NF-01)과 호출 한도를 지킨다.
+    """
+    key = config.drug_api_key()
+    if key is None:
+        return None
+    remembered: dict[str, list[ApiDrug]] = {}
+
+    def search(name: str) -> list[ApiDrug]:
+        term = search_term(name)
+        if term not in remembered:
+            remembered[term] = search_drugs(name, key=key, fetch=fetch)
+        return list(remembered[term])
+
+    return search
 
 
 def search_drugs(name: str | None, *, fetch: Fetch | None = None, key: str | None = None) -> list[ApiDrug]:

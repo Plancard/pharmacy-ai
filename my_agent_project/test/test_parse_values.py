@@ -1,6 +1,6 @@
 import pytest
 
-from agent.structure import parse_time_slots
+from agent.structure import parse_times
 
 # 용법 글자 -> 복용 시점. (숫자 칸은 test_split_columns.py의 classify_cell이 읽는다)
 
@@ -30,13 +30,13 @@ from agent.structure import parse_time_slots
         ("", []),
     ],
 )
-def test_parse_time_slots(text, expected):
-    assert parse_time_slots(text) == expected
+def test_parse_times(text, expected):
+    assert parse_times(text) == expected
 
 
 def test_full_width_spaces_inside_a_word_are_ignored():
-    assert parse_time_slots("자기　전") == ["bedtime"]                  # 전각 공백. 반각으로 바꿔야 '자기전'이 된다
-    assert parse_time_slots("아침　저녁") == ["morning", "evening"]
+    assert parse_times("자기　전") == ["bedtime"]                  # 전각 공백. 반각으로 바꿔야 '자기전'이 된다
+    assert parse_times("아침　저녁") == ["morning", "evening"]
 
 
 def test_every_slot_has_words_and_nothing_else_does():

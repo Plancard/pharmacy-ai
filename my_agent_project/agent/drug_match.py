@@ -13,8 +13,10 @@
 4. 그래도 못 정하면 item_code는 비워 두고(match_method="none") 비슷한 후보를 보여 준다.
 그 밖에 OCR 신뢰도가 낮은 줄, 투약 일수가 트레이 일수보다 긴 줄에도 확인 표시를 붙인다.
 
-기준값은 실제 샘플 5장에서 잰 값이다 (자모 단위 유사도):
-OCR이 읽은 조제 대상 약 이름 vs 사전 0.81~1.0 / 대상이 아닌 약 vs 사전 최대 0.57 / 사전 약끼리 최대 0.54.
+기준값은 실제 샘플 5장과 대상 약품 8종 사전에서 잰 값이다 (자모 단위 유사도):
+OCR이 읽은 조제 대상 약 이름 vs 사전 0.81~1.0 / 대상이 아닌 약 vs 사전 최대 0.67 / 사전 약끼리 최대 0.6.
+
+item_code는 식약처 품목기준코드다. 처방전에 인쇄된 코드(printed_code)는 사전의 rx_code로 찾는다.
 """
 from typing import Callable
 
@@ -79,7 +81,7 @@ def _match_by_api(key: str, name: str, why: str, api: ApiSearch):
     try:
         products = api(name)
     except DrugApiError as e:
-        return None, "none", f"{why} 사전에 없어 의약품 API로 찾으려 했지만 실패했습니다: {e}", []
+        return None, "none", f"{why} 사전에 없어 의약품 API로 찾으려 했지만 실패했습니다({e.code}): {e}", []
     scored = [(similarity(key, product_key(p.name)), i, p) for i, p in enumerate(products)]
     scored.sort(key=lambda t: (-t[0], t[1]))
     best = pick_by_name(key, [(score, product_key(p.name), p) for score, _, p in scored])
@@ -105,14 +107,14 @@ def match_line(line: DrugLine, dictionary: DrugDictionary, *, api: ApiSearch | N
     candidates: list[MatchCandidate] = []
     item_code, method = None, "none"
 
-    entry = dictionary.by_code(line.printed_code)
+    entry = dictionary.by_printed_code(line.printed_code)
     if entry is not None:
         item_code, method = entry.item_code, "code"
         score = similarity(key, entry.key)
         if score < NAME_MATCH_MIN:
-            reasons.append(f"처방전의 약품명이 코드({entry.item_code})의 약 '{entry.name}'과 다릅니다.")
+            reasons.append(f"처방전의 약품명이 코드({line.printed_code})의 약 '{entry.name}'과 다릅니다.")
         if strengths_conflict(key, entry.key):
-            reasons.append(f"처방전의 함량이 코드({entry.item_code})의 약 '{entry.name}'과 다릅니다.")
+            reasons.append(f"처방전의 함량이 코드({line.printed_code})의 약 '{entry.name}'과 다릅니다.")
         if reasons:
             candidates = [_candidate(entry, score, "처방전 코드")] + _name_candidates(ranked, skip_code=entry.item_code)
     else:
@@ -152,5 +154,5 @@ def match_line(line: DrugLine, dictionary: DrugDictionary, *, api: ApiSearch | N
 def match_order(order: DispensingOrder, dictionary: DrugDictionary, *, api: ApiSearch | None = None) -> DispensingOrder:
     """조제지시서의 모든 약품 줄을 매칭한 새 조제지시서를 돌려준다. api는 match_line과 같다."""
     data = order.model_dump()
-    data["drugs"] = [match_line(line, dictionary, api=api).model_dump() for line in order.drugs]
+    data["items"] = [match_line(line, dictionary, api=api).model_dump() for line in order.items]
     return DispensingOrder.model_validate(data)

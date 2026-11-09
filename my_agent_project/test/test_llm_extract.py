@@ -16,14 +16,14 @@ DATA = Path(__file__).resolve().parent.parent / "data" / "agent"
 
 PARSED = LlmPrescription(
     issue_no="2026110400001",
-    drugs=[
+    items=[
         {
             "name": "알마겔정",
             "printed_code": "699000031",
-            "dose_per_time": 1,
+            "count_per_dose": 1,
             "times_per_day": 3,
             "days": 3,
-            "time_slots": [],
+            "times": [],
         }
     ],
 )
@@ -76,7 +76,7 @@ def test_prompt_describes_the_input_that_is_actually_sent():
 def test_prompt_example_matches_what_the_rule_path_reads():
     # 프롬프트의 예시가 규칙 경로의 결과와 같아야 두 경로가 같은 이름을 낸다
     assert '"(1)900000011 타이레놀정/ 5oOmg 1 TAB 3회 3일 PO 식후 30분" -> name "타이레놀정 5oOmg"' in SYSTEM_PROMPT
-    assert extract_rule(load_ocr("rx_001"))["drugs"][0]["name"] == "타이레놀정 5oOmg"
+    assert extract_rule(load_ocr("rx_001"))["items"][0]["name"] == "타이레놀정 5oOmg"
 
 
 def test_prompt_forbids_correcting_and_guessing():
@@ -88,16 +88,16 @@ def test_prompt_forbids_correcting_and_guessing():
 
 def test_returns_a_plain_dict_in_the_shared_shape():
     result = extract_llm("텍스트", client=FakeClient())
-    assert set(result) == {"issue_no", "drugs"}
-    assert set(result["drugs"][0]) == {
-        "name", "printed_code", "dose_per_time", "times_per_day", "days", "time_slots",
+    assert set(result) == {"issue_no", "items"}
+    assert set(result["items"][0]) == {
+        "name", "printed_code", "count_per_dose", "times_per_day", "days", "times",
     }
-    assert isinstance(result, dict) and isinstance(result["drugs"][0], dict)
+    assert isinstance(result, dict) and isinstance(result["items"][0], dict)
 
 
 def test_result_goes_through_the_common_validator():
     order = order_from_extracted("P0001", extract_llm("텍스트", client=FakeClient()), source="llm")
-    assert order.source == "llm" and order.drugs[0].time_slots == ["morning", "noon", "evening"]
+    assert order.source == "llm" and order.items[0].times == ["morning", "noon", "evening"]
 
 
 def test_call_uses_the_configured_model_the_schema_and_the_prompt():
@@ -145,9 +145,9 @@ def test_no_feedback_message_when_there_is_no_feedback():
 @pytest.mark.parametrize("text", ["", "   ", None])
 def test_empty_text_fails_without_calling_the_api(text):
     client = FakeClient()
-    with pytest.raises(StructureError):
+    with pytest.raises(StructureError) as error:
         extract_llm(text, client=client)
-    assert client.calls == []
+    assert client.calls == [] and error.value.code == "E_LLM"
 
 
 def test_api_error_becomes_structure_error_without_leaking_its_message():
@@ -156,16 +156,19 @@ def test_api_error_becomes_structure_error_without_leaking_its_message():
         extract_llm("텍스트", client=client)
     assert "TimeoutError" in str(error.value)
     assert "비밀약품" not in str(error.value)
+    assert error.value.code == "E_LLM"
 
 
 def test_missing_parsed_result_fails():
-    with pytest.raises(StructureError, match="돌려주지 않았습니다"):
+    with pytest.raises(StructureError, match="돌려주지 않았습니다") as error:
         extract_llm("텍스트", client=FakeClient(parsed=None))
+    assert error.value.code == "E_LLM"
 
 
 def test_refusal_is_reported_as_a_refusal():
-    with pytest.raises(StructureError, match="거절"):
+    with pytest.raises(StructureError, match="거절") as error:
         extract_llm("텍스트", client=FakeClient(parsed=None, refusal="죄송합니다"))
+    assert error.value.code == "E_LLM"
 
 
 def test_missing_api_key_is_a_config_error(monkeypatch):
@@ -212,9 +215,9 @@ def test_output_schema_has_no_optional_fields():
         assert set(obj["required"]) == set(obj["properties"]), obj.get("title")
 
 
-def test_time_slots_are_limited_to_the_four_tray_rows():
+def test_times_are_limited_to_the_four_tray_rows():
     schema = LlmPrescription.model_json_schema()
-    items = schema["$defs"]["LlmDrug"]["properties"]["time_slots"]["items"]
+    items = schema["$defs"]["LlmDrug"]["properties"]["times"]["items"]
     assert items["enum"] == ["morning", "noon", "evening", "bedtime"]
 
 

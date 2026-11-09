@@ -2,8 +2,8 @@
 
 OCR 텍스트(agent.structure.ocr_to_llm_text: 교부번호 + 약품 표 본문만, 환자·의료인 정보는 빠짐)를
 OpenAI에 보내 규칙 경로와 같은 모양의 dict로 받는다.
-    {"issue_no": ..., "drugs": [{"name", "printed_code", "dose_per_time",
-                                 "times_per_day", "days", "time_slots"}, ...]}
+    {"issue_no": ..., "items": [{"name", "printed_code", "count_per_dose",
+                                 "times_per_day", "days", "times"}, ...]}
 검증은 여기서 하지 않는다. 결과는 agent.validate.order_from_extracted를 거쳐야 쓸 수 있다.
 
 주의
@@ -17,7 +17,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from agent import config
-from agent.errors import ConfigError, StructureError
+from agent.errors import E_LLM, ConfigError, StructureError
 from agent.schema import TimeSlot
 from agent.structure import ISSUE_NOT_FOUND
 
@@ -39,13 +39,13 @@ SYSTEM_PROMPT = f"""\
 - printed_code: 약품명 앞의 숫자 9자리. 순번 (1)은 빼세요. 9자리 숫자가 없으면 null.
 - name: 코드 뒤의 약품명. 떨어져 나온 함량 조각도 이름 뒤에 붙이고, '/'는 빼고 낱말 사이는 공백 하나로 쓰세요.
   예: "(1)900000011 타이레놀정/ 5oOmg 1 TAB 3회 3일 PO 식후 30분" -> name "타이레놀정 5oOmg"
-- dose_per_time: 1회 투약량(정수). "1 TAB"이면 1. 0.5나 1/2처럼 정수가 아니거나 읽을 수 없으면 0.
+- count_per_dose: 1회 투약량(정수). "1 TAB"이면 1. 0.5나 1/2처럼 정수가 아니거나 읽을 수 없으면 0.
 - times_per_day: 1일 투여 횟수(정수). "3회"이면 3. 읽을 수 없으면 0.
 - days: 총 투약 일수(정수). "3일"이면 3. 읽을 수 없으면 0.
-- time_slots: 용법에 아침·점심·저녁·취침 전이 적혀 있을 때만 해당하는 것을 morning, noon, evening, bedtime으로 담으세요.
+- times: 용법에 아침·점심·저녁·취침 전이 적혀 있을 때만 해당하는 것을 morning, noon, evening, bedtime으로 담으세요.
   "취침 전"과 "자기 전"은 bedtime입니다. "PO 식후 30분", "매 식후"처럼 시점이 적혀 있지 않으면 빈 목록입니다.
   횟수를 보고 시점을 짐작해 채우지 마세요.
-- 약품 표의 한 줄이 약품 하나입니다. 약품이 하나도 없으면 drugs는 빈 목록으로 두세요.
+- 약품 표의 한 줄이 약품 하나입니다. 약품이 하나도 없으면 items는 빈 목록으로 두세요.
 """
 
 FEEDBACK_TEMPLATE = (
@@ -59,15 +59,15 @@ FEEDBACK_TEMPLATE = (
 class LlmDrug(BaseModel):
     name: str
     printed_code: str | None
-    dose_per_time: int
+    count_per_dose: int
     times_per_day: int
     days: int
-    time_slots: list[TimeSlot]
+    times: list[TimeSlot]
 
 
 class LlmPrescription(BaseModel):
     issue_no: str | None
-    drugs: list[LlmDrug]
+    items: list[LlmDrug]
 
 
 def _default_client():
@@ -94,7 +94,7 @@ def extract_llm(
     실패하면 StructureError. 키가 없으면 ConfigError (재시도해도 소용없다).
     """
     if not isinstance(text, str) or not text.strip():
-        raise StructureError("OCR 텍스트가 비어 있습니다.")
+        raise StructureError("OCR 텍스트가 비어 있습니다.", code=E_LLM)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -113,11 +113,11 @@ def extract_llm(
         message = completion.choices[0].message
     except Exception as e:
         # 예외 문장에는 처방전 내용이 섞여 들어올 수 있어 종류만 남긴다.
-        raise StructureError(f"LLM 호출에 실패했습니다 ({type(e).__name__}).") from e
+        raise StructureError(f"LLM 호출에 실패했습니다 ({type(e).__name__}).", code=E_LLM) from e
 
     parsed = getattr(message, "parsed", None)
     if parsed is None:
         if getattr(message, "refusal", None):
-            raise StructureError("LLM이 요청을 거절했습니다.")
-        raise StructureError("LLM이 구조화 결과를 돌려주지 않았습니다.")
+            raise StructureError("LLM이 요청을 거절했습니다.", code=E_LLM)
+        raise StructureError("LLM이 구조화 결과를 돌려주지 않았습니다.", code=E_LLM)
     return parsed.model_dump()

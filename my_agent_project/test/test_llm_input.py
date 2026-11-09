@@ -52,8 +52,8 @@ def test_only_the_issue_number_and_the_drug_rows_are_sent(sample_id, header):
     issue_no, rows = llm_input(ocr)
     expected = load_expected(sample_id)
     assert issue_no == expected["issue_no"]
-    assert len(rows) == len(expected["drugs"])                    # 약품 한 줄 = 텍스트 한 줄
-    for row, drug in zip(rows, expected["drugs"]):
+    assert len(rows) == len(expected["items"])                    # 약품 한 줄 = 텍스트 한 줄
+    for row, drug in zip(rows, expected["items"]):
         assert drug["printed_code"] in row and "PO 식후 30분" in row
 
 

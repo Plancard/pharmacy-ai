@@ -65,7 +65,7 @@ def hint_for(cause: BaseException) -> str | None:
 
 
 # 정답과 견주는 칸. 이름은 띄어쓰기·'/'만 다른 것은 같은 것으로 본다 (normalize_name).
-COMPARE_KEYS = ("name", "printed_code", "dose_per_time", "times_per_day", "days")
+COMPARE_KEYS = ("name", "printed_code", "count_per_dose", "times_per_day", "days")
 
 
 def sample_ids() -> list[str]:
@@ -90,10 +90,10 @@ def compare(order, expected: dict[str, Any]) -> list[str]:
     diffs = []
     if order.issue_no != expected["issue_no"]:
         diffs.append(f"교부번호: 정답 {expected['issue_no']!r}, LLM {order.issue_no!r}")
-    want_drugs = expected["drugs"]
-    if len(order.drugs) != len(want_drugs):
-        diffs.append(f"약품 수: 정답 {len(want_drugs)}, LLM {len(order.drugs)}")
-    for i, (got, want) in enumerate(zip(order.drugs, want_drugs), start=1):
+    want_drugs = expected["items"]
+    if len(order.items) != len(want_drugs):
+        diffs.append(f"약품 수: 정답 {len(want_drugs)}, LLM {len(order.items)}")
+    for i, (got, want) in enumerate(zip(order.items, want_drugs), start=1):
         got_values = got.model_dump()
         for key in (*COMPARE_KEYS, "item_code"):
             if not _same(key, got_values[key], want[key]):
@@ -146,7 +146,7 @@ def check_one(
     order = match_order(order, dictionary)
     for warning in order.warnings:
         out(f"    경고: {warning}")
-    for i, drug in enumerate(order.drugs, start=1):
+    for i, drug in enumerate(order.items, start=1):
         if drug.needs_pharmacist_check:
             out(f"    약사 확인 {i}번째 약품: " + " / ".join(drug.check_reasons))
     diffs = compare(order, expected)

@@ -34,13 +34,13 @@ def extracted(**drug_overrides):
     drug = dict(
         name="알마겔정",
         printed_code="699000031",
-        dose_per_time=1,
+        count_per_dose=1,
         times_per_day=3,
         days=3,
-        time_slots=[],
+        times=[],
     )
     drug.update(drug_overrides)
-    return {"issue_no": None, "drugs": [drug]}
+    return {"issue_no": None, "items": [drug]}
 
 
 class FakeFn:
@@ -75,9 +75,9 @@ def test_rule_path_handles_the_real_format_prescriptions_without_calling_the_llm
     order = structure_prescription("P0001", load("cv_samples", sample_id), llm_fn=never_called)
     expected = load("cv_expected", sample_id)
     assert order.source == "rule" and order.issue_no == expected["issue_no"]
-    assert [(d.name, d.printed_code, d.dose_per_time, d.times_per_day, d.days) for d in order.drugs] == [
-        (want["name"], want["printed_code"], want["dose_per_time"], want["times_per_day"], want["days"])
-        for want in expected["drugs"]
+    assert [(d.name, d.printed_code, d.count_per_dose, d.times_per_day, d.days) for d in order.items] == [
+        (want["name"], want["printed_code"], want["count_per_dose"], want["times_per_day"], want["days"])
+        for want in expected["items"]
     ]
     assert not any("LLM" in w for w in order.warnings)
 
@@ -141,7 +141,7 @@ def test_without_any_table_row_the_llm_is_not_called():
 
 
 def test_first_try_success_has_only_the_fallback_note_and_the_validator_warnings():
-    order = run(llm_fn=FakeFn(extracted(time_slots=["morning", "noon", "evening"])))
+    order = run(llm_fn=FakeFn(extracted(times=["morning", "noon", "evening"])))
     assert len(order.warnings) == 1 and "규칙 기반으로 읽지 못해" in order.warnings[0]
     assert not any("번째 시도" in w for w in order.warnings)
 
@@ -161,8 +161,8 @@ def test_unexpected_rule_error_falls_back_without_leaking_its_message():
 
 
 def test_llm_result_goes_through_the_common_validator():
-    order = run(llm_fn=FakeFn(extracted(time_slots=[])))
-    assert order.drugs[0].time_slots == ["morning", "noon", "evening"]   # 빈 시점은 횟수로 채워진다
+    order = run(llm_fn=FakeFn(extracted(times=[])))
+    assert order.items[0].times == ["morning", "noon", "evening"]   # 빈 시점은 횟수로 채워진다
     assert any("복용 시점이 처방전에 없어" in w for w in order.warnings)
 
 
@@ -199,6 +199,7 @@ def test_gives_up_after_the_allowed_number_of_attempts_and_lists_every_reason():
     assert len(llm.calls) == 2                                    # 기본값: 처음 1번 + 재시도 1번
     assert "직접 입력" in message
     assert "[규칙] 규칙 실패" in message and "[LLM 1회]" in message and "[LLM 2회]" in message
+    assert error.value.code == "E_LLM"                            # A.7: AI 응답 오류
 
 
 @pytest.mark.parametrize("retries, calls", [(0, 1), (1, 2), (2, 3), (-5, 1)])
@@ -226,14 +227,30 @@ def test_config_error_from_the_rule_path_is_not_swallowed():
 
 def test_missing_prescription_id_fails_before_anything_runs():
     for bad in ("", "   ", None):
-        with pytest.raises(StructureError, match="처방 ID"):
+        with pytest.raises(StructureError, match="처방 ID") as error:
             structure_prescription(bad, NO_HEADER_OCR, rule_fn=never_called, llm_fn=never_called)
+        assert error.value.code is None            # 처방전이 아니라 부르는 쪽의 잘못이라 A.7 코드가 없다
 
 
 @pytest.mark.parametrize("bad", [None, {}, {"lines": []}, {"lines": [{"text": "a"}]}])
 def test_malformed_ocr_fails_before_anything_runs(bad):
-    with pytest.raises(StructureError):
+    with pytest.raises(StructureError) as error:
         structure_prescription("P0001", bad, rule_fn=never_called, llm_fn=never_called)
+    assert error.value.code == "E_OCR_EMPTY"
+
+
+def test_no_drug_row_to_send_is_an_ocr_empty_error_without_calling_the_llm():
+    # 글자는 있지만 약품 코드 줄이 하나도 없다: 규칙 경로도 못 읽고 LLM에 보낼 것도 없다
+    ocr = {"lines": [{"text": "처 방 전", "bbox": [0, 0, 100, 40], "conf": 0.9}]}
+    with pytest.raises(StructureError, match="약품 표 줄을 찾지 못해") as error:
+        structure_prescription("P0001", ocr, llm_fn=never_called)
+    assert error.value.code == "E_OCR_EMPTY"
+
+
+def test_the_last_error_is_e_llm_even_when_the_llm_calls_themselves_failed():
+    with pytest.raises(StructureError) as error:
+        run(llm_fn=FakeFn(StructureError("LLM 호출에 실패했습니다 (TimeoutError).")))
+    assert error.value.code == "E_LLM"
 
 
 # ------------------------------------------------------------ 진짜 extract_llm과 이어 붙이기
@@ -242,14 +259,14 @@ def test_malformed_ocr_fails_before_anything_runs(bad):
 def test_works_with_the_real_extract_llm_and_a_fake_client():
     parsed = LlmPrescription(
         issue_no=None,
-        drugs=[
+        items=[
             {
                 "name": "알마겔정",
                 "printed_code": "699000031",
-                "dose_per_time": 1,
+                "count_per_dose": 1,
                 "times_per_day": 2,
                 "days": 3,
-                "time_slots": ["morning", "bedtime"],
+                "times": ["morning", "bedtime"],
             }
         ],
     )
@@ -264,5 +281,5 @@ def test_works_with_the_real_extract_llm_and_a_fake_client():
     order = structure_prescription(
         "P0001", NO_HEADER_OCR, llm_fn=functools.partial(extract_llm, client=client)
     )
-    assert order.source == "llm" and order.drugs[0].time_slots == ["morning", "bedtime"]
+    assert order.source == "llm" and order.items[0].times == ["morning", "bedtime"]
     assert calls[0]["messages"][1]["content"] == NO_HEADER_TEXT
