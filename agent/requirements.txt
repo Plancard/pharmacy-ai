@@ -1,0 +1,6 @@
+# Agent가 쓰는 패키지. 설치해 확인한 것만 버전을 고정한다. 새 패키지는 쓰는 단계에서 확인하고 더한다.
+# python-dotenv는 web/requirements.txt와 같은 버전이어야 한다 (한 이미지에 같이 설치됨).
+python-dotenv==1.2.4
+
+# 테스트 (python -m pytest tests/agent -q)
+pytest==9.1.1
