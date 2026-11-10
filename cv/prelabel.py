@@ -32,6 +32,8 @@ TIMES = ["morning", "noon", "evening", "bedtime"]  # 행 0~3 (사진 위 → 아
 ROWS, COLS = 4, 3                                  # 4행(복용 시점) × 3열(1~3일)
 WARP_W, WARP_H = 960, 1280
 IMG_EXTS = {".jpg", ".jpeg", ".png"}
+RF_NAMES = {0: "0_tylenol", 1: "1_geborin", 2: "2_trispen", 3: "3_pronknon",
+            4: "4_arpen", 5: "5_yobisin", 6: "6_tripline", 7: "7_mucodyne"}  # cv/classes.yaml ID와 같게
 
 
 # ---------------------------------------------------------------- 칸 / 배치 기록
@@ -121,6 +123,33 @@ def assign(boxes, actual):
     return out, notes
 
 
+# ---------------------------------------------------------------- 박스 정리 (모델이 트레이 사진에 서툴러서)
+def _inter(a, b):
+    ax1, ay1, ax2, ay2 = a[0] - a[2] / 2, a[1] - a[3] / 2, a[0] + a[2] / 2, a[1] + a[3] / 2
+    bx1, by1, bx2, by2 = b[0] - b[2] / 2, b[1] - b[3] / 2, b[0] + b[2] / 2, b[1] + b[3] / 2
+    return max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+
+
+def clean_boxes(dets, iou=0.5, contain=0.85, merged_ratio=1.5):
+    """dets: [(cx, cy, w, h, conf, cls)] → (남길 박스, 버린 박스)
+    1) 큰 박스가 작은 박스를 거의 통째로 품고(contain) 면적이 merged_ratio배 이상 → 알약 2개를 묶은 박스로 보고 큰 쪽 버림
+    2) 클래스 무시하고 IoU > iou 인 중복 → 점수 낮은 쪽 버림 (같은 알약에 0번·7번 박스가 겹치는 경우)"""
+    area = [d[2] * d[3] for d in dets]
+    drop = set()
+    for i in range(len(dets)):
+        for j in range(len(dets)):
+            if i != j and area[i] >= merged_ratio * area[j] and _inter(dets[i], dets[j]) >= contain * area[j]:
+                drop.add(i)
+    rest = sorted((i for i in range(len(dets)) if i not in drop), key=lambda i: -dets[i][4])
+    keep = []
+    for i in rest:
+        if all(_inter(dets[i], dets[k]) / (area[i] + area[k] - _inter(dets[i], dets[k])) <= iou for k in keep):
+            keep.append(i)
+        else:
+            drop.add(i)
+    return [dets[i] for i in sorted(keep)], [dets[i] for i in sorted(drop)]
+
+
 # ---------------------------------------------------------------- 추론
 def make_predictor(model_path, conf, imgsz):
     from ultralytics import YOLO
@@ -204,15 +233,27 @@ def run(args, predict, names):
         if (w, h) != (WARP_W, WARP_H):
             print(f"  [주의] {name} 크기 {w}×{h} (보정본은 {WARP_W}×{WARP_H})")
 
+        pre_dropped = []
+        if not args.no_clean:
+            dets, pre_dropped = clean_boxes(dets, iou=args.iou)
         by_cell = {}
         for d in dets:
             by_cell.setdefault(cell_of(d[0], d[1], w, h), []).append(d)
 
-        labeled, dropped = [], []
+        labeled, dropped = [], [(*d[:5], None) for d in pre_dropped]
+        stats["정리로 버린 박스"] += len(pre_dropped)
         for day in (1, 2, 3):
             for t in TIMES:
                 actual = cells[(group, day, t)]
                 ds = by_cell.get((day, t), [])
+                need = sum(actual.values())
+                if actual and not args.keep_extra and len(ds) > need:  # 칸 개수보다 많으면 점수 높은 것만
+                    ds = sorted(ds, key=lambda d: -d[4])
+                    dropped += [(*d[:5], None) for d in ds[need:]]
+                    report.append({"file": name, "group": group, "day": day, "time": t,
+                                   "actual": ";".join(f"{k}:{v}" for k, v in sorted(actual.items())),
+                                   "boxes": len(ds), "note": f"초과 {len(ds) - need}개 버림(점수 낮은 것) → 확인"})
+                    ds = ds[:need]
                 classes, notes = assign([(d[4], d[5]) for d in ds], actual)
                 for d, c in zip(ds, classes):
                     (labeled if c is not None else dropped).append((*d[:5], c))
@@ -235,11 +276,12 @@ def run(args, predict, names):
         wr.writeheader()
         wr.writerows(report)
 
-    # Roboflow YOLO 업로드용 클래스 목록
+    # Roboflow YOLO 업로드용 클래스 목록. Roboflow는 한글 이름을 '-'로 바꿔 버리므로 영문 + ID 접두어
+    # (내보낼 때 번호가 알파벳순으로 바뀌어도 remap_rf.py가 접두어로 ID를 되찾는다)
     with open(out_dir / "data.yaml", "w", encoding="utf-8") as f:
         f.write(f"nc: {len(names)}\nnames:\n")
         for k in sorted(names):
-            f.write(f"  {k}: {names[k]}\n")
+            f.write(f"  {k}: {RF_NAMES.get(k, f'{k}_class')}\n")
 
     print("결과:", ", ".join(f"{k} {v}" for k, v in stats.items()))
     bad = len({r["file"] for r in report})
@@ -257,6 +299,9 @@ def main():
     ap.add_argument("--vis", help="박스·격자를 그린 확인용 이미지 폴더")
     ap.add_argument("--limit", type=int, help="앞에서 N장만")
     ap.add_argument("--force", action="store_true", help="기존 txt 덮어쓰기")
+    ap.add_argument("--iou", type=float, default=0.5, help="클래스 무시 중복 제거 IoU 기준")
+    ap.add_argument("--no-clean", action="store_true", help="묶음 박스·중복 박스 정리 끄기")
+    ap.add_argument("--keep-extra", action="store_true", help="칸 개수보다 많은 박스도 남기기(예전 동작)")
     args = ap.parse_args()
 
     predict, names = make_predictor(args.model, args.conf, args.imgsz)
