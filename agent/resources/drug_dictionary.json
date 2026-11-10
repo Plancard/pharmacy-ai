@@ -1,0 +1,13 @@
+{
+  "note": "조제 대상 약품 8종 (CV의 cv/classes.yaml과 같은 순서·이름). item_code는 식약처 품목기준코드로 모든 모듈이 약을 가리키는 공통 키다. class_id는 CV 학습 클래스 ID(classes.yaml의 id)다. 아이월드요비신정 416.7mg의 코드(200713170)는 명세서 2.6절 값이고 아직 의약품 API로 확인하지 않았다 (5단계 verify_dictionary에서 확인한다).",
+  "drugs": [
+    {"class_id": 0, "item_code": "202106092", "name": "타이레놀정500mg"},
+    {"class_id": 1, "item_code": "197900277", "name": "게보린정"},
+    {"class_id": 2, "item_code": "201110120", "name": "트리스펜연질캡슐"},
+    {"class_id": 3, "item_code": "200200099", "name": "프론크논캡슐"},
+    {"class_id": 4, "item_code": "200201239", "name": "아르펜정"},
+    {"class_id": 5, "item_code": "200713170", "name": "아이월드요비신정 416.7mg"},
+    {"class_id": 6, "item_code": "200002714", "name": "트립라인정"},
+    {"class_id": 7, "item_code": "200308774", "name": "뮤코다인캡슐200mg"}
+  ]
+}

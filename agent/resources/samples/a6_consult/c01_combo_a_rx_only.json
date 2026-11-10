@@ -1,0 +1,11 @@
+{
+  "prescription_id": "P0001",
+  "risk_scope": "rx_only",
+  "new_findings": [],
+  "recheck_after_dispense": false,
+  "risk_level": "warning",
+  "answer": "(가짜 데이터) 타이레놀정500mg과 게보린정에는 둘 다 아세트아미노펜이 들어 있어 함께 드시면 하루 총량이 늘어납니다. 약사에게 복용량을 확인하세요.",
+  "evidence": [
+    {"title": "(가짜 데이터) 타이레놀정500mg 주의사항", "source": "예시 출처", "excerpt": "(가짜 데이터) 다른 아세트아미노펜 함유 제품과 함께 복용하지 않도록 한다는 예시 문장입니다."}
+  ]
+}

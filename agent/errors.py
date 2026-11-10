@@ -28,3 +28,18 @@ class StructureError(Exception):
 
 class ConfigError(RuntimeError):
     """개발 환경 문제(키 없음 등). 재시도해도 소용없으므로 구조화 실패와 구분해 그대로 올려 보낸다."""
+
+
+class DrugApiError(Exception):
+    """식약처 의약품 API 조회 실패 (5단계). 메시지는 화면에 그대로 보여도 되는 문장이다 (키·처방 내용은 담지 않는다).
+
+    오류 코드는 언제나 E_EXT_API (명세서 A.7). status는 HTTP 상태 코드이고, HTTP 오류가 아니면 None이다.
+    이 오류는 서비스를 멈추지 않는다: 약품 매칭은 사전만으로 계속하고 그 줄을 약사 확인으로 넘긴다 (REQ-NF-06).
+    판단 층(drug_match)도 이 오류를 알아야 해서 맨 아래층인 여기에 둔다. 던지는 쪽은 가장자리의 drug_api.py다.
+    """
+
+    code = E_EXT_API
+
+    def __init__(self, message: str = "", status: int | None = None):
+        super().__init__(message)
+        self.status = status

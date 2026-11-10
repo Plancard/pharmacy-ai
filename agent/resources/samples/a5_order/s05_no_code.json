@@ -1,0 +1,8 @@
+{
+  "prescription_id": "P0005",
+  "items": [
+    {"item_code": "202106092", "name": "타이레놀정500mg", "count_per_dose": 1, "times": ["morning", "noon", "evening"], "days": 3, "source_line_ids": [11, 12, 13, 14, 15]},
+    {"item_code": "200308774", "name": "뮤코다인캡슐200mg", "count_per_dose": 1, "times": ["morning", "noon", "evening"], "days": 3, "source_line_ids": [16, 17, 18, 19, 20]}
+  ],
+  "risk_check": {"scope": "rx_only", "level": "none", "findings": []}
+}
