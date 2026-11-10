@@ -1,0 +1,19 @@
+{
+  "prescription_id": "P0001",
+  "image_id": "tray_s01_b",
+  "summary": {"ok": 10, "mismatch": 1, "need_review": 1, "hitl_required": true},
+  "cells": [
+    {"day": 1, "time": "morning", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "ok", "reasons": []},
+    {"day": 1, "time": "noon", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "ok", "reasons": []},
+    {"day": 1, "time": "evening", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "ok", "reasons": []},
+    {"day": 1, "time": "bedtime", "expected": {}, "actual": {}, "status": "ok", "reasons": []},
+    {"day": 2, "time": "morning", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "ok", "reasons": []},
+    {"day": 2, "time": "noon", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1}, "status": "mismatch", "reasons": []},
+    {"day": 2, "time": "evening", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "ok", "reasons": []},
+    {"day": 2, "time": "bedtime", "expected": {}, "actual": {}, "status": "ok", "reasons": []},
+    {"day": 3, "time": "morning", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "ok", "reasons": []},
+    {"day": 3, "time": "noon", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "ok", "reasons": []},
+    {"day": 3, "time": "evening", "expected": {"202106092": 1, "197900277": 1}, "actual": {"202106092": 1, "197900277": 1}, "status": "need_review", "reasons": ["low_conf"]},
+    {"day": 3, "time": "bedtime", "expected": {}, "actual": {}, "status": "ok", "reasons": []}
+  ]
+}

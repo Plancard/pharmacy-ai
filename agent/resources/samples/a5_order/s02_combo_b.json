@@ -1,0 +1,14 @@
+{
+  "prescription_id": "P0002",
+  "items": [
+    {"item_code": "201110120", "name": "트리스펜연질캡슐", "count_per_dose": 1, "times": ["morning", "evening"], "days": 3, "source_line_ids": [11, 12, 13, 14, 15]},
+    {"item_code": "200201239", "name": "아르펜정", "count_per_dose": 1, "times": ["morning", "evening"], "days": 3, "source_line_ids": [16, 17, 18, 19, 20]}
+  ],
+  "risk_check": {
+    "scope": "rx_only",
+    "level": "warning",
+    "findings": [
+      {"type": "ingredient_dup", "item_codes": ["201110120", "200201239"], "level": "warning", "message": "트리스펜연질캡슐과 아르펜정에 이부프로펜 성분이 함께 들어 있습니다. 하루 총량을 확인하세요."}
+    ]
+  }
+}

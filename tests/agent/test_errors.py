@@ -2,7 +2,7 @@
 import pytest
 
 from agent import errors
-from agent.errors import ERROR_CODES, StructureError
+from agent.errors import ERROR_CODES, DrugApiError, StructureError
 
 
 def test_the_error_codes_of_the_spec():
@@ -27,3 +27,14 @@ def test_the_code_is_optional():
 def test_an_unknown_code_is_refused(bad):
     with pytest.raises(ValueError, match="알 수 없는 오류 코드"):
         StructureError("x", code=bad)
+
+
+def test_a_drug_api_error_is_always_the_external_api_code():
+    error = DrugApiError("의약품 API에 연결하지 못했습니다 (URLError).")
+    assert (str(error), error.code, error.status) == ("의약품 API에 연결하지 못했습니다 (URLError).", "E_EXT_API", None)
+    assert error.code in ERROR_CODES
+
+
+def test_a_drug_api_error_can_carry_the_http_status():
+    assert DrugApiError("x", status=403).status == 403
+    assert DrugApiError().status is None and str(DrugApiError()) == ""

@@ -22,6 +22,9 @@ LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
 # 주의: 폴더 이름을 data/로 하면 .gitignore의 data/ 규칙에 걸려 git add가 무시한다.
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
 
+# 프롬프트 폴더 (agent/prompts). LLM에 보내는 지시문은 코드가 아니라 여기 파일로 둔다. 고치면 git 기록에 그대로 남는다.
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+
 # 약품 사전 파일. 바꾸려면 .env에 DRUG_DICTIONARY_PATH=... 을 적는다.
 DRUG_DICTIONARY_PATH = Path(os.getenv("DRUG_DICTIONARY_PATH") or RESOURCES_DIR / "drug_dictionary.json")
 

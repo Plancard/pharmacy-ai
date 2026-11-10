@@ -1,0 +1,78 @@
+{
+  "prescription_id": "P0001",
+  "days": 3,
+  "plan": [
+    {
+      "day": 1,
+      "time": "morning",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 1,
+      "time": "noon",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 1,
+      "time": "evening",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 2,
+      "time": "morning",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 2,
+      "time": "noon",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 2,
+      "time": "evening",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 3,
+      "time": "morning",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 3,
+      "time": "noon",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    },
+    {
+      "day": 3,
+      "time": "evening",
+      "items": [
+        {"item_code": "202106092", "count": 1},
+        {"item_code": "197900277", "count": 1}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "prescription_id": "P0004",
+  "items": [
+    {"item_code": "200200099", "name": "프론크논캡슐", "count_per_dose": 1, "times": ["morning", "noon", "evening"], "days": 3, "source_line_ids": [11, 12, 13, 14, 15], "needs_pharmacist_check": true, "check_reasons": ["OCR 신뢰도 낮음 (프론크논램술 → 프론크논캡슐)"]},
+    {"item_code": "200002714", "name": "트립라인정", "count_per_dose": 1, "times": ["bedtime"], "days": 3, "source_line_ids": [16, 17, 18, 19, 20]},
+    {"item_code": "200713170", "name": "아이월드요비신정 416.7mg", "count_per_dose": 1, "times": ["morning", "evening"], "days": 3, "source_line_ids": [21, 22, 23, 24, 25]},
+    {"item_code": null, "name": "알모탄정", "count_per_dose": 1, "times": ["morning", "noon", "evening"], "days": 3, "source_line_ids": [26, 27, 28, 29, 30], "needs_pharmacist_check": true, "check_reasons": ["대상 8종이 아닌 약품 (품목기준코드 없음)"]}
+  ],
+  "risk_check": {
+    "scope": "rx_only",
+    "level": "danger",
+    "findings": [
+      {"type": "contraindication", "item_codes": ["200200099", "200002714"], "level": "danger", "message": "(가짜 데이터) 병용금기 조합 예시입니다. 처방 의사에게 확인한 뒤 진행하세요."},
+      {"type": "age_caution", "item_codes": ["200713170"], "level": "caution", "message": "(가짜 데이터) 주의 항목 예시입니다. 화면에 표시만 하고 진행은 막지 않습니다."}
+    ]
+  }
+}

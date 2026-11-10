@@ -2,5 +2,14 @@
 # python-dotenv는 web/requirements.txt와 같은 버전이어야 한다 (한 이미지에 같이 설치됨).
 python-dotenv==1.2.4
 
+# 데이터 형식 검사 (agent/schema.py). my_agent_project/requirements.txt와 같은 버전
+pydantic==2.13.5
+
+# LLM 호출 (agent/llm.py). 실제로 부를 때만 필요하고, 시험은 이 패키지 없이 돈다.
+# 설치해서 확인한 뒤 `pip freeze` 결과로 버전을 고정한다 (3단계).
+openai==3.37.0
+
 # 테스트 (python -m pytest tests/agent -q)
 pytest==9.1.1
+
+langgraph==1.2.17
