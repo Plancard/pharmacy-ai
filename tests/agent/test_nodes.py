@@ -10,7 +10,10 @@ from agent.config import RESOURCES_DIR
 from agent.drug_api import ApiDrug
 from agent.drug_dictionary import load_dictionary
 from agent.errors import E_LLM, E_OCR_EMPTY, E_PLAN_RANGE, ConfigError, StructureError
+from agent.drug_match import match_order
+from agent.mcp_client import McpToolError
 from agent.nodes import (
+    MCP_FAILED_WARNING,
     APPROVED_NOTICE,
     ASK_TYPE_NOTICE,
     EDITED_NOTICE,
@@ -273,6 +276,50 @@ def test_no_warning_when_an_api_was_given():
     state = state_with(order_of(line("가나다정")))
     order = DispensingOrder.model_validate(match_node(state, deps(api=api))["order"])
     assert asked and NO_API_WARNING not in order.warnings
+
+
+class FakeTools:
+    """MCP 클라이언트 대신. 서버가 하는 일(match_order)을 그대로 하고, 불린 횟수와 실패를 흉내 낸다."""
+
+    def __init__(self, *, api_used=False, fail=None):
+        self.calls, self.api_used, self.fail = 0, api_used, fail
+
+    def match_drug(self, order):
+        self.calls += 1
+        if self.fail:
+            raise McpToolError(self.fail)
+        return match_order(order, DICT), self.api_used
+
+
+def tools_deps(tools, api=None):
+    return dataclasses.replace(deps(api=api), tools=tools)
+
+
+def test_with_mcp_tools_the_match_goes_through_the_tool_and_gives_the_same_order():
+    tools = FakeTools()
+    by_mcp = match_node(structured("rx_004"), tools_deps(tools))
+    assert tools.calls == 1 and by_mcp == match_node(structured("rx_004"), deps())
+
+
+def test_with_mcp_tools_the_no_api_warning_follows_the_server():
+    without = DispensingOrder.model_validate(match_node(structured("rx_005"), tools_deps(FakeTools(api_used=False)))["order"])
+    assert without.warnings.count(NO_API_WARNING) == 1
+    with_api = DispensingOrder.model_validate(match_node(structured("rx_005"), tools_deps(FakeTools(api_used=True)))["order"])
+    assert NO_API_WARNING not in with_api.warnings                 # 서버가 API를 썼다면 사전만 썼다는 경고는 틀린 말이다
+
+
+def test_when_the_mcp_tool_fails_the_node_matches_by_itself_and_says_so():
+    tools = FakeTools(fail="연결이 끊겼습니다")
+    update = match_node(structured("rx_004"), tools_deps(tools))
+    order = DispensingOrder.model_validate(update["order"])
+    direct = DispensingOrder.model_validate(match_node(structured("rx_004"), deps())["order"])
+    assert tools.calls == 1 and update["status"] == "matched"
+    assert [d.item_code for d in order.items] == [d.item_code for d in direct.items]
+    assert f"{MCP_FAILED_WARNING}: 연결이 끊겼습니다" in order.warnings
+
+
+def test_without_mcp_tools_the_function_is_called_directly():
+    assert Deps(dictionary=DICT, structure=real_structure).tools is None
 
 
 def test_a_failing_api_does_not_stop_the_match():

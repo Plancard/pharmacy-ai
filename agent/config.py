@@ -58,3 +58,8 @@ def require_openai_key() -> str:
 def database_url() -> str | None:
     """서비스 테이블과 LangGraph 체크포인트가 같이 쓰는 PostgreSQL 주소(DATABASE_URL). 없으면 None."""
     return os.getenv("DATABASE_URL", "").strip() or None
+
+
+def use_mcp() -> bool:
+    """AGENT_USE_MCP=1 이면 웹의 Agent(api.AgentApi.from_settings)가 약품 매칭을 MCP 도구로 부른다 (12단계). 기본은 함수 호출."""
+    return os.getenv("AGENT_USE_MCP", "").strip().lower() in ("1", "true", "yes", "on")

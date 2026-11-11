@@ -6,6 +6,7 @@
     python scripts/agent/run_graph.py --no-api              # .env에 DRUG_API_KEY가 있어도 식약처 API를 쓰지 않는다 (약품 사전만)
     python scripts/agent/run_graph.py --subgraph --all      # 처방 서브그래프만 단독으로 (슈퍼바이저를 거치지 않는다). 결과는 상위 그래프와 같다
     python scripts/agent/run_graph.py rx8_01 --db           # 멈춘 곳을 .env의 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)
+    python scripts/agent/run_graph.py --all --mcp           # 약품 매칭을 MCP 도구로 부른다 (python -m agent.mcp_server를 띄운다)
 
 사진과 함께 글을 보내려면 --text를 준다. 글만 보내려면 --no-ocr와 함께 쓴다.
     python scripts/agent/run_graph.py rx8_01 --text "게보린 빼 주세요"      # 수정 요청 -> 승인 카드의 제안으로만
@@ -38,6 +39,7 @@ if str(ROOT) not in sys.path:
 from agent import config  # noqa: E402
 from agent.checkpoint import default_checkpointer, describe, memory_checkpointer  # noqa: E402
 from agent.errors import ConfigError  # noqa: E402
+from agent.mcp_client import McpToolError, stdio  # noqa: E402
 from agent.graph import build_graph, build_prescription_graph, resume_run, run_message, run_prescription  # noqa: E402
 from agent.nodes import APPROVE, HITL_TYPE  # noqa: E402
 from agent.proposal import PROPOSAL_LABELS  # noqa: E402
@@ -129,16 +131,35 @@ def main(argv: list[str] | None = None, *, graph=None, out: Callable[[str], None
     parser.add_argument("--approve", action="store_true", help="승인 대기에서 화면의 조제지시서를 그대로 승인해 이어 간다")
     parser.add_argument("--db", action="store_true", help="멈춘 곳을 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)")
     parser.add_argument("--text", help="사진과 함께(또는 --no-ocr로 글만) 보낼 글")
+    parser.add_argument("--mcp", action="store_true", help="약품 매칭을 MCP 도구(match_drug)로 부른다. 서버를 하위 프로세스로 띄운다")
     parser.add_argument("--choose", help="되묻는 곳(type_select)에서 고를 값 (사진: prescription · med_bag · tray, 글: current_med · question · memo)")
     args = parser.parse_args(argv)
     if args.subgraph and args.kind is not None:
         parser.error("--subgraph는 슈퍼바이저를 거치지 않으므로 사진 종류(--kind)를 줄 수 없습니다")
 
+    tools = None
+    if graph is None and args.mcp:
+        try:
+            tools = stdio(no_api=args.no_api)
+        except McpToolError as e:
+            out(f"MCP 서버 문제: {e}")
+            out("mcp 패키지가 없다면 pip install -r agent/requirements.txt 로 설치해 주세요.")
+            return 1
+        out(f"약품 매칭: MCP 도구로 부름 (python -m agent.mcp_server, 도구 {len(tools.tool_names())}개: {', '.join(tools.tool_names())})")
+    try:
+        return _run(args, ids, graph, tools, out)
+    finally:
+        if tools is not None:
+            tools.close()
+
+
+def _run(args: argparse.Namespace, ids: list[str], graph, tools, out: Callable[[str], None]) -> int:
     if graph is None:
         try:
             checkpointer = default_checkpointer() if args.db else memory_checkpointer()
             build = build_prescription_graph if args.subgraph else build_graph
-            graph = build(checkpointer=checkpointer, **({"api": None} if args.no_api else {}))
+            options = ({"api": None} if args.no_api else {}) | ({"tools": tools} if tools is not None else {})
+            graph = build(checkpointer=checkpointer, **options)
         except ConfigError as e:
             out(f"설정 문제: {e}")
             return 1

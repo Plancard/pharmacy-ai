@@ -6,7 +6,8 @@
     supervisor     메시지 하나의 흐름과 순서를 정한다 (supervisor.py의 규칙). 메시지 하나에 한 번만 돈다
     ask_type       사진 종류나 글의 뜻을 되묻는다 (HITL type_select). 약사가 고르면 그것으로 흐름을 다시 정한다
     structure      OCR -> 조제지시서 (규칙 경로 -> 실패하면 LLM 경로)
-    match          약품 -> 품목기준코드 (약품 사전 -> 사전에 없으면 식약처 의약품 API), 약사 확인 표시
+    match          약품 -> 품목기준코드 (약품 사전 -> 사전에 없으면 식약처 의약품 API), 약사 확인 표시.
+                   deps.tools(MCP 클라이언트)가 있으면 MCP 도구 match_drug로 부른다 (12단계)
     risk           처방약끼리 위험 신호 대조 (지금은 성분 중복). 결과를 조제지시서의 risk_check에 담는다
     approve        약사 승인 대기 (HITL ①). interrupt로 멈추고, 약사 응답(승인 · 고치기)을 받아 이어 간다.
                    글로 받은 제안과 메모를 승인 화면에 함께 보인다
@@ -24,6 +25,7 @@ from typing import Any, Callable
 from agent.drug_dictionary import DrugDictionary
 from agent.drug_match import ApiSearch, match_order
 from agent.errors import StructureError
+from agent.mcp_client import DrugTools, McpToolError
 from agent.plan import PlanError, build_plan
 from agent.risk import LEVEL_LABELS, check_order, requires_confirmation
 from agent.schema import DispensingOrder
@@ -70,6 +72,7 @@ class Deps:
     structure: StructureFn                # (처방 ID, OCR) -> 조제지시서. 실제로는 graph.default_structure
     api: ApiSearch | None = None          # 의약품 API 조회 (agent.drug_api.default_api). None이면 사전만 쓴다
     ask: AskFn | None = None              # 약사에게 묻기. None이면 LangGraph의 interrupt (그래프 안에서만 쓸 수 있다)
+    tools: DrugTools | None = None        # MCP 약품 도구 (agent.mcp_client). 있으면 매칭을 MCP로 부른다 (api는 서버 쪽 것을 쓴다)
 
 
 def _order_dict(order: DispensingOrder) -> dict[str, Any]:
@@ -155,6 +158,9 @@ def _keep_pharmacist_choice(line, matched):
     })
 
 
+MCP_FAILED_WARNING = "MCP 약품 도구를 쓰지 못해 Agent가 직접 약품을 찾았습니다"
+
+
 def match_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     """약품마다 품목기준코드를 정하고 약사 확인 표시를 붙인다.
 
@@ -163,11 +169,20 @@ def match_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     약사가 고친 뒤(status=edited)에는 약사가 직접 고른 약(매칭 결과와 다른 품목기준코드)을 바꾸지 않는다.
     """
     order = DispensingOrder.model_validate(state["order"])
-    matched = match_order(order, deps.dictionary, api=deps.api)
+    mcp_failure = None
+    if deps.tools is not None:
+        try:
+            matched, api_used = deps.tools.match_drug(order)  # 같은 match_order를 MCP 서버가 부른다
+        except McpToolError as e:                             # 서버가 죽어도 조제를 멈추지 않고 직접 부른다
+            mcp_failure = e
+    if deps.tools is None or mcp_failure is not None:
+        matched, api_used = match_order(order, deps.dictionary, api=deps.api), deps.api is not None
+    if mcp_failure is not None:
+        matched.warnings = [*matched.warnings, f"{MCP_FAILED_WARNING}: {mcp_failure}"]
     if state.get("status") == "edited":
         matched.items = [_keep_pharmacist_choice(line, new) for line, new in zip(order.items, matched.items)]
         matched = DispensingOrder.model_validate(matched.model_dump(mode="json"))
-    if deps.api is None and not matched.all_matched and NO_API_WARNING not in matched.warnings:
+    if not api_used and not matched.all_matched and NO_API_WARNING not in matched.warnings:
         matched.warnings = [*matched.warnings, NO_API_WARNING]
     return {"order": _order_dict(matched), "status": "matched"}
 

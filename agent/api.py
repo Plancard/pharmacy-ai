@@ -23,8 +23,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agent import config
 from agent.drug_dictionary import DrugDictionary, load_dictionary
 from agent.graph import build_graph, resume_run, run_message, thread_config
+from agent.mcp_client import DrugTools, stdio
 from agent.intent import CURRENT_MED, EDIT, MEMO, QUESTION, classify
 from agent.nodes import HITL_APPROVAL, HITL_TYPE, read_choice, read_reply
 from agent.proposal import make_proposals
@@ -50,14 +52,26 @@ class AgentRunError(Exception):
 
 
 class AgentApi:
-    def __init__(self, graph, dictionary: DrugDictionary | None = None):
+    def __init__(self, graph, dictionary: DrugDictionary | None = None, tools: DrugTools | None = None):
         self.graph = graph
         self._dictionary = dictionary          # 글에서 약 이름을 찾을 때 쓴다 (handle_text). 없으면 처음 쓸 때 설정의 사전을 읽는다
+        self.tools = tools                     # 그래프가 쓰는 MCP 연결 (있으면 close()에서 닫는다)
 
     @classmethod
     def from_settings(cls, **kwargs) -> "AgentApi":
-        """설정대로 만든 그래프로 (약품 사전 · 의약품 API · 체크포인터). 인자는 graph.build_graph와 같다."""
-        return cls(build_graph(**kwargs), kwargs.get("dictionary"))
+        """설정대로 만든 그래프로 (약품 사전 · 의약품 API · 체크포인터). 인자는 graph.build_graph와 같다.
+
+        .env에 AGENT_USE_MCP=1 이면 MCP 서버(python -m agent.mcp_server)를 하위 프로세스로 띄워 약품 매칭을 도구로 부른다.
+        api=None을 주면 서버도 의약품 API 없이 띄운다.
+        """
+        if kwargs.get("tools") is None and config.use_mcp():
+            kwargs["tools"] = stdio(no_api="api" in kwargs and kwargs["api"] is None)
+        return cls(build_graph(**kwargs), kwargs.get("dictionary"), kwargs.get("tools"))
+
+    def close(self) -> None:
+        """MCP 연결을 닫는다 (없으면 아무 일도 하지 않는다)."""
+        if self.tools is not None:
+            self.tools.close()
 
     @property
     def dictionary(self) -> DrugDictionary:

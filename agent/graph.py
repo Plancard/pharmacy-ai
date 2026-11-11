@@ -183,11 +183,13 @@ def _make_deps(
     dictionary: DrugDictionary | None,
     structure: StructureFn | None,
     api: ApiSearch | None | object,
+    tools: DrugTools | None = None,
 ) -> Deps:
     return Deps(
         dictionary=dictionary if dictionary is not None else load_dictionary(),
         structure=structure if structure is not None else default_structure,
         api=default_api() if api is _FROM_SETTINGS else api,
+        tools=tools,
     )
 
 
@@ -249,9 +251,10 @@ def build_prescription_graph(
     structure: StructureFn | None = None,
     api: ApiSearch | None | object = _FROM_SETTINGS,
     checkpointer: Any = _FROM_SETTINGS,
+    tools: DrugTools | None = None,
 ):
     """처방 서브그래프만 만들어 compile한 결과를 돌려준다. 인자의 뜻은 build_graph와 같다."""
-    return _compile_prescription(_make_deps(dictionary, structure, api), _checkpointer(checkpointer))
+    return _compile_prescription(_make_deps(dictionary, structure, api, tools), _checkpointer(checkpointer))
 
 
 def build_graph(
@@ -260,6 +263,7 @@ def build_graph(
     structure: StructureFn | None = None,
     api: ApiSearch | None | object = _FROM_SETTINGS,
     checkpointer: Any = _FROM_SETTINGS,
+    tools: DrugTools | None = None,
 ):
     """상위 그래프를 만들어 compile한 결과를 돌려준다 (처방 서브그래프가 그 안에 들어 있다).
 
@@ -269,8 +273,9 @@ def build_graph(
     api를 주지 않으면 .env에 DRUG_API_KEY가 있을 때 식약처 API를 쓰고, 없으면 사전만 쓴다.
     api=None을 주면 키가 있어도 사전만 쓴다 (테스트·정확도 측정용).
     checkpointer를 주지 않으면 설정에 맞는 것을 붙인다 (checkpoint.default_checkpointer). 승인 대기에서 멈추려면 꼭 있어야 한다.
+    tools(mcp_client.DrugTools)를 주면 약품 매칭을 MCP 도구로 부른다. 그때 의약품 API는 서버가 쓴다.
     """
-    deps = _make_deps(dictionary, structure, api)
+    deps = _make_deps(dictionary, structure, api, tools)
     prescription = _compile_prescription(deps)
 
     def make_node(name: str):
