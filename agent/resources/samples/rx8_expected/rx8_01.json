@@ -1,0 +1,30 @@
+{
+ "image_id": "rx8_01",
+ "purpose": "시연 조합 A: 아세트아미노펜 중복 (경고)",
+ "risk_level": "warning",
+ "plan": "ok",
+ "items": [
+  {
+   "item_code": "202106092",
+   "name": "타이레놀정 500mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3
+  },
+  {
+   "item_code": "197900277",
+   "name": "게보린정",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3
+  }
+ ]
+}

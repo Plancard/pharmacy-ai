@@ -1,0 +1,203 @@
+{
+  "rx8_01.png": {
+    "patient": "김가상(000000201)",
+    "issue": "2026년11월11일 00101호",
+    "drugs": [
+      {
+        "code": "202106092",
+        "name": "타이레놀정/500mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "197900277",
+        "name": "게보린정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx8_02.png": {
+    "patient": "박샘플(000000202)",
+    "issue": "2026년11월11일 00102호",
+    "drugs": [
+      {
+        "code": "201110120",
+        "name": "트리스펜연질캡슐",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 2,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "200201239",
+        "name": "아르펜정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx8_03.png": {
+    "patient": "정데모(000000203)",
+    "issue": "2026년11월11일 00103호",
+    "drugs": [
+      {
+        "code": "200200099",
+        "name": "프론크논캡슐",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "200308774",
+        "name": "뮤코다인캡슐/200mg",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx8_04.png": {
+    "patient": "윤시험(000000204)",
+    "issue": "2026년11월11일 00104호",
+    "drugs": [
+      {
+        "code": "202106092",
+        "name": "타이레놀정/500mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "200002714",
+        "name": "트립라인정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx8_05.png": {
+    "patient": "강가명(000000205)",
+    "issue": "2026년11월11일 00105호",
+    "drugs": [
+      {
+        "code": "200308774",
+        "name": "뮤코다인캡슐/200mg",
+        "dose": 2,
+        "unit": "CAP",
+        "times": 2,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "200002714",
+        "name": "트립라인정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 1,
+        "days": 3,
+        "usage": "PO 취침 전"
+      }
+    ]
+  },
+  "rx8_06.png": {
+    "patient": "오예제(000000206)",
+    "issue": "2026년11월11일 00106호",
+    "drugs": [
+      {
+        "code": "200713170",
+        "name": "아이월드요비신정/416.7mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 2,
+        "days": 2,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "200201239",
+        "name": "아르펜정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 2,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx8_07.png": {
+    "patient": "서보기(000000207)",
+    "issue": "2026년11월11일 00107호",
+    "drugs": [
+      {
+        "code": "202106092",
+        "name": "타이레놀정/500mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "197900277",
+        "name": "게보린정",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "200308774",
+        "name": "뮤코다인캡슐/200mg",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 3,
+        "days": 3,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  },
+  "rx8_08.png": {
+    "patient": "임견본(000000208)",
+    "issue": "2026년11월11일 00108호",
+    "drugs": [
+      {
+        "code": "201110120",
+        "name": "트리스펜연질캡슐",
+        "dose": 1,
+        "unit": "CAP",
+        "times": 3,
+        "days": 1,
+        "usage": "PO 식후 30분"
+      },
+      {
+        "code": "200713170",
+        "name": "아이월드요비신정/416.7mg",
+        "dose": 1,
+        "unit": "TAB",
+        "times": 3,
+        "days": 1,
+        "usage": "PO 식후 30분"
+      }
+    ]
+  }
+}

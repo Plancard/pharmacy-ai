@@ -1,0 +1,41 @@
+{
+ "image_id": "rx8_07",
+ "purpose": "트레이 초과: 한 칸에 3알 (조제 계획 E_PLAN_RANGE)",
+ "risk_level": "warning",
+ "plan": "E_PLAN_RANGE",
+ "items": [
+  {
+   "item_code": "202106092",
+   "name": "타이레놀정 500mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3
+  },
+  {
+   "item_code": "197900277",
+   "name": "게보린정",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3
+  },
+  {
+   "item_code": "200308774",
+   "name": "뮤코다인캡슐 200mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3
+  }
+ ]
+}

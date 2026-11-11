@@ -1,13 +1,13 @@
 {
-  "note": "조제 대상 약품 8종 (CV의 cv/classes.yaml과 같은 순서·이름). item_code는 식약처 품목기준코드로 모든 모듈이 약을 가리키는 공통 키다. class_id는 CV 학습 클래스 ID(classes.yaml의 id)다. 아이월드요비신정 416.7mg의 코드(200713170)는 명세서 2.6절 값이고 아직 의약품 API로 확인하지 않았다 (5단계 verify_dictionary에서 확인한다).",
+  "note": "조제 대상 약품 8종 (CV의 cv/classes.yaml과 같은 순서·이름). item_code는 식약처 품목기준코드로 모든 모듈이 약을 가리키는 공통 키다. class_id와 k_code는 CV 쪽 값이다(classes.yaml의 id와 k_code, k_code는 AI Hub의 dl_mapping_code). ingredients는 주성분으로 처방약끼리 성분 중복을 찾는 데 쓴다. 명세서 2.6절 표에서 시작해 11/11 의약품 API 응답(ITEM_INGR_NAME)과 맞췄다: 트립라인정에 결정트립신을 더했고, 아이월드요비신정 416.7mg의 한약재 14종을 채웠다. API는 성분을 영어로 주므로 한글 이름은 옮겨 적은 것이다(대응표는 scripts/agent/verify_ingredients.py). 사전을 고치면 그 스크립트로 다시 확인한다. ingredients가 빈 약은 성분 중복 대조에서 빠지고 조제지시서의 경고에 그렇게 적힌다.",
   "drugs": [
-    {"class_id": 0, "item_code": "202106092", "name": "타이레놀정500mg"},
-    {"class_id": 1, "item_code": "197900277", "name": "게보린정"},
-    {"class_id": 2, "item_code": "201110120", "name": "트리스펜연질캡슐"},
-    {"class_id": 3, "item_code": "200200099", "name": "프론크논캡슐"},
-    {"class_id": 4, "item_code": "200201239", "name": "아르펜정"},
-    {"class_id": 5, "item_code": "200713170", "name": "아이월드요비신정 416.7mg"},
-    {"class_id": 6, "item_code": "200002714", "name": "트립라인정"},
-    {"class_id": 7, "item_code": "200308774", "name": "뮤코다인캡슐200mg"}
+    {"class_id": 0, "k_code": "K-004378", "item_code": "202106092", "name": "타이레놀정500mg", "ingredients": ["아세트아미노펜"]},
+    {"class_id": 1, "k_code": "K-000573", "item_code": "197900277", "name": "게보린정", "ingredients": ["아세트아미노펜", "이소프로필안티피린", "카페인무수물"]},
+    {"class_id": 2, "k_code": "K-029163", "item_code": "201110120", "name": "트리스펜연질캡슐", "ingredients": ["이부프로펜"]},
+    {"class_id": 3, "k_code": "K-011425", "item_code": "200200099", "name": "프론크논캡슐", "ingredients": ["배농산급탕연조엑스"]},
+    {"class_id": 4, "k_code": "K-011783", "item_code": "200201239", "name": "아르펜정", "ingredients": ["이부프로펜", "L-아르기닌"]},
+    {"class_id": 5, "k_code": "K-022749", "item_code": "200713170", "name": "아이월드요비신정 416.7mg", "ingredients": ["목통", "택사", "당귀", "육계", "마황", "연교", "치자", "용담", "감초", "차전자", "생강", "지황", "대황", "황금"]},
+    {"class_id": 6, "k_code": "K-009379", "item_code": "200002714", "name": "트립라인정", "ingredients": ["브로멜라인", "결정트립신"]},
+    {"class_id": 7, "k_code": "K-013969", "item_code": "200308774", "name": "뮤코다인캡슐200mg", "ingredients": ["아세틸시스테인"]}
   ]
 }
