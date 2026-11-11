@@ -1,0 +1,45 @@
+{
+ "image_id": "rx8_13",
+ "purpose": "약 3종: 트리스펜 · 뮤코다인 · 트립라인(취침 전)",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "201110120",
+   "name": "트리스펜연질캡슐",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200308774",
+   "name": "뮤코다인캡슐 200mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200002714",
+   "name": "트립라인정",
+   "count_per_dose": 1,
+   "times": [
+    "bedtime"
+   ],
+   "days": 3,
+   "usage": "PO 취침 전",
+   "target": true
+  }
+ ]
+}

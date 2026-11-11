@@ -17,7 +17,7 @@ from agent.checkpoint import memory_checkpointer
 from agent.graph import build_graph, resume_run, run_message
 from agent.pipeline import structure_prescription
 from agent.plan import MAX_PER_CELL, PlanError, build_plan
-from agent.risk import NO_DUR_WARNING, check_order
+from agent.risk import NO_DUR_WARNING, UNCHECKED_TAIL, check_order
 from agent.schema import TRAY_DAYS, OcrResult
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,8 +44,9 @@ def checked(rx_id):
     return check_order(match_order(order, DICT, api=None), DICT)
 
 
-def test_there_are_eight_prescriptions_with_files():
-    assert IDS == [f"rx8_0{i}" for i in range(1, 9)]
+def test_there_are_twenty_prescriptions_with_files():
+    """REQ-AG-02 · 03 수용 기준의 가상 처방전 20장."""
+    assert IDS == [f"rx8_{i:02d}" for i in range(1, 21)]
     for rx_id in IDS:
         assert (SAMPLES / "rx8_a1" / f"{rx_id}.json").exists() and (SAMPLES / "rx8_expected" / f"{rx_id}.json").exists()
 
@@ -59,7 +60,7 @@ def test_the_files_are_what_the_script_makes(tmp_path):
 
 
 def test_every_target_drug_appears_and_nothing_else():
-    used = {item["item_code"] for rx_id in IDS for item in load("rx8_expected", rx_id)["items"]}
+    used = {item["item_code"] for rx_id in IDS for item in load("rx8_expected", rx_id)["items"] if item["target"]}
     assert used == {e.item_code for e in DICT.entries}
 
 
@@ -86,14 +87,17 @@ def test_each_prescription_reads_matches_and_checks_as_expected(rx_id):
     expected = load("rx8_expected", rx_id)
     order = checked(rx_id)
     assert order.source == "rule"
-    got = [{"item_code": d.item_code, "name": d.name, "count_per_dose": d.count_per_dose, "times": d.times, "days": d.days} for d in order.items]
-    assert got == expected["items"]
-    assert [d.match_method for d in order.items] == ["code"] * len(order.items)      # 인쇄된 품목기준코드로 자동 확정
-    assert order.flagged_indices == []
-    # 용법이 "PO 식후 30분"인 줄은 시점이 없어 하루 횟수로 배정했다는 경고가 붙는다 (취침 전 줄은 시점이 적혀 있다)
-    after_meal = [(i, len(item["times"])) for i, item in enumerate(expected["items"], start=1) if item["times"] != ["bedtime"]]
+    keys = ("item_code", "name", "count_per_dose", "times", "days")
+    got = [{k: getattr(d, k) for k in keys} for d in order.items]
+    assert got == [{k: item[k] for k in keys} for item in expected["items"]]
+    # 대상 8종은 인쇄된 품목기준코드로 자동 확정, 대상 외 약품은 정하지 못하고 약사 확인 (REQ-AG-03)
+    assert [d.match_method for d in order.items] == ["code" if item["target"] else "none" for item in expected["items"]]
+    assert order.flagged_indices == expected["flagged"]
+    # 용법이 "PO 식후 30분"인 줄은 시점이 없어 하루 횟수로 배정했다는 경고가 붙는다 (시점을 적은 줄은 붙지 않는다)
+    after_meal = [(i, len(item["times"])) for i, item in enumerate(expected["items"], start=1) if item["usage"] == "PO 식후 30분"]
+    unmatched = [f"{item['name']}: 품목기준코드를 정하지 못해 {UNCHECKED_TAIL}" for item in expected["items"] if not item["target"]]
     assert order.warnings == [f"{i}번째 약품: 복용 시점이 처방전에 없어 하루 {n}회 기준으로 배정했습니다." for i, n in after_meal] \
-        + [NO_DUR_WARNING]                                             # 시험은 DUR API 없이 돈다
+        + unmatched + [NO_DUR_WARNING]                                 # 시험은 DUR API 없이 돈다
     assert order.risk_check.level == expected["risk_level"]
 
 
@@ -108,7 +112,7 @@ def test_each_prescription_plans_as_expected(rx_id):
     else:
         with pytest.raises(PlanError) as error:
             build_plan(order)
-        assert error.value.code == expected["plan"] == E_PLAN_RANGE
+        assert error.value.code == {"E_PLAN_RANGE": E_PLAN_RANGE, "unmatched": None}[expected["plan"]]
 
 
 def test_the_demo_combinations_are_the_two_warnings_that_can_be_planned():
@@ -122,13 +126,15 @@ def test_each_prescription_stops_for_approval_and_then_plans(monkeypatch, rx_id)
     graph = build_graph(dictionary=DICT, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=no_llm), api=None,
                         checkpointer=memory_checkpointer())
     shown = run_message(graph, f"P-{rx_id}", load("rx8_a1", rx_id))["__interrupt__"][0].value
-    assert shown["notice"].startswith("약사 승인을 기다립니다.") and "확인이 필요한 약품" not in shown["notice"]
+    flagged = load("rx8_expected", rx_id)["flagged"]
+    assert shown["notice"].startswith("약사 승인을 기다립니다.")
+    assert ("확인이 필요한 약품" in shown["notice"]) is bool(flagged)
     final = resume_run(graph, f"P-{rx_id}", {"action": "approve", "order": shown["order"]})
     if load("rx8_expected", rx_id)["plan"] == "ok":
         assert final["status"] == "planned" and final["plan"] is not None
     else:                                                             # 계획을 못 만들면 이유를 들고 다시 승인 대기로
         assert final["__interrupt__"][0].value["notice"].startswith("조제 계획을 만들 수 없습니다.")
-        assert E_PLAN_RANGE == load("rx8_expected", rx_id)["plan"]
+        assert load("rx8_expected", rx_id)["plan"] in ("E_PLAN_RANGE", "unmatched")
 
 
 def test_the_script_output_can_be_written_in_cp949(tmp_path):
@@ -155,3 +161,17 @@ def test_the_cv_ground_truth_lists_the_printed_names(tmp_path):
 def test_the_images_exist_for_every_prescription():
     for rx_id in IDS:
         assert (SAMPLES / "rx8_img" / f"{rx_id}.png").stat().st_size > 10_000
+
+
+
+def test_the_test_set_covers_the_acceptance_criteria():
+    """20장 구성: 8종 전부 · 시연 중복 2쌍(경고) · 병용금기 시연 처방 2장(아르펜 · 트리스펜) · 트레이 초과 2장 · 대상 외 약품 2장."""
+    expected = {rx_id: load("rx8_expected", rx_id) for rx_id in IDS}
+    plans = [e["plan"] for e in expected.values()]
+    assert plans.count("ok") == 16 and plans.count("E_PLAN_RANGE") == 2 and plans.count("unmatched") == 2
+    assert [rx_id for rx_id, e in expected.items() if not all(i["target"] for i in e["items"])] == ["rx8_19", "rx8_20"]
+    ibuprofen = {"201110120", "200201239"}
+    taboo_demo = [rx_id for rx_id in ("rx8_16", "rx8_17") if ibuprofen & {i["item_code"] for i in expected[rx_id]["items"]}]
+    assert taboo_demo == ["rx8_16", "rx8_17"]                            # 복용 약 메토트렉세이트 · 케토롤락을 넣어 볼 처방
+    counts = [len(e["items"]) for e in expected.values()]
+    assert {1, 2, 3} <= set(counts)                                       # 약 1 · 2 · 3종 처방이 모두 있다

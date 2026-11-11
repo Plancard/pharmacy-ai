@@ -3,6 +3,7 @@
  "purpose": "시연 조합 B: 이부프로펜 중복 (경고)",
  "risk_level": "warning",
  "plan": "ok",
+ "flagged": [],
  "items": [
   {
    "item_code": "201110120",
@@ -12,7 +13,9 @@
     "morning",
     "evening"
    ],
-   "days": 3
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
   },
   {
    "item_code": "200201239",
@@ -22,7 +25,9 @@
     "morning",
     "evening"
    ],
-   "days": 3
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
   }
  ]
 }

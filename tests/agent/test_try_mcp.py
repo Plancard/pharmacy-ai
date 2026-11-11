@@ -46,7 +46,7 @@ def test_the_script_shows_four_tools_and_the_same_graph_results(backend):
     for name in ("search_drug", "check_item_code", "match_drug", "verify_dictionary", "check_interaction", "check_duplicate"):
         assert f"    {name}: " in text
     assert "사전  202106092  타이레놀정500mg" in text
-    assert "전체 13장 중 13장이 같습니다." in text
+    assert "전체 25장 중 25장이 같습니다." in text
     assert "[같음] rx8_01: 승인 → 조제 계획" in text
     assert "[같음] rx8_07: 승인 → 다시 승인 대기 (조제 계획을 만들 수 없음)" in text
     assert "[다름]" not in text
@@ -75,7 +75,7 @@ def test_the_comparison_uses_the_rule_path_only(backend):
 
 
 def test_the_samples_are_the_cv_and_demo_prescriptions():
-    assert list(try_mcp.load_samples()) == [f"rx_00{i}" for i in range(1, 6)] + [f"rx8_0{i}" for i in range(1, 9)]
+    assert list(try_mcp.load_samples()) == [f"rx_00{i}" for i in range(1, 6)] + [f"rx8_{i:02d}" for i in range(1, 21)]
 
 
 def test_the_script_output_can_be_written_in_cp949(backend):
@@ -196,5 +196,5 @@ def test_the_script_uses_dur_on_both_sides_when_the_key_is_set(backend, monkeypa
     monkeypatch.setattr(try_mcp, "default_dur_api", lambda: FakeDur())
     code, text = run(["--in-process"])
     assert code == 0, text
-    assert "| DUR API: 사용" in text and "전체 13장 중 13장이 같습니다." in text
+    assert "| DUR API: 사용" in text and "전체 25장 중 25장이 같습니다." in text
     assert "check_interaction(타이레놀정500mg + 게보린정)\n    찾은 것 없음" in text

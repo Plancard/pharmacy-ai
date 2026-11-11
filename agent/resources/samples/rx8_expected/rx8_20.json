@@ -1,0 +1,35 @@
+{
+ "image_id": "rx8_20",
+ "purpose": "대상 외 약품: 릴렉시아정(실제 약, 8종 밖) → 약사 확인",
+ "risk_level": "none",
+ "plan": "unmatched",
+ "flagged": [
+  1
+ ],
+ "items": [
+  {
+   "item_code": "200308774",
+   "name": "뮤코다인캡슐 200mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": null,
+   "name": "릴렉시아정 250mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": false
+  }
+ ]
+}

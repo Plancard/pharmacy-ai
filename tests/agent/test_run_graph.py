@@ -17,7 +17,7 @@ _spec = importlib.util.spec_from_file_location("run_graph", SCRIPT)
 run_graph = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(run_graph)
 
-SAMPLE_IDS = ["rx_001", "rx_002", "rx_003", "rx_004", "rx_005", *(f"rx8_0{i}" for i in range(1, 9))]
+SAMPLE_IDS = ["rx_001", "rx_002", "rx_003", "rx_004", "rx_005", *(f"rx8_{i:02d}" for i in range(1, 21))]
 WAITING = "승인 대기(rx_approval)"
 DICT = load_dictionary(RESOURCES_DIR / "drug_dictionary.json")
 
@@ -131,7 +131,7 @@ def test_it_never_prints_patient_information(graph):
 
 def test_all_runs_every_sample_and_counts_them(graph):
     code, text = run(["--all"], graph)
-    assert code == 0 and text.endswith("전체 13장 중 13장이 약사 승인 대기까지 왔습니다.")
+    assert code == 0 and text.endswith("전체 25장 중 25장이 약사 승인 대기까지 왔습니다.")
     for sample_id in SAMPLE_IDS:
         assert f"[{sample_id}] 상태: {WAITING}" in text
     assert "오류 코드" not in text                                    # 성공한 처방에는 오류 코드 줄이 없다
@@ -146,7 +146,7 @@ def test_one_failed_sample_does_not_stop_the_others_and_is_not_counted_as_reache
         return rule_only(prescription_id, ocr)
 
     code, text = run(["--all"], build_graph(dictionary=DICT, structure=fail_rx_003, api=None, checkpointer=memory_checkpointer()))
-    assert code == 1 and text.endswith("전체 13장 중 12장이 약사 승인 대기까지 왔습니다.")
+    assert code == 1 and text.endswith("전체 25장 중 24장이 약사 승인 대기까지 왔습니다.")
     assert "[rx_003] 상태: failed" in text and f"[rx_004] 상태: {WAITING}" in text
 
 
@@ -182,7 +182,7 @@ def test_the_subgraph_alone_gives_combination_a_in_its_risk_check(sub_graph):
 def test_the_subgraph_alone_runs_every_sample_like_the_top_graph(sub_graph, graph):
     code, alone = run(["--all", "--subgraph"], sub_graph)
     _, top = run(["--all"], graph)
-    assert code == 0 and alone.endswith("전체 13장 중 13장이 약사 승인 대기까지 왔습니다.")
+    assert code == 0 and alone.endswith("전체 25장 중 25장이 약사 승인 대기까지 왔습니다.")
     assert alone.replace("흐름: - | 순서: -", "흐름: prescription | 순서: prescription") == top
 
 

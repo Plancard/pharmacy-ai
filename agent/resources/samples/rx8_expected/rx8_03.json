@@ -3,6 +3,7 @@
  "purpose": "위험 신호 없음",
  "risk_level": "none",
  "plan": "ok",
+ "flagged": [],
  "items": [
   {
    "item_code": "200200099",
@@ -13,7 +14,9 @@
     "noon",
     "evening"
    ],
-   "days": 3
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
   },
   {
    "item_code": "200308774",
@@ -24,7 +27,9 @@
     "noon",
     "evening"
    ],
-   "days": 3
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
   }
  ]
 }

@@ -3,6 +3,7 @@
  "purpose": "한약제제 요비신정 + 2일 처방",
  "risk_level": "none",
  "plan": "ok",
+ "flagged": [],
  "items": [
   {
    "item_code": "200713170",
@@ -12,7 +13,9 @@
     "morning",
     "evening"
    ],
-   "days": 2
+   "days": 2,
+   "usage": "PO 식후 30분",
+   "target": true
   },
   {
    "item_code": "200201239",
@@ -23,7 +26,9 @@
     "noon",
     "evening"
    ],
-   "days": 2
+   "days": 2,
+   "usage": "PO 식후 30분",
+   "target": true
   }
  ]
 }

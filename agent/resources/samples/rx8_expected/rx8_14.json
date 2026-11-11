@@ -1,0 +1,32 @@
+{
+ "image_id": "rx8_14",
+ "purpose": "1회 2캡슐 + 취침 전 요비신",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "200200099",
+   "name": "프론크논캡슐",
+   "count_per_dose": 2,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200713170",
+   "name": "아이월드요비신정 416.7mg",
+   "count_per_dose": 1,
+   "times": [
+    "bedtime"
+   ],
+   "days": 3,
+   "usage": "PO 취침 전",
+   "target": true
+  }
+ ]
+}

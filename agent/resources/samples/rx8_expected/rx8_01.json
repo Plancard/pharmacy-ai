@@ -3,6 +3,7 @@
  "purpose": "시연 조합 A: 아세트아미노펜 중복 (경고)",
  "risk_level": "warning",
  "plan": "ok",
+ "flagged": [],
  "items": [
   {
    "item_code": "202106092",
@@ -13,7 +14,9 @@
     "noon",
     "evening"
    ],
-   "days": 3
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
   },
   {
    "item_code": "197900277",
@@ -24,7 +27,9 @@
     "noon",
     "evening"
    ],
-   "days": 3
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
   }
  ]
 }

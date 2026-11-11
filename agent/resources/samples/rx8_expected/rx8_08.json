@@ -3,6 +3,7 @@
  "purpose": "1일 처방 · 세 시점 (요비신정 · 트리스펜)",
  "risk_level": "none",
  "plan": "ok",
+ "flagged": [],
  "items": [
   {
    "item_code": "201110120",
@@ -13,7 +14,9 @@
     "noon",
     "evening"
    ],
-   "days": 1
+   "days": 1,
+   "usage": "PO 식후 30분",
+   "target": true
   },
   {
    "item_code": "200713170",
@@ -24,7 +27,9 @@
     "noon",
     "evening"
    ],
-   "days": 1
+   "days": 1,
+   "usage": "PO 식후 30분",
+   "target": true
   }
  ]
 }

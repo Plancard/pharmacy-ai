@@ -1,0 +1,22 @@
+{
+ "image_id": "rx8_15",
+ "purpose": "1회 2정 · 1일 처방 (타이레놀 단독)",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "202106092",
+   "name": "타이레놀정 500mg",
+   "count_per_dose": 2,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 1,
+   "usage": "PO 식후 30분",
+   "target": true
+  }
+ ]
+}

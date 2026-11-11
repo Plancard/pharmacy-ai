@@ -1,4 +1,7 @@
-"""대상 8종으로 시연용 가상 처방전을 만든다. CV 팀 가상 처방전과 같은 양식(별지 제9호 서식)이다.
+"""대상 8종으로 가상 처방전 20장을 만든다. CV 팀 가상 처방전과 같은 양식(별지 제9호 서식)이다.
+
+REQ-AG-02 · 03의 "가상 처방전 20장" 테스트셋이다. 8종이 모두 들어가고, 시연 조합(중복 2쌍 · 병용금기 시연 처방 2장)과
+트레이 초과 2장(한 칸 3알 · 4일), 대상 외 약품 2장(매칭 실패 → 약사 확인)이 들어 있다.
 
     python scripts/agent/make_prescriptions.py              # JSON(A.1 · 정답 · CV 정답)을 다시 만든다
     python scripts/agent/make_prescriptions.py --images     # 처방전 이미지(PNG)도 만든다 (Pillow와 한글 글꼴 필요)
@@ -12,12 +15,13 @@ pytest가 아니다. 아래 PRESCRIPTIONS 표가 처방전 내용의 원본이�
 
 규칙
 - 양식은 CV 팀 가상 처방전(cv/fixtures, rx_001~005)과 같다: 칸 위치, 머리글, 약품 줄 "(1)코드 이름/함량", 용법 "PO 식후 30분".
-- 대상 8종(agent/resources/drug_dictionary.json)만 쓰고, 약품 코드 칸에는 품목기준코드를 인쇄한다.
-  그래서 약품 매칭이 코드 단계에서 자동 확정된다 (실제 처방전의 보험코드 자리. 일반의약품이라 가상으로 정했다).
-- 트레이 규격(명세서 2.7절)을 지킨다: 3일 이하, 한 칸(일자 x 시점)에 2알 이하. rx8_07만 일부러 한 칸에 3알이 들어가
-  조제 계획이 E_PLAN_RANGE로 막히는 시연용이다.
-- 용법은 실제 처방전처럼 "PO 식후 30분"이다. 시점이 없으므로 Agent가 하루 횟수로 시점을 배정하고 경고를 단다
-  (2회 아침·저녁, 3회 아침·점심·저녁). 취침 전 약만 "PO 취침 전"이라 적는다.
+- 대상 8종(agent/resources/drug_dictionary.json)은 약품 코드 칸에 품목기준코드를 인쇄한다. 그래서 매칭이 코드 단계에서
+  자동 확정된다 (실제 처방전의 보험코드 자리. 일반의약품이라 가상으로 정했다). rx8_19 · 20만 대상 외 약품(OUTSIDE)이 한 줄씩 있다.
+- 트레이 규격(명세서 2.7절)을 지킨다: 3일 이하, 한 칸(일자 x 시점)에 2알 이하. rx8_07(한 칸 3알)과 rx8_18(4일)만 일부러
+  넘겨 조제 계획이 E_PLAN_RANGE로 막힌다.
+- 용법: 하루 횟수의 기본 시점(2회 아침·저녁, 3회 아침·점심·저녁)이면 실제 처방전처럼 "PO 식후 30분"이라 적고, Agent가
+  시점을 배정하며 경고를 단다. 취침 전은 "PO 취침 전", 그 밖의 시점은 "PO 점심 식후"처럼 적는다 (usage_of).
+- 병용금기(처방약 + 복용 약)는 처방전에 없다: rx8_16(아르펜) · rx8_17(트리스펜)에 복용 약 메토트렉세이트 · 케토롤락을 입력해 본다.
 - 환자 · 의료기관 · 의료인은 모두 가상이고 주민등록번호는 가려져 있다. 모든 처방전 아래에 '테스트용 가상 처방전' 문구가 들어간다.
 """
 from __future__ import annotations
@@ -42,6 +46,13 @@ CONF = 0.99
 
 UNIT = {"캡슐": "CAP"}      # 이름에 '캡슐'이 들어가면 CAP, 아니면 TAB
 USAGE_AFTER_MEAL, USAGE_BEDTIME = "PO 식후 30분", "PO 취침 전"
+SLOT_WORDS = {"morning": "아침", "noon": "점심", "evening": "저녁"}
+DEFAULT_TIMES = {2: ("morning", "evening"), 3: ("morning", "noon", "evening")}   # validate.py의 기본 배정과 같다
+# 대상 8종이 아닌 약 (매칭 실패 · 약사 확인 시험용). 처방전 코드 칸에는 이 코드를 인쇄한다
+OUTSIDE = {
+    "알모탄정": "900000031",            # CV 가상 처방전의 가상 약 (식약처에 없는 이름 · 코드)
+    "릴렉시아정/250mg": "644500700",    # CV rx_005의 실제 약 (대상 8종 밖)
+}
 SHOWN_NAMES = {              # 처방전에 인쇄하는 이름 (CV 양식: 이름/함량). 없으면 사전 이름 그대로
     "타이레놀정500mg": "타이레놀정/500mg",
     "뮤코다인캡슐200mg": "뮤코다인캡슐/200mg",
@@ -76,6 +87,43 @@ PRESCRIPTIONS: list[dict[str, Any]] = [
     {"id": "rx8_08", "purpose": "1일 처방 · 세 시점 (요비신정 · 트리스펜)", "risk": "none", "plan": "ok",
      "dept": "가정의학과", "patient": "임견본", "disease": "R52", "doctor": "이테스트", "hospital": HOSPITAL, "time": "15:51:09",
      "drugs": [("트리스펜연질캡슐", 1, MTN, 1), ("아이월드요비신정 416.7mg", 1, MTN, 1)]},
+    # ---- 11/11 20장으로 늘림 (REQ-AG-02 · 03 수용 기준: 가상 처방전 20장)
+    {"id": "rx8_09", "purpose": "약 1종: 프론크논 단독", "risk": "none", "plan": "ok",
+     "dept": "이비인후과", "patient": "문가상", "disease": "J32.9", "doctor": "최예시", "hospital": HOSPITAL, "time": "09:12:44",
+     "drugs": [("프론크논캡슐", 1, MTN, 3)]},
+    {"id": "rx8_10", "purpose": "약 1종: 요비신 단독 2일", "risk": "none", "plan": "ok",
+     "dept": "비뇨의학과", "patient": "배샘플", "disease": "N30.9", "doctor": "오가상", "hospital": HOSPITAL, "time": "09:58:03",
+     "drugs": [("아이월드요비신정 416.7mg", 1, ME, 2)]},
+    {"id": "rx8_11", "purpose": "약 3종: 점심 · 취침 전을 용법에 적어 칸을 나눔", "risk": "none", "plan": "ok",
+     "dept": "가정의학과", "patient": "조데모", "disease": "J06.9", "doctor": "이테스트", "hospital": HOSPITAL, "time": "10:33:27",
+     "drugs": [("타이레놀정500mg", 1, ME, 3), ("뮤코다인캡슐200mg", 1, ("noon",), 3), ("트립라인정", 1, BED, 3)]},
+    {"id": "rx8_12", "purpose": "약 3종: 아침 · 저녁만 먹는 약 (칸당 2알 꽉 채움)", "risk": "none", "plan": "ok",
+     "dept": "내과", "patient": "신시험", "disease": "R51", "doctor": "최예시", "hospital": HOSPITAL, "time": "10:51:15",
+     "drugs": [("게보린정", 1, ("morning",), 2), ("프론크논캡슐", 1, MTN, 2), ("아이월드요비신정 416.7mg", 1, ("evening",), 2)]},
+    {"id": "rx8_13", "purpose": "약 3종: 트리스펜 · 뮤코다인 · 트립라인(취침 전)", "risk": "none", "plan": "ok",
+     "dept": "정형외과", "patient": "권가명", "disease": "M54.5", "doctor": "한모의", "hospital": CLINIC, "time": "11:20:40",
+     "drugs": [("트리스펜연질캡슐", 1, ME, 3), ("뮤코다인캡슐200mg", 1, MTN, 3), ("트립라인정", 1, BED, 3)]},
+    {"id": "rx8_14", "purpose": "1회 2캡슐 + 취침 전 요비신", "risk": "none", "plan": "ok",
+     "dept": "이비인후과", "patient": "황예제", "disease": "J01.9", "doctor": "최예시", "hospital": HOSPITAL, "time": "13:05:58",
+     "drugs": [("프론크논캡슐", 2, ME, 3), ("아이월드요비신정 416.7mg", 1, BED, 3)]},
+    {"id": "rx8_15", "purpose": "1회 2정 · 1일 처방 (타이레놀 단독)", "risk": "none", "plan": "ok",
+     "dept": "가정의학과", "patient": "안보기", "disease": "R50.9", "doctor": "이테스트", "hospital": HOSPITAL, "time": "13:40:12",
+     "drugs": [("타이레놀정500mg", 2, MTN, 1)]},
+    {"id": "rx8_16", "purpose": "병용금기 시연: 아르펜 처방 + 복용 약 메토트렉세이트 (복용 약 등록 시 위험)", "risk": "none", "plan": "ok",
+     "dept": "내과", "patient": "송견본", "disease": "M79.1", "doctor": "최예시", "hospital": HOSPITAL, "time": "14:22:31",
+     "drugs": [("아르펜정", 1, MTN, 3), ("뮤코다인캡슐200mg", 1, MTN, 3)]},
+    {"id": "rx8_17", "purpose": "병용금기 시연: 트리스펜 처방 + 복용 약 케토롤락 (복용 약 등록 시 위험)", "risk": "none", "plan": "ok",
+     "dept": "정형외과", "patient": "류가상", "disease": "M25.5", "doctor": "한모의", "hospital": CLINIC, "time": "14:57:09",
+     "drugs": [("트리스펜연질캡슐", 1, ME, 3), ("프론크논캡슐", 1, ME, 3)]},
+    {"id": "rx8_18", "purpose": "트레이 초과: 투약 4일 (조제 계획 E_PLAN_RANGE, 약사 확인)", "risk": "none", "plan": "E_PLAN_RANGE",
+     "dept": "가정의학과", "patient": "전샘플", "disease": "R51", "doctor": "이테스트", "hospital": HOSPITAL, "time": "15:33:46",
+     "drugs": [("게보린정", 1, ME, 4), ("트립라인정", 1, ME, 4)], "flagged": [0, 1]},
+    {"id": "rx8_19", "purpose": "대상 외 약품: 알모탄정(가상) → 매칭 실패, 약사 확인", "risk": "none", "plan": "unmatched",
+     "dept": "가정의학과", "patient": "홍데모", "disease": "R51", "doctor": "이테스트", "hospital": HOSPITAL, "time": "16:08:20",
+     "drugs": [("타이레놀정500mg", 1, MTN, 3), ("알모탄정", 1, MTN, 3)], "flagged": [1]},
+    {"id": "rx8_20", "purpose": "대상 외 약품: 릴렉시아정(실제 약, 8종 밖) → 약사 확인", "risk": "none", "plan": "unmatched",
+     "dept": "신경외과", "patient": "고시험", "disease": "M79.18", "doctor": "오가상", "hospital": HOSPITAL, "time": "16:45:37",
+     "drugs": [("뮤코다인캡슐200mg", 1, ME, 3), ("릴렉시아정/250mg", 1, ME, 3)], "flagged": [1]},
 ]
 DOCTOR_LICENSE = {"이테스트": "00001", "최예시": "00002", "한모의": "00003", "오가상": "00004"}
 ISSUE_DATE, PRINT_DATE = "2026년11월11일", "2026.11.11"
@@ -154,6 +202,23 @@ def _box(x: int, y: int, text: str, size: int) -> list[int]:
     return [x, y, x + text_width(text, size), y + round(size * 1.2)]
 
 
+def usage_of(times: tuple[str, ...]) -> str:
+    """용법 글자. 하루 횟수로 정해지는 기본 시점이면 실제 처방전처럼 'PO 식후 30분'(시점이 없어 Agent가 배정하고 경고),
+    취침 전만이면 'PO 취침 전', 그 밖에는 시점을 적는다 (예: 'PO 점심 식후', 'PO 아침·저녁 식후 / 취침 전')."""
+    times = tuple(times)
+    if DEFAULT_TIMES.get(len(times)) == times:
+        return USAGE_AFTER_MEAL
+    if times == BED:
+        return USAGE_BEDTIME
+    meals = "·".join(SLOT_WORDS[t] for t in times if t != "bedtime")
+    text = f"PO {meals} 식후" if meals else "PO"
+    return text + (" / 취침 전" if "bedtime" in times else "")
+
+
+def code_of(name: str, codes: dict[str, str]) -> str:
+    return codes.get(name) or OUTSIDE[name]
+
+
 def shown_name(name: str) -> str:
     return SHOWN_NAMES.get(name, name)
 
@@ -179,13 +244,13 @@ def form_texts(rx: dict[str, Any], number: int, codes: dict[str, str]) -> list[t
     for row, (name, count, times, days) in enumerate(rx["drugs"]):
         y = ROW_TOP + row * ROW_STEP
         unit = "CAP" if "캡슐" in name else "TAB"
-        label = f"{codes[name]} {shown_name(name)}"
+        label = f"{code_of(name, codes)} {shown_name(name)}"
         texts += [
             (230, y, f"(1){label}", ROW_SIZE, False) if row == 0 else (257, y, label, ROW_SIZE, False),
             (1303, y + 22, f"{count} {unit}", 40, False),
             (1478, y + 18, f"{len(times)}회", 40, False),
             (1619, y + 18, f"{days}일", 40, False),
-            (1921, y + 18, USAGE_BEDTIME if tuple(times) == BED else USAGE_AFTER_MEAL, 40, False),
+            (1921, y + 18, usage_of(times), 40 if len(usage_of(times)) <= 12 else 32, False),
         ]
     return texts
 
@@ -203,8 +268,10 @@ def expected_of(rx: dict[str, Any], codes: dict[str, str]) -> dict[str, Any]:
         "purpose": rx["purpose"],
         "risk_level": rx["risk"],
         "plan": rx["plan"],
+        "flagged": rx.get("flagged", []),
         "items": [
-            {"item_code": codes[name], "name": read_name(name), "count_per_dose": count, "times": list(times), "days": days}
+            {"item_code": codes.get(name), "name": read_name(name), "count_per_dose": count, "times": list(times), "days": days,
+             "usage": usage_of(times), "target": name in codes}
             for name, count, times, days in rx["drugs"]
         ],
     }
@@ -219,8 +286,8 @@ def cv_ground_truth(codes: dict[str, str]) -> tuple[dict[str, Any], dict[str, li
             "patient": f"{rx['patient']}({200 + number:09d})",
             "issue": f"{ISSUE_DATE} {100 + number:05d}호",
             "drugs": [
-                {"code": codes[name], "name": shown_name(name), "dose": count, "unit": "CAP" if "캡슐" in name else "TAB",
-                 "times": len(times), "days": days, "usage": USAGE_BEDTIME if tuple(times) == BED else USAGE_AFTER_MEAL}
+                {"code": code_of(name, codes), "name": shown_name(name), "dose": count, "unit": "CAP" if "캡슐" in name else "TAB",
+                 "times": len(times), "days": days, "usage": usage_of(times)}
                 for name, count, times, days in rx["drugs"]
             ],
         }

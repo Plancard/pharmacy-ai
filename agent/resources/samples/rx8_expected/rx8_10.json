@@ -1,0 +1,21 @@
+{
+ "image_id": "rx8_10",
+ "purpose": "약 1종: 요비신 단독 2일",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "200713170",
+   "name": "아이월드요비신정 416.7mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 2,
+   "usage": "PO 식후 30분",
+   "target": true
+  }
+ ]
+}
