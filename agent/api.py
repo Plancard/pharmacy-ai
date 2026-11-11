@@ -11,7 +11,8 @@ AGENT_BACKEND=langgraph로 같은 화면이 돈다.
     handle_text(rx_id, text)           이미 열린 처방에 글만 들어왔을 때: 그래프를 돌리지 않고 제안 · 재검토 표시 · 상담 여부를 돌려준다
 
 thread_id는 처방 ID다. 멈춘 곳은 체크포인터(checkpoint.py)에 저장되므로 프로세스를 꺼도 같은 곳에서 이어 간다.
-HITL ①(rx_approval)의 응답은 {"action": "approve" | "edit", "order": 조제지시서}다.
+HITL ①(rx_approval)의 응답은 {"action": "approve" | "edit" | "manual", "order": 조제지시서, "reason": 사유}다.
+  manual: 위험(danger) 항목이 있을 때 사유를 적고 진행한다 (기능분석서 F-WEB-07 ③). 위험이 있으면 approve는 거절된다.
   approve: 약품 줄이 그대로면 조제 계획을 만들고 끝난다 → None, stage는 await_tray.
            계획을 만들 수 없으면(3일 초과 · 칸당 2알 초과 등) 이유를 안내에 담아 다시 승인 대기로 멈춘다.
   edit (또는 줄을 바꾼 approve): 고친 값으로 약품 매칭 · 위험 신호 대조를 다시 하고 다시 승인 대기로 멈춘다. LLM은 다시 부르지 않는다.
@@ -27,7 +28,7 @@ from agent import config
 from agent.drug_dictionary import DrugDictionary, load_dictionary
 from agent.graph import build_graph, resume_run, run_message, thread_config
 from agent.mcp_client import DrugTools, stdio
-from agent.intent import CURRENT_MED, EDIT, MEMO, QUESTION, classify
+from agent.intent import PATIENT_INFO, EDIT_REQUEST, NOTE, QUESTION, classify
 from agent.nodes import HITL_APPROVAL, HITL_TYPE, read_choice, read_reply
 from agent.proposal import make_proposals
 from agent.schema import DispensingOrder
@@ -142,8 +143,8 @@ class AgentApi:
             raise ValueError(f"열린 처방이 없습니다: {rx_id} (새 대화는 start로 시작하세요)")
         intents = classify(text)
         waiting = stage == HITL_APPROVAL
-        usable = [EDIT, CURRENT_MED] if waiting else [CURRENT_MED]
-        review = (not waiting) and EDIT in intents and stage in (STAGE_AFTER_PLAN, "approved", "planned")
+        usable = [EDIT_REQUEST, PATIENT_INFO] if waiting else [PATIENT_INFO]
+        review = (not waiting) and EDIT_REQUEST in intents and stage in (STAGE_AFTER_PLAN, "approved", "planned")
         answer: dict[str, Any] = {
             "intents": intents,
             "proposals": make_proposals(text, [i for i in intents if i in usable], self.dictionary),
@@ -156,7 +157,7 @@ class AgentApi:
         }
         if intents and not (answer["proposals"] or answer["consult"] or review):
             answer["memo"] = text.strip()                    # 메모, 또는 지금 쓸 데가 없는 글
-        elif MEMO in intents and not answer["memo"]:
+        elif NOTE in intents and not answer["memo"]:
             answer["memo"] = text.strip()
         return answer
 

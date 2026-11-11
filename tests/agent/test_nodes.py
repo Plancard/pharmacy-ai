@@ -11,8 +11,12 @@ from agent.drug_api import ApiDrug
 from agent.drug_dictionary import load_dictionary
 from agent.errors import E_LLM, E_OCR_EMPTY, E_PLAN_RANGE, ConfigError, StructureError
 from agent.drug_match import match_order
+from agent.dur import COMBINATION_TABOO, EFFICACY_DUP, find_all
+from fake_dur import KETOROLAC, KETOROLAC_NAME, FakeDur
 from agent.mcp_client import McpToolError
 from agent.nodes import (
+    approval_notice,
+    MCP_DUR_FAILED_WARNING,
     MCP_FAILED_WARNING,
     APPROVED_NOTICE,
     ASK_TYPE_NOTICE,
@@ -36,7 +40,7 @@ from agent.nodes import (
     tray_node,
 )
 from agent.pipeline import structure_prescription
-from agent.risk import UNCHECKED_TAIL
+from agent.risk import NO_DUR_WARNING, UNCHECKED_TAIL
 from agent.schema import DispensingOrder, DrugLine, Plan, RiskCheck, RiskFinding
 from agent.state import GraphState, initial_state
 
@@ -133,14 +137,14 @@ def test_the_flow_follows_the_photo_kind(photo_kind, ocr, flow):
     ("receipt", {"doc_type": "prescription"}, "알 수 없는 사진 종류입니다."),
     (None, {"doc_type": "receipt"}, "OCR이 읽은 문서 종류를 알 수 없습니다."),
     ("prescription", {"doc_type": "receipt"}, "OCR이 읽은 문서 종류를 알 수 없습니다."),
-    ("prescription", {"doc_type": "med_bag"}, "지정한 종류(처방전)와 OCR이 읽은 종류(약 포장)가 다릅니다."),
-    ("med_bag", {"doc_type": "prescription"}, "지정한 종류(약 포장)와 OCR이 읽은 종류(처방전)가 다릅니다."),
+    ("prescription", {"doc_type": "med_bag"}, "지정한 종류(처방전)와 OCR이 읽은 종류(약봉투)가 다릅니다."),
+    ("med_bag", {"doc_type": "prescription"}, "지정한 종류(약봉투)와 OCR이 읽은 종류(처방전)가 다릅니다."),
     ("tray", {"doc_type": "prescription"}, "지정한 종류(트레이)와 OCR이 읽은 종류(처방전)가 다릅니다."),
 ])
 def test_an_unclear_photo_kind_is_asked_about_not_guessed(photo_kind, ocr, reason):
     flow, notice = decide_flow(photo_kind, ocr)
     assert flow == "ask_type"
-    assert notice == f"사진 종류를 정하지 못했습니다. {reason} 처방전 · 약 포장 · 트레이 중에서 골라 주세요."
+    assert notice == f"사진 종류를 정하지 못했습니다. {reason} 처방전 · 트레이 · 약봉투 · 포장 중에서 골라 주세요."
 
 
 def test_supervisor_sets_the_route_when_the_kind_is_clear():
@@ -163,7 +167,7 @@ def test_supervisor_puts_the_text_of_a_prescription_photo_into_proposals():
     state = initial_state("P0001", load("rx8_a1", "rx8_01"), "prescription", "게보린 빼 주세요")
     update = supervisor_node(state, deps())
     assert update["route"] == ["prescription"]
-    assert update["proposals"] == [{"kind": "edit", "text": "게보린 빼 주세요", "drugs": [{"item_code": GEVORIN, "name": "게보린정"}]}]
+    assert update["proposals"] == [{"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": [{"item_code": GEVORIN, "name": "게보린정"}]}]
 
 
 def test_supervisor_ends_with_noted_when_the_text_is_only_a_memo():
@@ -281,14 +285,20 @@ def test_no_warning_when_an_api_was_given():
 class FakeTools:
     """MCP 클라이언트 대신. 서버가 하는 일(match_order)을 그대로 하고, 불린 횟수와 실패를 흉내 낸다."""
 
-    def __init__(self, *, api_used=False, fail=None):
-        self.calls, self.api_used, self.fail = 0, api_used, fail
+    def __init__(self, *, api_used=False, fail=None, dur=None):
+        self.calls, self.api_used, self.fail, self.dur = 0, api_used, fail, dur
 
     def match_drug(self, order):
         self.calls += 1
         if self.fail:
             raise McpToolError(self.fail)
         return match_order(order, DICT), self.api_used
+
+    def check_dur(self, items):
+        self.calls += 1
+        if self.fail:
+            raise McpToolError(self.fail)
+        return find_all(items, DICT, self.dur)
 
 
 def tools_deps(tools, api=None):
@@ -406,9 +416,9 @@ def test_risk_keeps_the_warnings_that_other_nodes_left():
 # ------------------------------------------------------------ 승인 대기 (HITL ①)
 
 
-def asked(state):
+def asked(state, answer=approve_as_shown):
     """승인 대기에서 약사에게 보인 화면과 approve_node가 돌려준 값."""
-    pharmacist = Pharmacist()
+    pharmacist = Pharmacist(answer)
     update = approve_node(state, deps(ask=pharmacist))
     [payload] = pharmacist.seen
     return payload, update
@@ -429,7 +439,7 @@ def test_approve_shows_the_order_the_ocr_lines_and_a_notice():
 
 
 def test_approve_shows_the_proposals_and_the_memo_of_the_message():
-    proposal = {"kind": "edit", "text": "게보린 빼 주세요", "drugs": []}
+    proposal = {"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": []}
     payload, update = asked({**checked("rx_001"), "proposals": [proposal], "memo": "오후 수령"})
     assert (payload["proposals"], payload["memo"]) == ([proposal], "오후 수령")
     assert update["status"] == "approved"                            # 제안은 보이기만 하고 지시서를 바꾸지 않는다
@@ -470,9 +480,47 @@ def order_with_risk(level):
 
 @pytest.mark.parametrize("level, label, confirm", [("caution", "주의", False), ("warning", "경고", True), ("danger", "위험", True)])
 def test_approve_asks_for_a_confirmation_from_warning_up_but_only_shows_a_caution(level, label, confirm):
-    notice = asked(state_with(order_with_risk(level)))[0]["notice"]
+    notice = asked(state_with(order_with_risk(level)), manual_with("확인함"))[0]["notice"]
     assert f"위험 신호가 1건 있습니다({label})." in notice
     assert ("약사가 확인한 뒤에 승인할 수 있습니다." in notice) is confirm
+
+
+def manual_with(reason):
+    return lambda payload: {"action": "manual", "order": payload["order"], "reason": reason}
+
+
+def test_a_danger_cannot_be_approved_as_shown():
+    """명세서 2.8절 · 기능분석서 F-WEB-07: 위험은 고치거나 사유를 적어야 진행한다."""
+    from agent.nodes import DANGER_NEEDS_REASON
+
+    with pytest.raises(ValueError) as error:
+        asked(state_with(order_with_risk("danger")))
+    assert str(error.value) == DANGER_NEEDS_REASON
+    with pytest.raises(ValueError):
+        read_reply({"action": "approve", "order": order_with_risk("danger")}, DispensingOrder.model_validate(order_with_risk("danger")))
+
+
+@pytest.mark.parametrize("level", ["none", "caution", "warning", "danger"])
+def test_manual_with_a_reason_goes_on_and_keeps_the_reason(level):
+    _, update = asked(state_with(order_with_risk(level) if level != "none" else checked("rx_001")["order"]),
+                      manual_with("  처방의와 통화해 확인함 "))
+    assert update["status"] == "approved"
+    assert update["notice"] == "약사가 사유를 적고 진행했습니다. 사유: 처방의와 통화해 확인함"
+    assert update["notes"] == ["위험 신호 확인 후 진행 사유: 처방의와 통화해 확인함"]
+
+
+@pytest.mark.parametrize("reason", [None, "", "   "])
+def test_manual_without_a_reason_is_refused(reason):
+    order = order_with_risk("danger")
+    with pytest.raises(ValueError, match="사유"):
+        read_reply({"action": "manual", "order": order, "reason": reason}, DispensingOrder.model_validate(order))
+
+
+def test_a_danger_order_that_was_changed_is_checked_again():
+    order = order_with_risk("danger")
+    changed = {**order, "items": order["items"][:1]}
+    action, answered = read_reply({"action": "approve", "order": changed}, DispensingOrder.model_validate(order))
+    assert action == "approve" and len(answered.items) == 1             # 고친 승인은 다시 대조로 간다 (approve_node가 edited로)
 
 
 def test_approve_refuses_an_order_that_skipped_the_risk_check():
@@ -673,8 +721,8 @@ def test_ask_type_shows_the_question_the_supervisor_left_and_the_photo_kinds():
     ask_type_node(state, deps(ask=pharmacist))
     [shown] = pharmacist.seen
     assert shown == {
-        "hitl_point": "type_select", "about": "photo", "choices": ["prescription", "med_bag", "tray"],
-        "labels": {"prescription": "처방전", "med_bag": "약 포장", "tray": "트레이"}, "notice": state["notice"],
+        "hitl_point": "type_select", "about": "photo", "choices": ["prescription", "tray", "med_bag", "package"],
+        "labels": {"prescription": "처방전", "tray": "트레이", "med_bag": "약봉투", "package": "포장"}, "notice": state["notice"],
     }
     assert "사진 종류 정보가 없습니다." in shown["notice"]
 
@@ -700,12 +748,12 @@ def test_ask_type_asks_about_the_text_when_only_text_came():
     state = initial_state("P0001", None, None, "오후 수령 예정")
     pharmacist = choose("question")
     update = ask_type_node(state, deps(ask=pharmacist))
-    assert pharmacist.seen[0]["about"] == "text" and pharmacist.seen[0]["choices"] == ["current_med", "question", "memo"]
+    assert pharmacist.seen[0]["about"] == "text" and pharmacist.seen[0]["choices"] == ["patient_info", "question", "note"]
     assert update["route"] == ["consult"] and "photo_kind" not in update
 
 
 def test_choosing_memo_for_the_text_ends_with_noted():
-    update = ask_type_node(initial_state("P0001", None, None, "오후 수령 예정"), deps(ask=choose("memo")))
+    update = ask_type_node(initial_state("P0001", None, None, "오후 수령 예정"), deps(ask=choose("note")))
     assert (update["route"], update["status"], update["memo"]) == ([], "noted", "오후 수령 예정")
 
 
@@ -764,3 +812,67 @@ def test_a_sample_goes_through_the_nodes_in_order_to_the_plan():
     state = merged(state, plan_node(state, deps()))
     assert state["status"] == "planned" and len(state["plan"]["plan"]) == 9
     json.dumps(state)
+
+
+
+# ------------------------------------------------------------ 위험 신호: DUR 조회 (13단계)
+def dur_deps(dur):
+    return dataclasses.replace(deps(), dur=dur)
+
+
+def coded(*pairs):
+    """품목기준코드가 정해진 줄들 (사전 밖의 약도 쓸 수 있다)."""
+    return state_with(DispensingOrder(prescription_id="P0001", items=[
+        DrugLine(item_code=c, name=n, printed_code=c, count_per_dose=1, times=["morning"], days=3, match_method="code")
+        for c, n in pairs]).model_dump(mode="json"))
+
+
+def test_risk_with_dur_finds_a_combination_taboo_as_danger():
+    state = coded((TRISPEN, "트리스펜연질캡슐"), (KETOROLAC, KETOROLAC_NAME))
+    order = DispensingOrder.model_validate(risk_node(state, dur_deps(FakeDur()))["order"])
+    assert [f.type for f in order.risk_check.findings] == [COMBINATION_TABOO]
+    assert order.risk_check.level == "danger"
+    assert "약사가 확인한 뒤에 승인할 수 있습니다" in approval_notice(order, {})
+
+
+def test_risk_with_dur_finds_an_efficacy_duplicate_as_warning():
+    order = DispensingOrder.model_validate(
+        risk_node(after_match(line("타이레놀정500mg"), line("트리스펜연질캡슐")), dur_deps(FakeDur()))["order"])
+    assert [(f.type, f.level) for f in order.risk_check.findings] == [(EFFICACY_DUP, "warning")]
+    assert NO_DUR_WARNING not in order.warnings
+
+
+def test_risk_without_dur_says_taboos_were_not_checked():
+    order = DispensingOrder.model_validate(risk_node(after_match(line("타이레놀정500mg")), deps())["order"])
+    assert NO_DUR_WARNING in order.warnings
+
+
+def test_risk_through_mcp_tools_is_the_same_as_the_function():
+    state = coded((TRISPEN, "트리스펜연질캡슐"), (KETOROLAC, KETOROLAC_NAME), (TYLENOL, "타이레놀정500mg"))
+    tools = FakeTools(dur=FakeDur())
+    assert risk_node(state, tools_deps(tools)) == risk_node(state, dur_deps(FakeDur()))
+    assert tools.calls == 1
+
+
+def test_when_the_mcp_dur_tool_fails_the_node_checks_by_itself_and_says_so():
+    state = after_match(line("타이레놀정500mg"), line("게보린정"))
+    order = DispensingOrder.model_validate(risk_node(state, tools_deps(FakeTools(fail="연결이 끊겼습니다")))["order"])
+    assert order.risk_check.level == "warning"                         # 성분 중복은 직접 찾았다
+    assert f"{MCP_DUR_FAILED_WARNING}: 연결이 끊겼습니다" in order.warnings
+
+
+def test_a_photo_kind_can_also_be_chosen_as_doc_type():
+    """기능분석서 F-WEB-05: 종류 선택 카드의 재개 요청은 {doc_type}."""
+    from agent.nodes import read_choice
+
+    assert read_choice({"doc_type": "package"}, "photo") == "package"
+    assert read_choice({"choice": "tray"}, "photo") == "tray"
+    with pytest.raises(ValueError):
+        read_choice({"doc_type": "question"}, "text")                # 글 의도는 choice로만
+
+
+def test_a_package_photo_goes_to_the_current_medicine_recheck():
+    from agent.supervisor import KIND_FLOW, KIND_LABELS
+
+    assert (KIND_FLOW["package"], KIND_LABELS["package"]) == ("recheck", "포장")
+    assert (KIND_FLOW["med_bag"], KIND_LABELS["med_bag"]) == ("recheck", "약봉투")

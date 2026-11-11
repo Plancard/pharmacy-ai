@@ -54,18 +54,18 @@ def test_asking_about_a_photo_says_why_and_what_about():
 def test_an_edit_request_with_a_prescription_photo_becomes_a_proposal_only():
     got = plan("prescription", RX, "게보린 빼 주세요")
     assert got.route == ("prescription",) and got.memo is None
-    assert got.proposals == ({"kind": "edit", "text": "게보린 빼 주세요", "drugs": [GEVORIN]},)
+    assert got.proposals == ({"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": [GEVORIN]},)
 
 
 def test_a_current_med_with_a_prescription_photo_becomes_a_candidate_not_a_registration():
     got = plan("prescription", RX, "게보린 먹고 있어요")
     assert got.route == ("prescription",)                              # 등록하지 않는다 (약사가 확인한 것만)
-    assert [p["kind"] for p in got.proposals] == ["current_med"]
+    assert [p["kind"] for p in got.proposals] == ["patient_info"]
 
 
 def test_a_question_with_a_prescription_photo_adds_the_consult_after_it():
     got = plan("prescription", RX, "게보린 먹고 있는데 같이 먹어도 되나요?")
-    assert got.route == ("prescription", "consult") and [p["kind"] for p in got.proposals] == ["current_med"]
+    assert got.route == ("prescription", "consult") and [p["kind"] for p in got.proposals] == ["patient_info"]
 
 
 @pytest.mark.parametrize("text", ["메모: 오후 수령", "오후 3시"])
@@ -81,7 +81,7 @@ def test_any_text_with_a_tray_photo_is_only_a_memo(text):
 
 
 def test_a_med_bag_photo_takes_a_current_med_as_a_candidate_and_an_edit_as_a_memo():
-    assert [p["kind"] for p in plan("med_bag", None, "게보린 먹고 있어요").proposals] == ["current_med"]
+    assert [p["kind"] for p in plan("med_bag", None, "게보린 먹고 있어요").proposals] == ["patient_info"]
     got = plan("med_bag", None, "게보린 빼 주세요")
     assert (got.route, got.proposals, got.memo) == (("recheck",), (), "게보린 빼 주세요")
     assert plan("med_bag", None, "괜찮나요?").route == ("recheck", "consult")
@@ -99,8 +99,8 @@ def test_an_unclear_photo_with_text_asks_about_the_photo_first():
 
 @pytest.mark.parametrize("text, route, kinds, memo, notice", [
     ("같이 먹어도 되나요?", ("consult",), [], None, None),
-    ("게보린 먹고 있어요", ("register_meds",), ["current_med"], None, None),
-    ("게보린 먹고 있는데 괜찮나요?", ("register_meds", "consult"), ["current_med"], None, None),
+    ("게보린 먹고 있어요", ("register_meds",), ["patient_info"], None, None),
+    ("게보린 먹고 있는데 괜찮나요?", ("register_meds", "consult"), ["patient_info"], None, None),
     ("메모: 오후 수령", (), [], "메모: 오후 수령", None),
     ("게보린 빼 주세요", (), [], "게보린 빼 주세요", EDIT_WITHOUT_ORDER_NOTICE),
 ])
@@ -130,10 +130,10 @@ def test_after_choosing_a_photo_kind(choice, route):
 
 def test_after_choosing_the_prescription_kind_the_text_is_still_used():
     got = plan_after_choice("photo", "prescription", "게보린 빼 주세요", DICT)
-    assert [p["kind"] for p in got.proposals] == ["edit"]
+    assert [p["kind"] for p in got.proposals] == ["edit_request"]
 
 
-@pytest.mark.parametrize("choice, route, memo", [("question", ("consult",), None), ("current_med", ("register_meds",), None), ("memo", (), "오후 3시")])
+@pytest.mark.parametrize("choice, route, memo", [("question", ("consult",), None), ("patient_info", ("register_meds",), None), ("note", (), "오후 3시")])
 def test_after_choosing_a_text_meaning(choice, route, memo):
     got = plan_after_choice("text", choice, "오후 3시", DICT)
     assert (got.route, got.memo) == (route, memo)
@@ -146,13 +146,13 @@ def test_a_choice_from_the_other_list_is_refused(about, choice):
 
 
 def test_the_text_choices_and_their_labels():
-    assert TEXT_CHOICES == ("current_med", "question", "memo")
-    assert choice_labels("text") == {"current_med": "복용 약 정보", "question": "질문", "memo": "메모"}
-    assert choice_labels("photo") == {"prescription": "처방전", "med_bag": "약 포장", "tray": "트레이"}
+    assert TEXT_CHOICES == ("patient_info", "question", "note")
+    assert choice_labels("text") == {"patient_info": "복용 약 정보", "question": "질문", "note": "메모"}
+    assert choice_labels("photo") == {"prescription": "처방전", "tray": "트레이", "med_bag": "약봉투", "package": "포장"}
 
 
 def test_a_plan_becomes_the_fields_of_the_state():
-    got = MessagePlan(route=("prescription", "consult"), flow="prescription", proposals=({"kind": "edit", "text": "t", "drugs": []},), memo="m")
+    got = MessagePlan(route=("prescription", "consult"), flow="prescription", proposals=({"kind": "edit_request", "text": "t", "drugs": []},), memo="m")
     assert got.as_update() == {"route": ["prescription", "consult"], "flow": "prescription",
-                               "proposals": [{"kind": "edit", "text": "t", "drugs": []}], "memo": "m"}
+                               "proposals": [{"kind": "edit_request", "text": "t", "drugs": []}], "memo": "m"}
     assert MessagePlan(route=(), notice="n").as_update()["notice"] == "n"

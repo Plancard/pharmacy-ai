@@ -1,0 +1,11 @@
+{
+  "note": "REQ-AG-05 수용 기준의 '공개 DUR 병용금기 조합 5건' 후보 (13단계). 실제 DUR API로 검출되는지는 scripts/agent/show_dur.py --cases 로 확인한다. 조합은 팀이 확정한다 (정할 것). T1 · T2는 11/11 실제 응답으로 확인: 이부프로펜의 병용금기 상대는 메토트렉세이트 제품 40개.",
+  "how": "drug: 품목기준코드(9자리) 또는 제품 이름(의약품 API에서 찾아 첫 제품을 쓴다). partner_ingredient: 이 약의 DUR 병용금기 목록에서 상대 약을 고를 때 찾는 성분 이름의 일부. 고른 상대 약과 둘을 처방약으로 넣어 병용금기가 검출되면 통과.",
+  "cases": [
+    {"id": "T1", "drug": "201110120", "drug_label": "트리스펜연질캡슐 (이부프로펜, 대상 8종)", "partner_ingredient": "메토트렉세이트"},
+    {"id": "T2", "drug": "200201239", "drug_label": "아르펜정 (이부프로펜, 대상 8종)", "partner_ingredient": "메토트렉세이트"},
+    {"id": "T3", "drug": "스포라녹스캡슐", "drug_label": "스포라녹스캡슐 (이트라코나졸)", "partner_ingredient": "심바스타틴"},
+    {"id": "T4", "drug": "비아그라정", "drug_label": "비아그라정 (실데나필)", "partner_ingredient": "이소소르비드"},
+    {"id": "T5", "drug": "클래리시드", "drug_label": "클래리시드 (클래리스로마이신)", "partner_ingredient": "심바스타틴"}
+  ]
+}

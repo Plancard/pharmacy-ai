@@ -17,7 +17,7 @@ from agent.checkpoint import memory_checkpointer
 from agent.graph import build_graph, resume_run, run_message
 from agent.pipeline import structure_prescription
 from agent.plan import MAX_PER_CELL, PlanError, build_plan
-from agent.risk import check_order
+from agent.risk import NO_DUR_WARNING, check_order
 from agent.schema import TRAY_DAYS, OcrResult
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -92,7 +92,8 @@ def test_each_prescription_reads_matches_and_checks_as_expected(rx_id):
     assert order.flagged_indices == []
     # 용법이 "PO 식후 30분"인 줄은 시점이 없어 하루 횟수로 배정했다는 경고가 붙는다 (취침 전 줄은 시점이 적혀 있다)
     after_meal = [(i, len(item["times"])) for i, item in enumerate(expected["items"], start=1) if item["times"] != ["bedtime"]]
-    assert order.warnings == [f"{i}번째 약품: 복용 시점이 처방전에 없어 하루 {n}회 기준으로 배정했습니다." for i, n in after_meal]
+    assert order.warnings == [f"{i}번째 약품: 복용 시점이 처방전에 없어 하루 {n}회 기준으로 배정했습니다." for i, n in after_meal] \
+        + [NO_DUR_WARNING]                                             # 시험은 DUR API 없이 돈다
     assert order.risk_check.level == expected["risk_level"]
 
 

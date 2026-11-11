@@ -3,12 +3,14 @@
     python -m agent.mcp_server            # 표준 입출력(stdio)으로 띄운다. .env에 DRUG_API_KEY가 있으면 의약품 API도 쓴다
     python -m agent.mcp_server --no-api   # 약품 사전만 쓴다
 
-도구 (지금 4개. DUR 2개는 13단계, 조제 2개는 14단계에서 더한다)
+도구 (지금 6개. 조제 2개는 14단계에서 더한다)
     search_drug        이름으로 약 찾기: 약품 사전에서 비슷한 약 + (API가 있으면) 의약품 API의 제품
                        <- drug_match.rank_by_name, ApiSearch
     check_item_code    품목기준코드가 이 이름의 제품 코드가 맞는지 의약품 API로 확인  <- drug_match.check_item_code
     match_drug         조제지시서(A.5)의 약품마다 품목기준코드를 정한다                 <- drug_match.match_order
     verify_dictionary  약품 사전 8종의 코드를 의약품 API로 한 번에 확인                 <- drug_match.check_item_code
+    check_interaction  처방약끼리 병용금기 (DUR API)                                   <- dur.check_interaction
+    check_duplicate    처방약끼리 성분 중복(사전) + 효능군 중복(DUR API)               <- dur.check_duplicate
 
 규칙
 - 서버는 표준 출력(stdout)에 아무것도 쓰지 않는다. stdout이 MCP 통신선이다. 알림은 표준 오류(stderr)로만 간다.
@@ -30,13 +32,16 @@ from agent.drug_api import default_api
 from agent.drug_dictionary import DrugDictionary, load_dictionary
 from agent.drug_match import CANDIDATE_MIN, ApiSearch, check_item_code, match_order, rank_by_name
 from agent.drug_names import match_key, search_term
+from agent.dur import DurLookup, Ref, check_duplicate, check_interaction, report_to_json
+from agent.dur_api import default_dur_api
 from agent.errors import ConfigError, DrugApiError
 from agent.schema import DispensingOrder
 
 SERVER_NAME = "pharmacy-agent"
-TOOL_NAMES = ("search_drug", "check_item_code", "match_drug", "verify_dictionary")
+TOOL_NAMES = ("search_drug", "check_item_code", "match_drug", "verify_dictionary", "check_interaction", "check_duplicate")
 MAX_RESULTS = 5          # 사전 · API에서 보여 줄 약의 수
 NO_API = "의약품 API를 쓰지 않는 서버입니다 (.env에 DRUG_API_KEY가 없거나 --no-api로 띄웠습니다)."
+NO_DUR = "DUR API를 쓰지 않는 서버입니다 (.env에 DRUG_API_KEY가 없거나 --no-api로 띄웠습니다)."
 
 
 def _product(product: Any, score: float | None = None) -> dict[str, Any]:
@@ -53,8 +58,15 @@ def _search_api(api: ApiSearch, name: str) -> list[Any]:
         raise ToolError(str(e)) from None
 
 
-def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None) -> MCPServer:
-    """도구 4개가 달린 서버를 만든다. 테스트는 이 서버를 프로세스 없이 바로 붙여 부른다 (mcp_client.in_process)."""
+def _refs(items: list[dict[str, Any]]) -> list[Ref]:
+    try:
+        return [Ref(item_code=i.get("item_code") or None, name=str(i["name"])) for i in items]
+    except (KeyError, TypeError, AttributeError):
+        raise ToolError("items는 [{item_code, name}, ...] 모양이어야 합니다.") from None
+
+
+def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: DurLookup | None = None) -> MCPServer:
+    """도구 6개가 달린 서버를 만든다. 테스트는 이 서버를 프로세스 없이 바로 붙여 부른다 (mcp_client.in_process)."""
     server = MCPServer(
         SERVER_NAME,
         instructions="약국 조제 보조 Agent의 약품 도구. 약품 사전(대상 8종)과 식약처 의약품 제품 허가정보 API를 쓴다.",
@@ -121,6 +133,18 @@ def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None) -> MC
         matched = sum(r["verdict"] == "일치" for r in results)
         return {"total": len(results), "matched": matched, "results": results}
 
+    @server.tool(name="check_interaction",
+                 description="처방약끼리 병용금기를 DUR API로 찾는다. items: [{item_code, name}]. 결과는 hits · unchecked · dur_used.")
+    def check_interaction_tool(items: list[dict[str, Any]]) -> dict[str, Any]:
+        if dur is None:
+            raise ToolError(NO_DUR)
+        return report_to_json(check_interaction(_refs(items), dur, dictionary))
+
+    @server.tool(name="check_duplicate",
+                 description="처방약끼리 성분 중복(약품 사전)과 효능군 중복(DUR API, 있을 때)을 찾는다. items: [{item_code, name}].")
+    def check_duplicate_tool(items: list[dict[str, Any]]) -> dict[str, Any]:
+        return report_to_json(check_duplicate(_refs(items), dictionary, dur))
+
     return server
 
 
@@ -133,7 +157,10 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as e:
         print(f"약품 사전을 읽지 못했습니다: {e}", file=sys.stderr)   # stdout은 통신선이라 stderr로
         return 1
-    build_server(dictionary, None if args.no_api else default_api()).run("stdio")
+    if args.no_api:
+        build_server(dictionary).run("stdio")
+    else:
+        build_server(dictionary, default_api(), default_dur_api()).run("stdio")
     return 0
 
 

@@ -42,8 +42,8 @@ def run(argv):
 def test_the_script_shows_four_tools_and_the_same_graph_results(backend):
     code, text = run(["--in-process", "--no-api"])
     assert code == 0, text
-    assert "도구 4개" in text
-    for name in ("search_drug", "check_item_code", "match_drug", "verify_dictionary"):
+    assert "도구 6개" in text
+    for name in ("search_drug", "check_item_code", "match_drug", "verify_dictionary", "check_interaction", "check_duplicate"):
         assert f"    {name}: " in text
     assert "사전  202106092  타이레놀정500mg" in text
     assert "전체 13장 중 13장이 같습니다." in text
@@ -146,7 +146,7 @@ def test_run_graph_can_match_through_mcp_and_closes_the_connection(backend, monk
     text = "\n".join(lines)
     assert code == 0, text
     assert opened == [True]
-    assert "약품 매칭: MCP 도구로 부름 (python -m agent.mcp_server, 도구 4개: search_drug, check_item_code, match_drug, verify_dictionary)" in text
+    assert "약품 매칭: MCP 도구로 부름 (python -m agent.mcp_server, 도구 6개: search_drug, check_item_code, match_drug, verify_dictionary, check_interaction, check_duplicate)" in text
     assert "(code)" in text and "조제 계획:" in text
     assert threading.active_count() == before                      # 끝나면 MCP 연결을 닫는다
 
@@ -171,3 +171,30 @@ def test_a_difference_is_shown_down_to_the_field():
         'pause.order.warnings: [] → ["API 실패"]',
     ]
     assert try_mcp.differences({"k": "가" * 100}, {"k": None})[0].endswith("… → null")
+
+
+def test_the_comparison_with_dur_on_both_sides_is_the_same(backend):
+    from fake_dur import FakeDur
+
+    with in_process(DICT, dur=FakeDur()) as tools:
+        results = try_mcp.compare(try_mcp.load_samples(), tools, dur=FakeDur())
+    assert all(same for _, same, _ in results), results
+
+
+def test_the_comparison_notices_dur_only_on_one_side(backend):
+    from fake_dur import FakeDur
+
+    with in_process(DICT) as tools:                                   # 서버는 DUR 없이
+        results = dict((n, s) for n, s, _ in try_mcp.compare({"rx8_01": try_mcp.load_samples()["rx8_01"]}, tools, dur=FakeDur()))
+    assert results == {"rx8_01": False}
+
+
+def test_the_script_uses_dur_on_both_sides_when_the_key_is_set(backend, monkeypatch):
+    from fake_dur import FakeDur
+
+    monkeypatch.setattr(try_mcp, "default_api", lambda: None)
+    monkeypatch.setattr(try_mcp, "default_dur_api", lambda: FakeDur())
+    code, text = run(["--in-process"])
+    assert code == 0, text
+    assert "| DUR API: 사용" in text and "전체 13장 중 13장이 같습니다." in text
+    assert "check_interaction(타이레놀정500mg + 게보린정)\n    찾은 것 없음" in text

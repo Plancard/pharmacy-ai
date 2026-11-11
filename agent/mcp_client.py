@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.drug_dictionary import DrugDictionary
 from agent.drug_match import ApiSearch
+from agent.dur import DurLookup, DurReport, combine_checks, report_from_json
 from agent.schema import DispensingOrder
 
 if TYPE_CHECKING:
@@ -145,6 +146,18 @@ class DrugTools:
         found = self.call("match_drug", order=order.model_dump(mode="json"))
         return DispensingOrder.model_validate(found["order"]), bool(found["api_used"])
 
+    def check_dur(self, items) -> DurReport:
+        """dur.find_all과 같은 대조를 서버가 한다: 병용금기(check_interaction) + 중복(check_duplicate).
+
+        서버가 DUR API를 쓰지 않으면 check_interaction은 건너뛰고 중복만 본다 (dur_used=False).
+        """
+        refs = [{"item_code": i.item_code, "name": i.name} for i in items]
+        duplicates = report_from_json(self.call("check_duplicate", items=refs))
+        if not duplicates.dur_used:
+            return duplicates
+        taboos = report_from_json(self.call("check_interaction", items=refs))
+        return combine_checks(taboos, duplicates)
+
 
 def stdio_params(*, no_api: bool = False) -> "StdioServerParameters":
     """python -m agent.mcp_server 를 저장소 루트에서 띄우는 설정. 지금 쓰는 파이썬(.venv)으로 띄운다."""
@@ -160,8 +173,8 @@ def stdio(*, no_api: bool = False) -> DrugTools:
     return DrugTools(stdio_params(no_api=no_api)).open()
 
 
-def in_process(dictionary: DrugDictionary, api: ApiSearch | None = None) -> DrugTools:
+def in_process(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: DurLookup | None = None) -> DrugTools:
     """같은 프로세스의 서버 객체에 바로 붙은 클라이언트 (열린 상태). JSON으로 주고받는 것은 stdio와 같다."""
     from agent.mcp_server import build_server   # 같은 층. 쓸 때만 서버를 만든다
 
-    return DrugTools(build_server(dictionary, api)).open()
+    return DrugTools(build_server(dictionary, api, dur)).open()

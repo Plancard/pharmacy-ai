@@ -19,8 +19,9 @@ from __future__ import annotations
 import operator
 from typing import Annotated, Any, Literal, TypedDict, get_args
 
-# 들어온 사진의 종류. 처방전 · 약 포장은 A.1의 doc_type 값과 같고, 트레이는 OCR을 거치지 않는다.
-PhotoKind = Literal["prescription", "med_bag", "tray"]
+# 들어온 사진의 종류 (기능분석서 v0.3 F-WEB-05의 버튼 순서: 처방전 · 트레이 · 약봉투 · 포장).
+# 처방전 · 약봉투는 A.1의 doc_type 값과 같다. 트레이는 OCR을 거치지 않고, 포장은 바코드(F-CV-07)로 읽는다.
+PhotoKind = Literal["prescription", "tray", "med_bag", "package"]
 # 흐름. 흐름마다 상위 그래프의 노드가 하나씩 있다. 실행 순서는 supervisor.FLOW_ORDER가 정한다.
 Flow = Literal["prescription", "recheck", "tray", "ask_type", "register_meds", "consult"]
 # 진행 단계. 멈춘 것(승인 대기 · 되묻기)은 상태 값이 아니라 그래프가 멈춘 것으로 안다 (checkpointer의 interrupts. api.py).

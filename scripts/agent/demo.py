@@ -125,7 +125,7 @@ def s3_edit_after_a_plan_that_cannot_be_made(api: AgentApi, out: Out) -> bool:
 
 
 def s4_unclear_photo_kind(api: AgentApi, out: Out) -> bool:
-    out("   약사: 처방전 사진(rx8_04)을 '약 포장'이라고 올렸다 (OCR은 처방전으로 읽음)")
+    out("   약사: 처방전 사진(rx8_04)을 '약봉투'라고 올렸다 (OCR은 처방전으로 읽음)")
     pause = api.start("D4", load("rx8_04"), "med_bag")
     show_pause(pause, out)
     out("   약사: '처방전'을 고른다")
@@ -159,7 +159,7 @@ def s7_text_for_an_open_prescription(api: AgentApi, out: Out) -> bool:
     for p in got["proposals"]:
         out(f"      제안({PROPOSAL_LABELS[p['kind']]}): {p['text']} (글에 보인 약: {', '.join(d['name'] for d in p['drugs'])})")
     out("      그래프는 그대로 승인 대기에 멈춰 있다 (자동 반영 없음)")
-    return api.pending("D7") == pause and [p["kind"] for p in got["proposals"]] == ["edit"]
+    return api.pending("D7") == pause and [p["kind"] for p in got["proposals"]] == ["edit_request"]
 
 
 SCENARIOS: list[tuple[str, Callable[[AgentApi, Out], bool]]] = [

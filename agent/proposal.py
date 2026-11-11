@@ -2,7 +2,7 @@
 
 글은 조제지시서에 자동으로 반영하지 않는다 (명세서 2.2절). 승인 카드에 '제안'으로 보이고, 약사가 확인한 것만
 약사가 직접 고쳐서(edit) 반영한다. 제안 하나의 모양 (JSON으로 바꿀 수 있는 dict):
-    {"kind": "edit" | "current_med", "text": 받은 글, "drugs": [{"item_code", "name"}, ...]}
+    {"kind": "edit_request" | "patient_info", "text": 받은 글, "drugs": [{"item_code", "name"}, ...]}
 drugs는 글에서 이름이 보인 대상 약이다 (약품 사전). 없으면 빈 목록이다. 약을 고른 것이 아니라 글에 보인 것이다.
 
 판단 층이다. 사전을 읽을 뿐 네트워크를 쓰지 않는다.
@@ -14,10 +14,10 @@ from typing import Any, Iterable
 
 from agent.drug_dictionary import DrugDictionary
 from agent.drug_names import search_term
-from agent.intent import CURRENT_MED, EDIT, compact
+from agent.intent import PATIENT_INFO, EDIT_REQUEST, compact
 
-PROPOSAL_KINDS = (EDIT, CURRENT_MED)
-PROPOSAL_LABELS = {EDIT: "수정 제안", CURRENT_MED: "복용 약 후보"}
+PROPOSAL_KINDS = (EDIT_REQUEST, PATIENT_INFO)
+PROPOSAL_LABELS = {EDIT_REQUEST: "수정 제안", PATIENT_INFO: "복용 약 후보"}
 _FORM = re.compile(r"(연질캡슐|캡슐|서방정|정)$")     # 이름 끝의 제형: 글에는 보통 빠진다 ('타이레놀 먹어요')
 MIN_STEM = 3                                         # 이름 뒷부분이 이만큼 이상 같으면 그 약으로 본다 ('아이월드요비신' ← '요비신')
 

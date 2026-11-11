@@ -37,7 +37,7 @@ def test_the_story_shows_the_proposal_the_plan_and_the_questions(backend):
     _, text = run()
     assert "제안(수정 제안): 게보린 빼 주세요  ← 약사가 확인해야 반영" in text
     assert "계획 아침: 1일 타이레놀정 500mg 1 · 게보린정 1" in text
-    assert "멈춤: type_select" in text and "고를 수 있는 것: 처방전 · 약 포장 · 트레이" in text
+    assert "멈춤: type_select" in text and "고를 수 있는 것: 처방전 · 트레이 · 약봉투 · 포장" in text
     assert "트레이 칸당 최대 2알을 넘습니다: 1~3일 아침·점심·저녁 3알" in text
     assert "메모: 게보린 빼 주세요" in text
 

@@ -9,7 +9,7 @@
 규칙 (사진이 있을 때)
 - 처방전 사진: 처방 흐름. 글의 수정 요청 · 복용 약 정보는 승인 카드의 제안(proposal.py)으로만 붙는다. 질문이면 상담을 뒤에 더한다.
   그 밖의 글(메모 · 애매함)은 메모로 남긴다.
-- 약 포장 사진: 복용 약 재대조. 글의 복용 약 정보는 후보 제안, 질문이면 상담. 그 밖의 글은 메모.
+- 약봉투 · 포장 사진: 복용 약 재대조. 글의 복용 약 정보는 후보 제안, 질문이면 상담. 그 밖의 글은 메모.
 - 트레이 사진: 트레이 검수. 글은 무엇이든 메모로만 남긴다 (검수 판정은 사진 기준).
 - 사진 종류가 애매하면 되묻는다 (ask_type, HITL type_select). 약사가 고르면 그 종류로 다시 계획한다 (plan_after_choice).
 규칙 (글만 올 때, 새 대화)
@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent.drug_dictionary import DrugDictionary
-from agent.intent import CURRENT_MED, EDIT, INTENT_LABELS, MEMO, QUESTION, classify
+from agent.intent import PATIENT_INFO, EDIT_REQUEST, INTENT_LABELS, NOTE, QUESTION, classify
 from agent.proposal import make_proposals
 from agent.state import PHOTO_KINDS, Flow
 
@@ -34,13 +34,13 @@ from agent.state import PHOTO_KINDS, Flow
 FLOW_ORDER: tuple[str, ...] = ("ask_type", "prescription", "register_meds", "recheck", "tray", "consult")
 
 # 사진 종류 -> 흐름
-KIND_FLOW: dict[str, Flow] = {"prescription": "prescription", "med_bag": "recheck", "tray": "tray"}
-KIND_LABELS = {"prescription": "처방전", "med_bag": "약 포장", "tray": "트레이"}
+KIND_FLOW: dict[str, Flow] = {"prescription": "prescription", "tray": "tray", "med_bag": "recheck", "package": "recheck"}
+KIND_LABELS = {"prescription": "처방전", "tray": "트레이", "med_bag": "약봉투", "package": "포장"}
 DOC_KINDS = ("prescription", "med_bag")     # OCR(A.1)의 doc_type이 가질 수 있는 값
 
 # 되묻기(type_select)의 선택지: 사진이면 종류, 글이면 의도
 PHOTO_CHOICES: tuple[str, ...] = PHOTO_KINDS
-TEXT_CHOICES: tuple[str, ...] = (CURRENT_MED, QUESTION, MEMO)
+TEXT_CHOICES: tuple[str, ...] = (PATIENT_INFO, QUESTION, NOTE)
 ASK_TEXT_NOTICE = "글의 뜻을 정하지 못했습니다. 복용 약 정보 · 질문 · 메모 중에서 골라 주세요."
 EDIT_WITHOUT_ORDER_NOTICE = "고칠 처방이 없어 글을 메모로 남겼습니다."
 
@@ -67,7 +67,7 @@ class MessagePlan:
 
 
 def _ask(reason: str) -> tuple[Flow, str]:
-    return "ask_type", f"사진 종류를 정하지 못했습니다. {reason} 처방전 · 약 포장 · 트레이 중에서 골라 주세요."
+    return "ask_type", f"사진 종류를 정하지 못했습니다. {reason} 처방전 · 트레이 · 약봉투 · 포장 중에서 골라 주세요."
 
 
 def decide_flow(photo_kind: Any, ocr: Any) -> tuple[Flow, str | None]:
@@ -76,7 +76,7 @@ def decide_flow(photo_kind: Any, ocr: Any) -> tuple[Flow, str | None]:
     두 단서를 본다: 들어온 사진 종류(photo_kind)와 OCR이 읽은 문서 종류(ocr의 doc_type).
     - 한쪽만 있으면 그것을 따른다. 둘 다 있고 같으면 그것을 따른다.
     - 둘 다 없거나, 알 수 없는 값이거나, 서로 다르면 맞혀 보지 않고 되묻는다 (ask_type).
-      처방전을 약 포장으로 잘못 다루면 약사가 모르고 지나가기 때문이다.
+      처방전을 약봉투로 잘못 다루면 약사가 모르고 지나가기 때문이다.
     """
     if photo_kind is not None and photo_kind not in PHOTO_KINDS:
         return _ask("알 수 없는 사진 종류입니다.")
@@ -103,7 +103,7 @@ def _with_text(flow: Flow, text: str | None, intents: list[str], dictionary: Dru
         return MessagePlan(route=(flow,), flow=flow)
     if flow == "tray":                                   # 트레이 사진과 온 글은 메모로만
         return MessagePlan(route=(flow,), flow=flow, memo=text.strip(), intents=tuple(intents))
-    usable = {"prescription": (EDIT, CURRENT_MED), "recheck": (CURRENT_MED,)}[flow]
+    usable = {"prescription": (EDIT_REQUEST, PATIENT_INFO), "recheck": (PATIENT_INFO,)}[flow]
     proposals = tuple(make_proposals(text, [i for i in intents if i in usable], dictionary))
     route = [flow] + (["consult"] if QUESTION in intents else [])
     used = set(usable) | {QUESTION}
@@ -114,13 +114,13 @@ def _with_text(flow: Flow, text: str | None, intents: list[str], dictionary: Dru
 def _text_only(text: str, intents: list[str], dictionary: DrugDictionary) -> MessagePlan:
     if not intents:
         return MessagePlan(route=("ask_type",), flow="ask_type", notice=ASK_TEXT_NOTICE, ask_about="text")
-    route = (["consult"] if QUESTION in intents else []) + (["register_meds"] if CURRENT_MED in intents else [])
-    proposals = tuple(make_proposals(text, [CURRENT_MED] if CURRENT_MED in intents else [], dictionary))
+    route = (["consult"] if QUESTION in intents else []) + (["register_meds"] if PATIENT_INFO in intents else [])
+    proposals = tuple(make_proposals(text, [PATIENT_INFO] if PATIENT_INFO in intents else [], dictionary))
     notice = None
     memo = None
     if not route:                                        # 수정 요청 · 메모만: 메모로 남기고 끝
         memo = text.strip()
-        notice = EDIT_WITHOUT_ORDER_NOTICE if EDIT in intents else None
+        notice = EDIT_WITHOUT_ORDER_NOTICE if EDIT_REQUEST in intents else None
     route_t = ordered(route)
     return MessagePlan(route=route_t, flow=route_t[0] if route_t else None, notice=notice, proposals=proposals,
                        memo=memo, intents=tuple(intents))

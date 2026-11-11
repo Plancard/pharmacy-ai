@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 from agent import config  # noqa: E402
 from agent.checkpoint import memory_checkpointer  # noqa: E402
 from agent.drug_api import default_api  # noqa: E402
+from agent.dur_api import default_dur_api  # noqa: E402
 from agent.drug_dictionary import load_dictionary  # noqa: E402
 from agent.errors import ConfigError, StructureError  # noqa: E402
 from agent.graph import build_graph, resume_run, run_message  # noqa: E402
@@ -105,12 +106,13 @@ def differences(a: Any, b: Any, path: str = "") -> list[str]:
     return [f"{path}: {_short(a)} → {_short(b)}"]
 
 
-def compare(samples: dict[str, dict[str, Any]], tools: DrugTools, *, api: Any = None,
+def compare(samples: dict[str, dict[str, Any]], tools: DrugTools, *, api: Any = None, dur: Any = None,
             build: Callable[..., Any] = build_graph) -> list[tuple[str, bool, str]]:
     """샘플마다 (이름, 같은지, 한 줄 설명). 함수 쪽 그래프와 MCP 쪽 그래프는 따로 만들고 같은 사전을 쓴다."""
     dictionary = load_dictionary()
-    by_function = build(dictionary=dictionary, structure=rule_structure, api=api, checkpointer=memory_checkpointer())
-    by_mcp = build(dictionary=dictionary, structure=rule_structure, api=api, checkpointer=memory_checkpointer(), tools=tools)
+    by_function = build(dictionary=dictionary, structure=rule_structure, api=api, dur=dur, checkpointer=memory_checkpointer())
+    by_mcp = build(dictionary=dictionary, structure=rule_structure, api=api, dur=dur, checkpointer=memory_checkpointer(),
+                   tools=tools)
     results = []
     for name, ocr in samples.items():
         a, b = run_once(by_function, f"RUN-{name}", ocr), run_once(by_mcp, f"RUN-{name}", ocr)   # 체크포인터가 따로라 같은 ID를 써도 된다
@@ -148,6 +150,22 @@ def show_tool_calls(tools: DrugTools, out: Callable[[str], None], *, verify: boo
     except McpToolError as e:
         out(f"    건너뜀: {e}")
 
+    pair = [{"item_code": e.item_code, "name": e.name} for e in dictionary.entries[:2]]     # 시연 조합 A
+    shown = " + ".join(d["name"] for d in pair)
+    for tool in ("check_duplicate", "check_interaction"):
+        out(f"{tool}({shown})")
+        try:
+            found = tools.call(tool, items=pair)
+        except McpToolError as e:
+            out(f"    건너뜀: {e}")
+            continue
+        for hit in found["hits"]:
+            out(f"    [{hit['type']}] {' · '.join(hit['names'])}: {', '.join(hit['ingredients'])}")
+        if not found["hits"]:
+            out("    찾은 것 없음")
+        for item in found["unchecked"]:
+            out(f"    대조 못 함: {item['name']} ({item['reason']})")
+
     if verify:
         out("verify_dictionary()")
         try:
@@ -169,14 +187,16 @@ def main(argv: list[str] | None = None, *, out: Callable[[str], None] = print,
 
     try:
         api = None if args.no_api else default_api()
-        tools = in_process(load_dictionary(), api) if args.in_process else stdio(no_api=args.no_api)
+        dur = None if args.no_api else default_dur_api()
+        tools = in_process(load_dictionary(), api, dur) if args.in_process else stdio(no_api=args.no_api)
     except (McpToolError, ConfigError) as e:
         out(f"MCP 서버에 연결하지 못했습니다: {e}")
         out("mcp 패키지가 없다면 pip install -r agent/requirements.txt 로 설치해 주세요.")
         return 1
     try:
         how = "같은 프로세스" if args.in_process else "stdio: python -m agent.mcp_server" + (" --no-api" if args.no_api else "")
-        out(f"서버: {how} | 의약품 API: {'사용' if api is not None else '사용 안 함'}")
+        out(f"서버: {how} | 의약품 API: {'사용' if api is not None else '사용 안 함'}"
+            f" | DUR API: {'사용' if dur is not None else '사용 안 함'}")
         out(f"도구 {len(tools.tool_names())}개")
         for name, description in tools.tools():
             out(f"    {name}: {description}")
@@ -184,7 +204,7 @@ def main(argv: list[str] | None = None, *, out: Callable[[str], None] = print,
         show_tool_calls(tools, out, verify=args.verify)
         out("")
         try:
-            results = compare(load_samples(), tools, api=api, build=build)
+            results = compare(load_samples(), tools, api=api, dur=dur, build=build)
         except ModuleNotFoundError as e:
             if (e.name or "").split(".")[0] != "langgraph":
                 raise

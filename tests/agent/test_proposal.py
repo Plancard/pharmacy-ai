@@ -5,7 +5,7 @@ import pytest
 
 from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import dictionary_from_data, load_dictionary
-from agent.intent import CURRENT_MED, EDIT, MEMO, QUESTION
+from agent.intent import PATIENT_INFO, EDIT_REQUEST, NOTE, QUESTION
 from agent.proposal import PROPOSAL_KINDS, PROPOSAL_LABELS, make_proposals, mentioned_drugs, stem
 
 DICT = load_dictionary(RESOURCES_DIR / "drug_dictionary.json")
@@ -37,21 +37,21 @@ def test_mentioned_drugs_carry_the_item_code():
 
 
 def test_a_proposal_per_usable_intent():
-    got = make_proposals(" 게보린 먹고 있는데 타이레놀 빼 주세요 ", [CURRENT_MED, EDIT, QUESTION], DICT)
-    assert [p["kind"] for p in got] == [EDIT, CURRENT_MED]
+    got = make_proposals(" 게보린 먹고 있는데 타이레놀 빼 주세요 ", [PATIENT_INFO, EDIT_REQUEST, QUESTION], DICT)
+    assert [p["kind"] for p in got] == [EDIT_REQUEST, PATIENT_INFO]
     assert all(p["text"] == "게보린 먹고 있는데 타이레놀 빼 주세요" for p in got)
     assert names(got[0]["drugs"]) == ["타이레놀정500mg", "게보린정"]
     json.dumps(got)
 
 
-@pytest.mark.parametrize("intents", [[], [QUESTION], [MEMO], [QUESTION, MEMO]])
+@pytest.mark.parametrize("intents", [[], [QUESTION], [NOTE], [QUESTION, NOTE]])
 def test_no_proposal_without_an_edit_or_a_current_med(intents):
     assert make_proposals("게보린 빼 주세요", intents, DICT) == []
 
 
 @pytest.mark.parametrize("text", [None, "", "  "])
 def test_no_proposal_for_an_empty_text(text):
-    assert make_proposals(text, [EDIT], DICT) == []
+    assert make_proposals(text, [EDIT_REQUEST], DICT) == []
 
 
 def test_another_dictionary_finds_its_own_drugs():
@@ -60,5 +60,5 @@ def test_another_dictionary_finds_its_own_drugs():
 
 
 def test_the_kinds_and_labels():
-    assert PROPOSAL_KINDS == ("edit", "current_med")
-    assert PROPOSAL_LABELS == {"edit": "수정 제안", "current_med": "복용 약 후보"}
+    assert PROPOSAL_KINDS == ("edit_request", "patient_info")
+    assert PROPOSAL_LABELS == {"edit_request": "수정 제안", "patient_info": "복용 약 후보"}

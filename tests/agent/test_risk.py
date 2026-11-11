@@ -6,13 +6,31 @@ import pytest
 
 from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import dictionary_from_data, load_dictionary
-from agent.dur import INGREDIENT_DUP, NO_INGREDIENTS, NO_ITEM_CODE, DurHit, Unchecked
+from agent.dur import (
+    COMBINATION_TABOO,
+    DUR_FAILED,
+    EFFICACY_DUP,
+    INGREDIENT_DUP,
+    NO_INGREDIENTS,
+    NO_ITEM_CODE,
+    TABOO_PARTIAL,
+    DurHit,
+    DurReport,
+    Unchecked,
+)
 from agent.risk import (
     CONFIRM_LEVELS,
     LEVEL_BY_TYPE,
     LEVEL_LABELS,
+    DUR_UNCHECKED_TAIL,
+    NO_DUR_WARNING,
+    TABOO_PARTIAL_TAIL,
+    TYPE_LABELS,
     UNCHECKED_TAIL,
+    apply_report,
     check_order,
+    combination_taboo_message,
+    efficacy_dup_message,
     finding_from_hit,
     finding_level,
     ingredient_dup_message,
@@ -38,6 +56,20 @@ HIT_A = DurHit(INGREDIENT_DUP, (TYLENOL, GEVORIN), ("타이레놀정500mg", "게
 HIT_B = DurHit(INGREDIENT_DUP, (TRISPEN, ARPEN), ("트리스펜연질캡슐", "아르펜정"), ("이부프로펜",))
 
 
+class EmptyDur:
+    """DUR 조회 대신: 어느 약도 병용금기 · 효능군이 없다."""
+
+    def taboo(self, item_code):
+        from agent.dur_api import TabooList
+        return TabooList((), True)
+
+    def efficacy(self, item_code):
+        return ()
+
+
+EMPTY = EmptyDur()
+
+
 def line(code, name):
     return DrugLine(item_code=code, name=name, printed_code=None, count_per_dose=1, times=["morning"], days=3)
 
@@ -49,12 +81,14 @@ def order_of(*lines):
 # ------------------------------------------------------------ 단계 규칙 (명세서 2.8절)
 
 
-def test_an_ingredient_duplicate_is_a_warning():
-    assert LEVEL_BY_TYPE == {"ingredient_dup": "warning"}
-    assert finding_level(INGREDIENT_DUP) == "warning"
+def test_the_levels_follow_the_spec_table():
+    """명세서 2.8절: 병용금기는 위험, 성분 · 효능군 중복은 경고. 1차는 이 셋만 판정한다."""
+    assert LEVEL_BY_TYPE == {"combination_taboo": "danger", "ingredient_dup": "warning", "efficacy_dup": "warning"}
+    assert finding_level(COMBINATION_TABOO) == "danger" and finding_level(INGREDIENT_DUP) == "warning"
+    assert set(TYPE_LABELS) == set(LEVEL_BY_TYPE)
 
 
-@pytest.mark.parametrize("unknown", ["contraindication", "age_caution", "efficacy_dup", "", "INGREDIENT_DUP"])
+@pytest.mark.parametrize("unknown", ["contraindication", "age_caution", "", "INGREDIENT_DUP"])
 def test_a_type_without_a_rule_is_not_guessed(unknown):
     with pytest.raises(ValueError, match="단계 규칙이 없는 DUR 유형"):
         finding_level(unknown)
@@ -127,7 +161,7 @@ def test_other_warnings_are_not_taken_for_unchecked_ones(other):
 
 def test_check_order_fills_the_risk_check_of_a_new_order():
     order = order_of(line(TYLENOL, "타이레놀정"), line(GEVORIN, "게보린정"))
-    checked = check_order(order, DICT)
+    checked = check_order(order, DICT, EMPTY)
     assert order.risk_check is None                                  # 받은 조제지시서는 바뀌지 않는다
     assert checked.risk_check == risk_check_from_hits([HIT_A])
     assert checked.items == order.items and checked.warnings == []
@@ -137,13 +171,13 @@ def test_check_order_fills_the_risk_check_of_a_new_order():
 def test_check_order_keeps_the_warnings_that_are_not_about_the_check():
     order = order_of(line(TYLENOL, "타이레놀정"))
     order.warnings = ["다른 경고"]
-    assert check_order(order, DICT).warnings == ["다른 경고"]
+    assert check_order(order, DICT, EMPTY).warnings == ["다른 경고"]
 
 
 def test_check_order_adds_a_warning_for_each_drug_it_could_not_check():
     order = order_of(line(TYLENOL, "타이레놀정"), line(None, "알모탄정"), line(BLANK, "성분 모름 정"))
     order.items[1].needs_pharmacist_check = True
-    checked = check_order(order, WITH_BLANK)
+    checked = check_order(order, WITH_BLANK, EMPTY)
     assert checked.warnings == [
         f"알모탄정: 품목기준코드를 정하지 못해 {UNCHECKED_TAIL}",
         f"성분모름정: 주성분을 알 수 없어(약품 사전에 없거나 주성분 칸이 비어 있어) {UNCHECKED_TAIL}",
@@ -154,34 +188,34 @@ def test_check_order_adds_a_warning_for_each_drug_it_could_not_check():
 def test_check_order_twice_gives_the_same_order():
     order = order_of(line(TYLENOL, "타이레놀정"), line(GEVORIN, "게보린정"), line(None, "알모탄정"))
     order.items[2].needs_pharmacist_check = True
-    once = check_order(order, DICT)
-    assert check_order(once, DICT) == once
+    once = check_order(order, DICT, EMPTY)
+    assert check_order(once, DICT, EMPTY) == once
 
 
 def test_check_order_replaces_the_last_unchecked_warnings_instead_of_adding():
     order = order_of(line(TYLENOL, "타이레놀정"), line(BLANK, "성분 모름 정"))
     order.warnings = ["다른 경고"]
-    once = check_order(order, WITH_BLANK)
+    once = check_order(order, WITH_BLANK, EMPTY)
     assert len(once.warnings) == 2 and once.risk_check.level == "none"
     now_known = dictionary_from_data({"drugs": [
         {"item_code": TYLENOL, "name": "타이레놀정500mg", "ingredients": ["아세트아미노펜"]},
         {"item_code": BLANK, "name": "성분모름정", "ingredients": ["아세트아미노펜"]},
     ]})
-    again = check_order(once, now_known)
+    again = check_order(once, now_known, EMPTY)
     assert again.warnings == ["다른 경고"]                              # 이제 대조할 수 있으니 지난 경고가 사라진다
     assert again.risk_check.level == "warning"
 
 
 def test_check_order_replaces_a_risk_check_made_before():
-    first = check_order(order_of(line(TYLENOL, "타이레놀정"), line(GEVORIN, "게보린정")), DICT)
+    first = check_order(order_of(line(TYLENOL, "타이레놀정"), line(GEVORIN, "게보린정")), DICT, EMPTY)
     changed = first.model_copy(update={"items": [first.items[0]]})
-    assert check_order(changed, DICT).risk_check.level == "none"
+    assert check_order(changed, DICT, EMPTY).risk_check.level == "none"
 
 
 def test_check_order_does_not_change_the_order_it_was_given():
     order = order_of(line(TYLENOL, "타이레놀정"), line(GEVORIN, "게보린정"), line(None, "알모탄정"))
     before = copy.deepcopy(order)
-    check_order(order, DICT)
+    check_order(order, DICT, EMPTY)
     assert order == before
 
 
@@ -219,3 +253,51 @@ def test_the_demo_combinations_say_which_ingredient_is_shared(name, ingredient):
     assert ingredient in finding.message
     for item in checked.items:
         assert item.name in finding.message or item.name.replace(" ", "") in finding.message
+
+
+# ------------------------------------------------------------ 병용금기 · 효능군 중복 · DUR 미사용 (13단계)
+TABOO = DurHit(COMBINATION_TABOO, (TRISPEN, "199900001"), ("트리스펜연질캡슐", "가상케토롤락정"), ("케토롤락트로메타민",),
+               "위장관 출혈 위험 증가")
+EFFICACY = DurHit(EFFICACY_DUP, (TYLENOL, ARPEN), ("타이레놀정500mg", "아르펜정"), ("해열진통소염제",))
+
+
+def test_a_combination_taboo_is_danger_and_shows_the_reason():
+    finding = finding_from_hit(TABOO)
+    assert finding.level == "danger"
+    assert finding.message == "트리스펜연질캡슐 · 가상케토롤락정는 함께 쓰면 안 되는 조합입니다(병용금기). 사유: 위장관 출혈 위험 증가"
+    assert combination_taboo_message(DurHit(COMBINATION_TABOO, ("1" * 9, "2" * 9), ("가", "나"), ())).endswith("(병용금기).")
+    assert requires_confirmation(risk_check_from_hits([TABOO, HIT_A]).level)
+
+
+def test_an_efficacy_duplicate_is_a_warning_naming_the_group():
+    finding = finding_from_hit(EFFICACY)
+    assert finding.level == "warning"
+    assert finding.message == efficacy_dup_message(EFFICACY) == \
+        "타이레놀정500mg · 아르펜정는 같은 효능군(해열진통소염제)입니다. 함께 쓸 필요가 있는지 확인하세요."
+
+
+def test_without_dur_the_order_says_taboos_were_not_checked():
+    checked = check_order(order_of(line(TYLENOL, "타이레놀정")), DICT)          # DUR 조회 없음
+    assert checked.warnings == [NO_DUR_WARNING]
+    assert is_unchecked_warning(NO_DUR_WARNING)
+    assert check_order(checked, DICT).warnings == [NO_DUR_WARNING]             # 다시 대조해도 한 번만
+    assert check_order(checked, DICT, EMPTY).warnings == []                    # DUR로 대조하면 사라진다
+
+
+def test_dur_failures_and_partial_lists_become_warnings_that_are_replaced_later():
+    failed = unchecked_warning(Unchecked("트리스펜연질캡슐", DUR_FAILED, "의약품 API에 연결하지 못했습니다 (URLError)."))
+    assert failed == f"트리스펜연질캡슐부터 DUR API를 쓰지 못해(의약품 API에 연결하지 못했습니다 (URLError).) {DUR_UNCHECKED_TAIL}"
+    partial = unchecked_warning(Unchecked("가상케토롤락정", TABOO_PARTIAL))
+    assert partial == f"가상케토롤락정: {TABOO_PARTIAL_TAIL}"
+    assert is_unchecked_warning(failed) and is_unchecked_warning(partial)
+    order = apply_report(order_of(line(TYLENOL, "타이레놀정")),
+                         DurReport((), (Unchecked("타이레놀정500mg", DUR_FAILED, "x"),), dur_used=True))
+    assert len(order.warnings) == 1
+    assert apply_report(order, DurReport((), (), dur_used=True)).warnings == []
+
+
+def test_apply_report_orders_the_findings_as_given():
+    lines = (line(TRISPEN, "트리스펜"), line("199900001", "가상케토롤락정"), line(TYLENOL, "타이레놀정"), line(ARPEN, "아르펜정"))
+    order = apply_report(order_of(*lines), DurReport((TABOO, EFFICACY), (), True))
+    assert [f.type for f in order.risk_check.findings] == [COMBINATION_TABOO, EFFICACY_DUP]
+    assert order.risk_check.level == "danger"

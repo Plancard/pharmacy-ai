@@ -245,13 +245,13 @@ def test_from_settings_builds_the_graph_with_the_given_tools(backend, monkeypatc
 def test_a_prescription_photo_with_text_shows_the_proposal_on_the_approval(backend):
     api = make_api()
     pause = api.start("P0001", load("rx8_a1", "rx8_01"), "prescription", "게보린 빼 주세요")
-    assert [p["kind"] for p in pause.payload["proposals"]] == ["edit"]
+    assert [p["kind"] for p in pause.payload["proposals"]] == ["edit_request"]
     assert [d["name"] for d in pause.payload["order"]["items"]] == ["타이레놀정 500mg", "게보린정"]   # 반영하지 않았다
 
 
 def test_an_unclear_photo_stops_at_type_select_and_goes_on_after_the_choice(backend):
     api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_02"), "med_bag")      # 처방전인데 약 포장이라고 했다
+    pause = api.start("P0001", load("rx8_a1", "rx8_02"), "med_bag")      # 처방전인데 약봉투이라고 했다
     assert (pause.hitl_point, pause.payload["about"]) == ("type_select", "photo")
     assert api.stage("P0001") == "type_select"
     with pytest.raises(ValueError, match="고를 수 있는 값이 아닙니다"):
@@ -266,14 +266,14 @@ def test_text_alone_starts_a_conversation_without_a_photo(backend):
     assert api.start("P0001", None, None, "게보린 먹고 있는데 괜찮나요?") is None
     result = api.result("P0001")
     assert (result["route"], result["status"]) == (["register_meds", "consult"], "not_ready")
-    assert [p["kind"] for p in result["proposals"]] == ["current_med"]
+    assert [p["kind"] for p in result["proposals"]] == ["patient_info"]
 
 
 def test_text_alone_that_cannot_be_read_asks_its_meaning(backend):
     api = make_api()
     pause = api.start("P0001", None, None, "오후 3시")
-    assert (pause.hitl_point, pause.payload["choices"]) == ("type_select", ["current_med", "question", "memo"])
-    assert api.resume("P0001", "type_select", {"choice": "memo"}) is None
+    assert (pause.hitl_point, pause.payload["choices"]) == ("type_select", ["patient_info", "question", "note"])
+    assert api.resume("P0001", "type_select", {"choice": "note"}) is None
     assert api.result("P0001")["status"] == "noted" and api.result("P0001")["memo"] == "오후 3시"
 
 
@@ -284,7 +284,7 @@ def test_text_for_a_prescription_waiting_for_approval_becomes_a_proposal(backend
     api = make_api()
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     got = api.handle_text("P0001", "게보린 빼 주세요")
-    assert [p["kind"] for p in got["proposals"]] == ["edit"] and got["proposals"][0]["drugs"][0]["name"] == "게보린정"
+    assert [p["kind"] for p in got["proposals"]] == ["edit_request"] and got["proposals"][0]["drugs"][0]["name"] == "게보린정"
     assert (got["review_needed"], got["consult"], got["ask"], got["memo"]) == (False, False, False, None)
     assert api.pending("P0001") == pause                                # 그래프는 그대로 멈춰 있다 (자동 반영 없음)
 
@@ -302,7 +302,7 @@ def test_a_current_med_after_the_plan_is_a_candidate_for_the_recheck(backend):
     pause = api.start("P0001", load("rx8_a1", "rx8_03"))
     api.resume("P0001", "rx_approval", approve_reply(pause))
     got = api.handle_text("P0001", "게보린 먹고 있어요")
-    assert [p["kind"] for p in got["proposals"]] == ["current_med"] and not got["review_needed"]
+    assert [p["kind"] for p in got["proposals"]] == ["patient_info"] and not got["review_needed"]
 
 
 @pytest.mark.parametrize("text, consult, memo, ask", [
@@ -315,7 +315,7 @@ def test_questions_memos_and_unclear_text(backend, text, consult, memo, ask):
     api.start("P0001", load("rx8_a1", "rx8_01"))
     got = api.handle_text("P0001", text)
     assert (got["consult"], got["memo"], got["ask"]) == (consult, memo, ask)
-    assert got["choices"] == (["current_med", "question", "memo"] if ask else [])
+    assert got["choices"] == (["patient_info", "question", "note"] if ask else [])
 
 
 def test_text_for_an_unknown_prescription_is_refused(backend):

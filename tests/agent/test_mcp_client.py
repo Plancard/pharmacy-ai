@@ -104,4 +104,4 @@ def test_the_server_does_not_need_the_working_directory_of_the_caller(tmp_path):
     done = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, timeout=120,
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     assert done.returncode == 0, done.stderr
-    assert done.stdout.strip() == "4"
+    assert done.stdout.strip() == "6"

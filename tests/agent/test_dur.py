@@ -190,3 +190,122 @@ def test_the_type_key_of_the_hit_is_the_one_risk_levels_are_keyed_by():
     from agent.risk import LEVEL_BY_TYPE
 
     assert find_ingredient_duplicates(lines(TYLENOL, GEVORIN), DICT).hits[0].type in LEVEL_BY_TYPE
+
+
+# ------------------------------------------------------------ 병용금기 · 효능군 중복 (13단계, 가짜 DUR 조회)
+from agent.dur import (  # noqa: E402
+    COMBINATION_TABOO,
+    DUR_FAILED,
+    EFFICACY_DUP,
+    TABOO_PARTIAL,
+    Ref,
+    check_duplicate,
+    check_interaction,
+    combine_checks,
+    find_all,
+    find_combination_taboos,
+    find_efficacy_duplicates,
+    merge_reports,
+    report_from_json,
+    report_to_json,
+)
+from fake_dur import KETOROLAC, KETOROLAC_NAME, TABOO_REASON, FakeDur  # noqa: E402
+
+
+def test_a_combination_taboo_is_found_from_the_list_of_the_first_drug():
+    report = find_combination_taboos([line(TRISPEN), line(KETOROLAC, KETOROLAC_NAME)], FakeDur(), DICT)
+    assert report == DurReport(
+        hits=(DurHit(COMBINATION_TABOO, (TRISPEN, KETOROLAC), ("트리스펜연질캡슐", KETOROLAC_NAME), ("케토롤락트로메타민",),
+                     TABOO_REASON),),
+        unchecked=(), dur_used=True)
+
+
+def test_a_combination_taboo_is_found_from_either_side_and_counted_once():
+    one_sided = FakeDur(taboos={KETOROLAC: FakeDur().taboos[KETOROLAC]})       # 케토롤락 쪽 목록에만 있다
+    report = find_combination_taboos([line(TRISPEN), line(KETOROLAC, KETOROLAC_NAME)], one_sided, DICT)
+    assert codes_of(report) == [(TRISPEN, KETOROLAC)]
+    both = find_combination_taboos([line(KETOROLAC, KETOROLAC_NAME), line(TRISPEN)], FakeDur(), DICT)
+    assert codes_of(both) == [(KETOROLAC, TRISPEN)]                            # 처방 순서를 따른다, 한 번만
+
+
+def test_no_taboo_among_the_demo_drugs():
+    assert find_combination_taboos(lines(TYLENOL, GEVORIN, TRISPEN, ARPEN), FakeDur(), DICT).hits == ()
+
+
+def test_each_drug_is_asked_once_and_lines_without_a_code_are_skipped():
+    dur = FakeDur()
+    find_combination_taboos([line(TRISPEN), line(TRISPEN), line(None, "알모탄정")], dur, DICT)
+    assert dur.asked == [("taboo", TRISPEN)]
+
+
+def test_a_partial_taboo_list_is_reported():
+    report = find_combination_taboos(lines(TRISPEN, TYLENOL), FakeDur(partial={TRISPEN}), DICT)
+    assert report.unchecked == (Unchecked("트리스펜연질캡슐", TABOO_PARTIAL),)
+
+
+def test_after_a_failure_nothing_more_is_asked_and_the_failure_is_reported_once():
+    dur = FakeDur(fail={GEVORIN})
+    report = find_combination_taboos(lines(TYLENOL, GEVORIN, TRISPEN), dur, DICT)
+    assert dur.asked == [("taboo", TYLENOL), ("taboo", GEVORIN)]
+    assert report.unchecked == (Unchecked("게보린정", DUR_FAILED, "의약품 API에 연결하지 못했습니다 (URLError)."),)
+    assert report.dur_used is True
+
+
+def test_an_efficacy_duplicate_groups_drugs_of_the_same_group():
+    report = find_efficacy_duplicates(lines(TYLENOL, TRISPEN, MUCODYNE), FakeDur(), DICT)
+    assert report.hits == (DurHit(EFFICACY_DUP, (TYLENOL, TRISPEN), ("타이레놀정500mg", "트리스펜연질캡슐"), ("해열진통소염제",)),)
+
+
+def test_an_efficacy_duplicate_already_found_as_an_ingredient_duplicate_is_not_repeated():
+    ingredient = find_ingredient_duplicates(lines(TYLENOL, GEVORIN), DICT)
+    assert find_efficacy_duplicates(lines(TYLENOL, GEVORIN), FakeDur(), DICT, already=ingredient.hits).hits == ()
+    three = find_efficacy_duplicates(lines(TYLENOL, GEVORIN, TRISPEN), FakeDur(), DICT, already=ingredient.hits)
+    assert codes_of(three) == [(TYLENOL, GEVORIN, TRISPEN)]                    # 새 약이 끼면 알린다
+
+
+def test_check_duplicate_without_dur_is_the_ingredient_check():
+    assert check_duplicate(lines(TYLENOL, GEVORIN), DICT) == find_ingredient_duplicates(lines(TYLENOL, GEVORIN), DICT)
+    assert check_duplicate(lines(TYLENOL, GEVORIN), DICT).dur_used is False
+
+
+def test_demo_b_is_one_ingredient_duplicate_even_with_dur():
+    report = check_duplicate(lines(TRISPEN, ARPEN), DICT, FakeDur())
+    assert [h.type for h in report.hits] == [INGREDIENT_DUP] and report.dur_used
+
+
+def test_find_all_puts_taboos_first_and_reports_one_failure():
+    report = find_all([line(TRISPEN), line(KETOROLAC, KETOROLAC_NAME), line(TYLENOL)], DICT, FakeDur())
+    assert [h.type for h in report.hits] == [COMBINATION_TABOO, EFFICACY_DUP]
+    failed = find_all(lines(TYLENOL, GEVORIN), DICT, FakeDur(fail={TYLENOL}))
+    assert [u.reason for u in failed.unchecked] == [DUR_FAILED]              # 병용금기 · 효능군에서 두 번 실패해도 한 번
+    assert [h.type for h in failed.hits] == [INGREDIENT_DUP]                 # 사전으로 하는 성분 중복은 그대로
+
+
+def test_find_all_without_dur_is_the_ingredient_check_and_says_so():
+    report = find_all(lines(TYLENOL, GEVORIN), DICT)
+    assert report.dur_used is False and [h.type for h in report.hits] == [INGREDIENT_DUP]
+
+
+def test_check_interaction_is_the_taboo_search():
+    items = [line(TRISPEN), line(KETOROLAC, KETOROLAC_NAME)]
+    assert check_interaction(items, FakeDur(), DICT) == find_combination_taboos(items, FakeDur(), DICT)
+
+
+def test_combine_and_merge_keep_order_and_drop_repeats():
+    a = DurReport((DurHit(COMBINATION_TABOO, ("1" * 9, "2" * 9), ("가", "나"), ()),), (Unchecked("가", DUR_FAILED, "x"),), True)
+    b = DurReport((DurHit(INGREDIENT_DUP, ("1" * 9, "3" * 9), ("가", "다"), ("성분",)),), (Unchecked("나", DUR_FAILED, "y"),), False)
+    assert merge_reports(a, a).hits == a.hits
+    combined = combine_checks(a, b)
+    assert [h.type for h in combined.hits] == [COMBINATION_TABOO, INGREDIENT_DUP]
+    assert combined.unchecked == (Unchecked("가", DUR_FAILED, "x"),) and combined.dur_used
+
+
+def test_a_report_survives_json():
+    import json
+
+    report = find_all([line(TRISPEN), line(KETOROLAC, KETOROLAC_NAME), line(None, "알모탄정")], DICT, FakeDur(partial={TRISPEN}))
+    assert report_from_json(json.loads(json.dumps(report_to_json(report)))) == report
+
+
+def test_refs_with_only_a_code_and_a_name_are_enough():
+    assert find_all([Ref(TYLENOL, "가"), Ref(GEVORIN, "나")], DICT, FakeDur()) == find_all(lines(TYLENOL, GEVORIN), DICT, FakeDur())

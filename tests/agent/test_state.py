@@ -54,7 +54,7 @@ def test_errors_and_notes_are_added_up_and_other_fields_are_overwritten():
 
 
 def test_the_values_the_state_can_take():
-    assert PHOTO_KINDS == ("prescription", "med_bag", "tray")
+    assert PHOTO_KINDS == ("prescription", "tray", "med_bag", "package")
     assert FLOWS == ("prescription", "recheck", "tray", "ask_type", "register_meds", "consult")
     assert STATUSES == (
         "received", "structured", "matched", "checked", "approved", "edited", "planned", "not_ready", "noted", "failed",

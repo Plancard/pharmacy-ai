@@ -37,8 +37,10 @@ from typing import Any, Callable
 
 from agent.checkpoint import default_checkpointer
 from agent.drug_api import default_api
+from agent.dur_api import default_dur_api
 from agent.drug_dictionary import DrugDictionary, load_dictionary
 from agent.drug_match import ApiSearch
+from agent.dur import DurLookup
 from agent.llm import extract_llm
 from agent.nodes import (
     Deps,
@@ -184,12 +186,16 @@ def _make_deps(
     structure: StructureFn | None,
     api: ApiSearch | None | object,
     tools: DrugTools | None = None,
+    dur: DurLookup | None | object = _FROM_SETTINGS,
 ) -> Deps:
+    if dur is _FROM_SETTINGS:              # api를 따로 정하지 않았을 때만 설정을 따른다 (api=None이면 DUR도 쓰지 않는다)
+        dur = default_dur_api() if api is _FROM_SETTINGS else None
     return Deps(
         dictionary=dictionary if dictionary is not None else load_dictionary(),
         structure=structure if structure is not None else default_structure,
         api=default_api() if api is _FROM_SETTINGS else api,
         tools=tools,
+        dur=dur,
     )
 
 
@@ -203,17 +209,22 @@ def _step(fn: NodeFn, deps: Deps):
 def _subgraph_step(subgraph):
     """서브그래프를 부르는 노드. 서브그래프가 바꾼 칸만 상위 상태에 돌려준다.
 
-    서브그래프를 노드로 그대로 끼우면 서브그래프가 돌려준 errors 전체가 상위의 합치기 규칙(덧붙이기)에 다시 더해져
-    같은 기록이 두 번 쌓인다. 그래서 함수 안에서 invoke하고, errors는 이번에 새로 쌓인 것만 돌려준다.
+    서브그래프를 노드로 그대로 끼우면 서브그래프가 돌려준 errors · notes 전체가 상위의 합치기 규칙(덧붙이기)에 다시 더해져
+    같은 기록이 두 번 쌓인다. 그래서 함수 안에서 invoke하고, 덧붙이는 칸은 이번에 새로 쌓인 것만 돌려준다.
     """
     def step(state: GraphState) -> dict[str, Any]:
         result = subgraph.invoke(state)
-        update = {key: value for key, value in result.items() if key != "errors" and (key not in state or state[key] != value)}
-        new_errors = result.get("errors", [])[len(state.get("errors", [])):]
-        if new_errors:
-            update["errors"] = new_errors
+        update = {key: value for key, value in result.items()
+                  if key not in APPENDED_KEYS and (key not in state or state[key] != value)}
+        for key in APPENDED_KEYS:
+            new = (result.get(key) or [])[len(state.get(key) or []):]
+            if new:
+                update[key] = new
         return update
     return step
+
+
+APPENDED_KEYS = ("errors", "notes")     # 상태에서 합치기 규칙이 '덧붙이기'인 칸 (state.py)
 
 
 def _compile(chart: Chart, make_node: Callable[[str], Any], checkpointer: Any = None):
@@ -252,9 +263,10 @@ def build_prescription_graph(
     api: ApiSearch | None | object = _FROM_SETTINGS,
     checkpointer: Any = _FROM_SETTINGS,
     tools: DrugTools | None = None,
+    dur: DurLookup | None | object = _FROM_SETTINGS,
 ):
     """처방 서브그래프만 만들어 compile한 결과를 돌려준다. 인자의 뜻은 build_graph와 같다."""
-    return _compile_prescription(_make_deps(dictionary, structure, api, tools), _checkpointer(checkpointer))
+    return _compile_prescription(_make_deps(dictionary, structure, api, tools, dur), _checkpointer(checkpointer))
 
 
 def build_graph(
@@ -264,6 +276,7 @@ def build_graph(
     api: ApiSearch | None | object = _FROM_SETTINGS,
     checkpointer: Any = _FROM_SETTINGS,
     tools: DrugTools | None = None,
+    dur: DurLookup | None | object = _FROM_SETTINGS,
 ):
     """상위 그래프를 만들어 compile한 결과를 돌려준다 (처방 서브그래프가 그 안에 들어 있다).
 
@@ -273,9 +286,10 @@ def build_graph(
     api를 주지 않으면 .env에 DRUG_API_KEY가 있을 때 식약처 API를 쓰고, 없으면 사전만 쓴다.
     api=None을 주면 키가 있어도 사전만 쓴다 (테스트·정확도 측정용).
     checkpointer를 주지 않으면 설정에 맞는 것을 붙인다 (checkpoint.default_checkpointer). 승인 대기에서 멈추려면 꼭 있어야 한다.
-    tools(mcp_client.DrugTools)를 주면 약품 매칭을 MCP 도구로 부른다. 그때 의약품 API는 서버가 쓴다.
+    dur(DUR 조회)를 주지 않으면 api와 같이 정한다: api를 주지 않았으면 키가 있을 때 DUR API, api=None이면 쓰지 않는다.
+    tools(mcp_client.DrugTools)를 주면 약품 매칭과 위험 신호 대조를 MCP 도구로 부른다. 그때 API는 서버가 쓴다.
     """
-    deps = _make_deps(dictionary, structure, api, tools)
+    deps = _make_deps(dictionary, structure, api, tools, dur)
     prescription = _compile_prescription(deps)
 
     def make_node(name: str):

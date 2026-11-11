@@ -34,6 +34,10 @@ DRUG_DICTIONARY_PATH = Path(os.getenv("DRUG_DICTIONARY_PATH") or RESOURCES_DIR /
 DRUG_API_URL = os.getenv("DRUG_API_URL") or "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnInq08"
 DRUG_API_TIMEOUT_SECONDS = float(os.getenv("DRUG_API_TIMEOUT_SECONDS", "5"))
 
+# 식약처 의약품안전사용서비스(DUR) 품목정보 API (공공데이터포털 15059486). 키는 DRUG_API_KEY와 같다 (13단계).
+# 오퍼레이션 이름(getUsjntTabooInfoList03 등)은 agent/dur_api.py가 붙인다. 버전이 바뀌면 .env에 DUR_API_URL=... 로 적는다.
+DUR_API_URL = os.getenv("DUR_API_URL") or "https://apis.data.go.kr/1471000/DURPrdlstInfoService03"
+
 
 def drug_api_key() -> str | None:
     """.env의 DRUG_API_KEY. 없으면 None (약품 API를 쓰지 않고 약품 사전만 쓴다)."""

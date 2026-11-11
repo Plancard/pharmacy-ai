@@ -14,10 +14,10 @@
     python scripts/agent/run_graph.py --no-ocr --choose tray      # 사진 종류를 되묻는 곳에서 '트레이'를 고른다
 
 슈퍼바이저의 분기를 보려면 사진 종류를 지정한다. --no-ocr 은 OCR 없이 사진 종류만 보낸다 (트레이 사진처럼).
-    python scripts/agent/run_graph.py --kind med_bag --no-ocr   # 약 포장 -> 복용 약 재대조 자리
+    python scripts/agent/run_graph.py --kind med_bag --no-ocr   # 약봉투 -> 복용 약 재대조 자리
     python scripts/agent/run_graph.py --kind tray --no-ocr      # 트레이 -> 검수 자리
     python scripts/agent/run_graph.py --no-ocr                  # 종류를 알 수 없음 -> 되묻는 자리
-    python scripts/agent/run_graph.py --kind med_bag            # 처방전 OCR인데 약 포장이라고 함 -> 되묻는 자리
+    python scripts/agent/run_graph.py --kind med_bag            # 처방전 OCR인데 약봉투라고 함 -> 되묻는 자리
 
 pytest가 아니다. 샘플은 agent/resources/samples의 cv_a1(rx_001 ~ rx_005, CV가 보낸 OCR)과 rx8_a1(rx8_01 ~ rx8_08, 대상 8종 시연용)이다.
 규칙 경로가 성공하면 OpenAI는 부르지 않는다. 화면에는 환자 정보를 찍지 않는다 (약품 표와 위험 신호, 조제 계획만).
@@ -125,14 +125,14 @@ def main(argv: list[str] | None = None, *, graph=None, out: Callable[[str], None
     parser.add_argument("sample", nargs="?", default=ids[0], choices=ids, help="처방전 번호 (기본 %(default)s)")
     parser.add_argument("--all", action="store_true", help="샘플 전부")
     parser.add_argument("--no-api", action="store_true", help="의약품 API를 쓰지 않는다 (약품 사전만)")
-    parser.add_argument("--kind", help="사진 종류를 지정한다: prescription · med_bag · tray (그 밖의 값은 알 수 없는 종류)")
+    parser.add_argument("--kind", help="사진 종류를 지정한다: prescription · tray · med_bag · package (그 밖의 값은 알 수 없는 종류)")
     parser.add_argument("--no-ocr", action="store_true", help="OCR 결과 없이 보낸다 (트레이 사진처럼)")
     parser.add_argument("--subgraph", action="store_true", help="처방 서브그래프만 단독으로 돌린다 (슈퍼바이저를 거치지 않는다)")
     parser.add_argument("--approve", action="store_true", help="승인 대기에서 화면의 조제지시서를 그대로 승인해 이어 간다")
     parser.add_argument("--db", action="store_true", help="멈춘 곳을 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)")
     parser.add_argument("--text", help="사진과 함께(또는 --no-ocr로 글만) 보낼 글")
     parser.add_argument("--mcp", action="store_true", help="약품 매칭을 MCP 도구(match_drug)로 부른다. 서버를 하위 프로세스로 띄운다")
-    parser.add_argument("--choose", help="되묻는 곳(type_select)에서 고를 값 (사진: prescription · med_bag · tray, 글: current_med · question · memo)")
+    parser.add_argument("--choose", help="되묻는 곳(type_select)에서 고를 값 (사진: prescription · tray · med_bag · package, 글: patient_info · question · note)")
     args = parser.parse_args(argv)
     if args.subgraph and args.kind is not None:
         parser.error("--subgraph는 슈퍼바이저를 거치지 않으므로 사진 종류(--kind)를 줄 수 없습니다")

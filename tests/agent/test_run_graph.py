@@ -217,7 +217,7 @@ def test_the_subgraph_alone_cannot_be_given_a_photo_kind(sub_graph, capsys):
     (["--kind", "prescription"], WAITING, "prescription", "약사 승인을 기다립니다."),
     (["--no-ocr"], "멈춤(type_select)", "ask_type", "사진 종류 정보가 없습니다."),
     (["--kind", "receipt"], "멈춤(type_select)", "ask_type", "알 수 없는 사진 종류입니다."),
-    (["--kind", "med_bag"], "멈춤(type_select)", "ask_type", "지정한 종류(약 포장)와 OCR이 읽은 종류(처방전)가 다릅니다."),
+    (["--kind", "med_bag"], "멈춤(type_select)", "ask_type", "지정한 종류(약봉투)와 OCR이 읽은 종류(처방전)가 다릅니다."),
 ])
 def test_the_photo_kind_decides_the_flow(graph, argv, status, flow, notice):
     code, text = run(argv, graph)
@@ -230,13 +230,13 @@ def test_the_photo_kind_decides_the_flow(graph, argv, status, flow, notice):
 
 def test_choose_answers_the_kind_question(graph):
     code, text = run(["--no-ocr", "--choose", "tray"], graph)
-    assert code == 0 and "고를 수 있는 것: prescription(처방전) · med_bag(약 포장) · tray(트레이)" in text
+    assert code == 0 and "고를 수 있는 것: prescription(처방전) · tray(트레이) · med_bag(약봉투) · package(포장)" in text
     assert "-> 약사가 'tray'을(를) 고릅니다" in text and "[rx_001] 상태: not_ready | 흐름: tray | 순서: tray" in text
 
 
 def test_a_choice_that_cannot_be_chosen_is_reported(graph):
     code, text = run(["--no-ocr", "--choose", "receipt"], graph)
-    assert code == 1 and text.endswith("고를 수 있는 값이 아닙니다: receipt (가능: prescription, med_bag, tray)")
+    assert code == 1 and text.endswith("고를 수 있는 값이 아닙니다: receipt (가능: prescription, tray, med_bag, package)")
 
 
 def test_text_with_the_prescription_photo_is_shown_as_a_proposal(graph):

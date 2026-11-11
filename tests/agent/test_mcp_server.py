@@ -59,8 +59,9 @@ def with_api(api):
 
 
 # ------------------------------------------------------------ 도구 목록
-def test_the_server_offers_the_four_drug_tools_with_descriptions(tools):
-    assert tools.tool_names() == list(TOOL_NAMES) == ["search_drug", "check_item_code", "match_drug", "verify_dictionary"]
+def test_the_server_offers_the_drug_and_dur_tools_with_descriptions(tools):
+    assert tools.tool_names() == list(TOOL_NAMES) == ["search_drug", "check_item_code", "match_drug", "verify_dictionary",
+                                                      "check_interaction", "check_duplicate"]
     assert all(description for _, description in tools.tools())
 
 
@@ -192,3 +193,79 @@ def test_the_server_module_starts_as_python_dash_m():
     done = subprocess.run([sys.executable, "-m", "agent.mcp_server", "--help"], cwd=ROOT, capture_output=True,
                           timeout=60, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     assert done.returncode == 0 and "--no-api" in done.stdout.decode("utf-8")
+
+
+# ------------------------------------------------------------ DUR 도구 (13단계)
+from agent.dur import COMBINATION_TABOO, EFFICACY_DUP, INGREDIENT_DUP, find_all  # noqa: E402
+from agent.mcp_server import NO_DUR  # noqa: E402
+from fake_dur import ARPEN, GEVORIN, KETOROLAC, KETOROLAC_NAME, TRISPEN, TYLENOL, FakeDur  # noqa: E402
+
+
+def refs(*pairs):
+    return [{"item_code": code, "name": name} for code, name in pairs]
+
+
+def test_check_interaction_needs_dur(tools):
+    with pytest.raises(McpToolError) as error:
+        tools.call("check_interaction", items=refs((TRISPEN, "트리스펜")))
+    assert str(error.value) == NO_DUR
+
+
+def test_check_interaction_finds_the_taboo_with_its_reason():
+    with in_process(DICT, dur=FakeDur()) as tools:
+        found = tools.call("check_interaction", items=refs((TRISPEN, "트리스펜"), (KETOROLAC, KETOROLAC_NAME)))
+    assert found["dur_used"] is True
+    assert [(h["type"], h["item_codes"], h["detail"] != "") for h in found["hits"]] == [(COMBINATION_TABOO, [TRISPEN, KETOROLAC], True)]
+
+
+def test_check_duplicate_without_dur_gives_only_ingredient_duplicates(tools):
+    found = tools.call("check_duplicate", items=refs((TYLENOL, "타이레놀"), (GEVORIN, "게보린"), (TRISPEN, "트리스펜")))
+    assert [h["type"] for h in found["hits"]] == [INGREDIENT_DUP] and found["dur_used"] is False
+
+
+def test_check_duplicate_with_dur_adds_efficacy_duplicates():
+    with in_process(DICT, dur=FakeDur()) as tools:
+        found = tools.call("check_duplicate", items=refs((TYLENOL, "타이레놀"), (TRISPEN, "트리스펜"), (ARPEN, "아르펜")))
+    assert [h["type"] for h in found["hits"]] == [INGREDIENT_DUP, EFFICACY_DUP]
+
+
+def test_the_dur_tools_reject_items_of_the_wrong_shape(tools):
+    with pytest.raises(McpToolError, match="items는"):
+        tools.call("check_duplicate", items=[{"item_code": TYLENOL}])
+
+
+@pytest.mark.parametrize("with_dur", [False, True])
+@pytest.mark.parametrize("sample_id", ["rx_004", "rx_005", "rx8_01", "rx8_02", "rx8_07"])
+def test_check_dur_through_mcp_is_the_same_as_the_function(sample_id, with_dur):
+    order = match_order(order_of(sample_id), DICT)
+    dur = FakeDur() if with_dur else None
+    with in_process(DICT, dur=dur) as tools:
+        assert tools.check_dur(order.items) == find_all(order.items, DICT, dur)
+
+
+def test_check_dur_with_a_taboo_through_mcp():
+    from agent.schema import DrugLine
+
+    items = [DrugLine(item_code=c, name=n, printed_code=None, count_per_dose=1, times=["morning"], days=3)
+             for c, n in ((TRISPEN, "트리스펜"), (KETOROLAC, KETOROLAC_NAME), (TYLENOL, "타이레놀"))]
+    with in_process(DICT, dur=FakeDur()) as tools:
+        report = tools.check_dur(items)
+    assert report == find_all(items, DICT, FakeDur())
+    assert [h.type for h in report.hits] == [COMBINATION_TABOO, EFFICACY_DUP]
+
+
+def test_the_server_process_uses_dur_when_the_key_is_set(monkeypatch):
+    from agent.dur_api import DurApi
+
+    built = []
+
+    class NotRun:
+        def run(self, transport):
+            assert transport == "stdio"
+
+    monkeypatch.setattr(mcp_server, "build_server", lambda *args: built.append(args) or NotRun())
+    monkeypatch.setenv("DRUG_API_KEY", "k")
+    assert mcp_server.main([]) == 0
+    assert callable(built[0][1]) and isinstance(built[0][2], DurApi)
+    assert mcp_server.main(["--no-api"]) == 0
+    assert built[1][1:] == ()                                        # API도 DUR도 없이

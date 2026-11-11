@@ -596,7 +596,7 @@ ROUTES = [
 ASKED = [
     (None, None, "사진 종류 정보가 없습니다."),
     ("receipt", None, "알 수 없는 사진 종류입니다."),
-    ("prescription", {"doc_type": "med_bag", "lines": []}, "지정한 종류(처방전)와 OCR이 읽은 종류(약 포장)가 다릅니다."),
+    ("prescription", {"doc_type": "med_bag", "lines": []}, "지정한 종류(처방전)와 OCR이 읽은 종류(약봉투)가 다릅니다."),
 ]
 
 
@@ -613,13 +613,13 @@ def test_an_unclear_photo_stops_to_ask_its_kind(backend, calls, photo_kind, ocr,
     state = run_message(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
     assert calls == ["supervisor", "ask_type"]
     shown = paused(state)
-    assert (shown["hitl_point"], shown["about"], shown["choices"]) == ("type_select", "photo", ["prescription", "med_bag", "tray"])
+    assert (shown["hitl_point"], shown["about"], shown["choices"]) == ("type_select", "photo", ["prescription", "tray", "med_bag", "package"])
     assert reason in shown["notice"]
 
 
 def test_after_choosing_the_kind_the_flow_runs(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    run_message(compiled, "P0001", load("cv_a1", "rx_001"), "med_bag")      # 처방전 OCR인데 약 포장이라고 했다 -> 되묻는다
+    run_message(compiled, "P0001", load("cv_a1", "rx_001"), "med_bag")      # 처방전 OCR인데 약봉투이라고 했다 -> 되묻는다
     calls.clear()
     state = resume_run(compiled, "P0001", {"choice": "prescription"})
     assert calls == ["ask_type", "structure", "match", "risk", "approve"]
@@ -643,7 +643,7 @@ def test_a_photo_kind_that_is_given_wins_over_nothing_but_not_over_a_disagreeing
     calls.clear()
     clash = run_message(make(), "P0002", ocr, "med_bag")
     assert calls == ["supervisor", "ask_type"] and paused(clash)["hitl_point"] == "type_select"
-    assert "지정한 종류(약 포장)와 OCR이 읽은 종류(처방전)가 다릅니다." in paused(clash)["notice"]
+    assert "지정한 종류(약봉투)와 OCR이 읽은 종류(처방전)가 다릅니다." in paused(clash)["notice"]
 
 
 # ------------------------------------------------------------ 사진과 글 (복합 입력)
@@ -654,7 +654,7 @@ def test_a_prescription_photo_with_an_edit_request_shows_it_only_as_a_proposal(b
     state = run_message(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "게보린 빼 주세요")
     shown = paused(state)
     assert [d["name"] for d in shown["order"]["items"]] == ["타이레놀정500mg", "게보린정"]     # 지시서는 그대로다
-    proposal = {"kind": "edit", "text": "게보린 빼 주세요", "drugs": [{"item_code": "197900277", "name": "게보린정"}]}
+    proposal = {"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": [{"item_code": "197900277", "name": "게보린정"}]}
     assert shown["proposals"] == [proposal]
     final = approve(compiled, "P0001", state)                         # 약사가 제안을 따르지 않고 그대로 승인했다
     assert [d["name"] for d in final["order"]["items"]] == ["타이레놀정500mg", "게보린정"]
@@ -691,7 +691,7 @@ def test_text_alone_goes_to_its_flow(backend, calls, text, route, status):
 def test_text_alone_that_cannot_be_read_stops_to_ask_its_meaning(backend):
     compiled = make()
     shown = paused(run_message(compiled, "P0001", None, None, "오후 3시"))
-    assert (shown["about"], shown["choices"]) == ("text", ["current_med", "question", "memo"])
+    assert (shown["about"], shown["choices"]) == ("text", ["patient_info", "question", "note"])
     final = resume_run(compiled, "P0001", {"choice": "question"})
     assert (final["route"], final["status"]) == (["consult"], "not_ready")
 
@@ -916,3 +916,47 @@ def test_build_prescription_graph_puts_the_design_table_into_langgraph_as_it_is(
         got_choose, got_map = builder.branches[source]
         assert got_choose is choose
         assert got_map == {name: lg(t) for name, t in targets.items()}
+
+
+# ------------------------------------------------------------ DUR 조회를 붙이는 규칙 (13단계)
+def test_dur_follows_the_api_setting(monkeypatch):
+    from agent.dur_api import DurApi
+    from agent.graph import _make_deps
+
+    structure = lambda pid, ocr: None  # noqa: E731
+    assert _make_deps(DICT, structure, None).dur is None                       # api=None (시험 · --no-api): DUR도 쓰지 않는다
+    monkeypatch.delenv("DRUG_API_KEY", raising=False)
+    from agent.graph import _FROM_SETTINGS
+    assert _make_deps(DICT, structure, _FROM_SETTINGS).dur is None            # 키가 없으면 없다
+    monkeypatch.setenv("DRUG_API_KEY", "k")
+    assert isinstance(_make_deps(DICT, structure, _FROM_SETTINGS).dur, DurApi)
+    assert _make_deps(DICT, structure, None).dur is None                       # 키가 있어도 api=None이면 쓰지 않는다
+    given = object()
+    assert _make_deps(DICT, structure, None, None, given).dur is given          # 직접 주면 그것을 쓴다
+
+
+def test_notes_from_the_prescription_subgraph_are_not_doubled(monkeypatch):
+    """승인 노드가 남긴 진행 사유(notes)가 상위 그래프에 한 번만 쌓인다."""
+    import fake_langgraph
+    from agent.checkpoint import memory_checkpointer
+    from agent.graph import build_graph, resume_run, run_message
+    from agent.state import initial_state
+
+    fake_langgraph.install(monkeypatch)
+    graph = build_graph(dictionary=DICT, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=None), api=None,
+                        checkpointer=memory_checkpointer())
+    shown = run_message(graph, "P1", load("rx8_a1", "rx8_01"), text="메모: 오후 수령")["__interrupt__"][0].value
+    final = resume_run(graph, "P1", {"action": "manual", "order": shown["order"], "reason": "확인함"})
+    assert final["notes"].count("위험 신호 확인 후 진행 사유: 확인함") == 1
+    assert final["status"] == "planned"
+
+
+def test_the_subgraph_step_returns_only_the_new_notes_and_errors():
+    from agent.graph import _subgraph_step
+
+    class Sub:
+        def invoke(self, state):
+            return {**state, "notes": state["notes"] + ["새 안내"], "errors": state["errors"] + ["새 오류"], "status": "approved"}
+
+    state = {"notes": ["예전 안내"], "errors": ["예전 오류"], "status": "checked"}
+    assert _subgraph_step(Sub())(state) == {"notes": ["새 안내"], "errors": ["새 오류"], "status": "approved"}
