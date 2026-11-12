@@ -31,7 +31,7 @@ from typing import Any
 from agent import config
 from agent.drug_dictionary import DrugDictionary, load_dictionary
 from agent.graph import build_graph, resume_run, run_message, thread_config
-from agent.mcp_client import DrugTools, stdio
+from agent.mcp_client import DrugTools, from_settings as mcp_from_settings
 from agent.intent import PATIENT_INFO, EDIT_REQUEST, NOTE, QUESTION, classify
 from agent.nodes import HITL_APPROVAL, HITL_TYPE, read_choice, read_reply
 from agent.proposal import make_proposals
@@ -66,11 +66,12 @@ class AgentApi:
     def from_settings(cls, **kwargs) -> "AgentApi":
         """설정대로 만든 그래프로 (약품 사전 · 의약품 API · 체크포인터). 인자는 graph.build_graph와 같다.
 
-        .env에 AGENT_USE_MCP=1 이면 MCP 서버(python -m agent.mcp_server)를 하위 프로세스로 띄워 약품 매칭을 도구로 부른다.
+        .env에 AGENT_USE_MCP=1 이면 약품 매칭 · DUR 대조를 MCP 도구로 부른다. AGENT_MCP_URL이 있으면 따로 띄운 서버에 그 주소로 붙고,
+        없으면 서버(python -m agent.mcp_server)를 하위 프로세스로 띄운다.
         api=None을 주면 서버도 의약품 API 없이 띄운다.
         """
         if kwargs.get("tools") is None and config.use_mcp():
-            kwargs["tools"] = stdio(no_api="api" in kwargs and kwargs["api"] is None)
+            kwargs["tools"] = mcp_from_settings(no_api="api" in kwargs and kwargs["api"] is None)
         return cls(build_graph(**kwargs), kwargs.get("dictionary"), kwargs.get("tools"))
 
     def close(self) -> None:

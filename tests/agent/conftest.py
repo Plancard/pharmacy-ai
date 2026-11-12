@@ -20,3 +20,9 @@ def no_real_database(monkeypatch):
     PostgreSQL에 실제로 저장되는지는 AGENT_TEST_DATABASE_URL을 준 때만 test_checkpoint.py가 따로 본다.
     """
     monkeypatch.delenv("DATABASE_URL", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_real_mcp_server(monkeypatch):
+    """테스트는 .env의 AGENT_MCP_URL(따로 띄운 MCP 서버)에 붙지 않는다. HTTP 서버 시험은 test_mcp_http.py가 스스로 띄운다."""
+    monkeypatch.delenv("AGENT_MCP_URL", raising=False)

@@ -9,6 +9,8 @@ call()이 그 스레드에 요청을 넘긴 뒤 결과를 기다린다. 연결�
         matched, api_used = tools.match_drug(order)
 
     tools = in_process(dictionary, api=None)        # 프로세스 없이 서버 객체에 바로 붙는다 (테스트 · 측정용)
+    tools = http("http://127.0.0.1:8765/mcp")       # 따로 띄운 서버(python -m agent.mcp_server --http)에 주소로 붙는다
+    tools = from_settings()                         # .env의 AGENT_MCP_URL이 있으면 http, 없으면 stdio
 """
 from __future__ import annotations
 
@@ -42,7 +44,7 @@ class DrugTools:
     """MCP 서버 하나에 연결을 열어 두고 도구를 부르는 동기 클라이언트."""
 
     def __init__(self, target: Any):
-        self._target = target                       # MCPServer 객체(같은 프로세스) 또는 StdioServerParameters
+        self._target = target                       # MCPServer 객체(같은 프로세스), StdioServerParameters 또는 HTTP 주소(문자열)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._queue: asyncio.Queue | None = None
         self._thread: threading.Thread | None = None
@@ -178,3 +180,24 @@ def in_process(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: Du
     from agent.mcp_server import build_server   # 같은 층. 쓸 때만 서버를 만든다
 
     return DrugTools(build_server(dictionary, api, dur)).open()
+
+
+def http(url: str) -> DrugTools:
+    """따로 띄운 서버(python -m agent.mcp_server --http)에 주소로 붙은 클라이언트 (열린 상태). 다 쓰면 close().
+
+    주소는 http://HOST:PORT/mcp 모양이다. 서버가 떠 있지 않으면 McpToolError.
+    """
+    if not url.startswith(("http://", "https://")):
+        raise McpToolError(f"MCP 서버 주소는 http:// 또는 https://로 시작해야 합니다: {url!r}")
+    return DrugTools(url).open()
+
+
+def from_settings(*, no_api: bool = False) -> DrugTools:
+    """설정대로 연결한다: .env에 AGENT_MCP_URL이 있으면 그 서버(http), 없으면 하위 프로세스(stdio).
+
+    no_api는 stdio로 띄울 때만 쓴다. 따로 띄운 서버의 API 사용 여부는 서버를 띄울 때 정한다.
+    """
+    from agent import config   # 바닥 층
+
+    url = config.mcp_url()
+    return http(url) if url else stdio(no_api=no_api)

@@ -7,6 +7,7 @@
     python scripts/agent/run_graph.py --subgraph --all      # 처방 서브그래프만 단독으로 (슈퍼바이저를 거치지 않는다). 결과는 상위 그래프와 같다
     python scripts/agent/run_graph.py rx8_01 --db           # 멈춘 곳을 .env의 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)
     python scripts/agent/run_graph.py --all --mcp           # 약품 매칭을 MCP 도구로 부른다 (python -m agent.mcp_server를 띄운다)
+    python scripts/agent/run_graph.py --all --mcp-url http://127.0.0.1:8765/mcp   # 따로 띄운 MCP 서버에 붙는다
 
 사진과 함께 글을 보내려면 --text를 준다. 글만 보내려면 --no-ocr와 함께 쓴다.
     python scripts/agent/run_graph.py rx8_01 --text "게보린 빼 주세요"      # 수정 요청 -> 승인 카드의 제안으로만
@@ -39,7 +40,7 @@ if str(ROOT) not in sys.path:
 from agent import config  # noqa: E402
 from agent.checkpoint import default_checkpointer, describe, memory_checkpointer  # noqa: E402
 from agent.errors import ConfigError  # noqa: E402
-from agent.mcp_client import McpToolError, stdio  # noqa: E402
+from agent.mcp_client import McpToolError, http, stdio  # noqa: E402
 from agent.graph import build_graph, build_prescription_graph, resume_run, run_message, run_prescription  # noqa: E402
 from agent.nodes import APPROVE, HITL_TYPE  # noqa: E402
 from agent.proposal import PROPOSAL_LABELS  # noqa: E402
@@ -134,20 +135,22 @@ def main(argv: list[str] | None = None, *, graph=None, out: Callable[[str], None
     parser.add_argument("--chat", action="store_true",
                         help="처방이 없는 상담 대화로 보낸다 (글만 → 상담, 처방전 사진 → 처방 대화로 바뀜, 그 밖의 사진 → 안내)")
     parser.add_argument("--mcp", action="store_true", help="약품 매칭을 MCP 도구(match_drug)로 부른다. 서버를 하위 프로세스로 띄운다")
+    parser.add_argument("--mcp-url", help="따로 띄운 MCP 서버(python -m agent.mcp_server --http)의 주소로 붙는다. --mcp를 겸한다")
     parser.add_argument("--choose", help="되묻는 곳(type_select)에서 고를 값 (사진: prescription · tray · med_bag · package, 글: patient_info · question · note)")
     args = parser.parse_args(argv)
     if args.subgraph and args.kind is not None:
         parser.error("--subgraph는 슈퍼바이저를 거치지 않으므로 사진 종류(--kind)를 줄 수 없습니다")
 
     tools = None
-    if graph is None and args.mcp:
+    if graph is None and (args.mcp or args.mcp_url):
         try:
-            tools = stdio(no_api=args.no_api)
+            tools = http(args.mcp_url) if args.mcp_url else stdio(no_api=args.no_api)
         except McpToolError as e:
             out(f"MCP 서버 문제: {e}")
             out("mcp 패키지가 없다면 pip install -r agent/requirements.txt 로 설치해 주세요.")
             return 1
-        out(f"약품 매칭: MCP 도구로 부름 (python -m agent.mcp_server, 도구 {len(tools.tool_names())}개: {', '.join(tools.tool_names())})")
+        where = args.mcp_url or "python -m agent.mcp_server"
+        out(f"약품 매칭: MCP 도구로 부름 ({where}, 도구 {len(tools.tool_names())}개: {', '.join(tools.tool_names())})")
     try:
         return _run(args, ids, graph, tools, out)
     finally:

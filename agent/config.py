@@ -32,7 +32,10 @@ DRUG_DICTIONARY_PATH = Path(os.getenv("DRUG_DICTIONARY_PATH") or RESOURCES_DIR /
 # 11/9 실제 키로 확인한 주소: 활용신청 상세의 End Point …/DrugPrdtPrmsnInfoService08 + 오퍼레이션 getDrugPrdtPrmsnInq08.
 # 게이트웨이는 승인받은 버전과 다른 주소로 부르면 사유 없이 HTTP 403을 돌려준다. 버전이 바뀌면 .env에 DRUG_API_URL=... 로 적는다.
 DRUG_API_URL = os.getenv("DRUG_API_URL") or "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnInq08"
-DRUG_API_TIMEOUT_SECONDS = float(os.getenv("DRUG_API_TIMEOUT_SECONDS", "5"))
+# 호출 1번 제한 시간과, 연결 실패 · 시간 초과일 때 다시 묻는 횟수 (의약품 · DUR API 공통).
+# 11/11 DUR API가 5초 안에 답하지 못한 일이 있어 10초 · 재시도 1회로 올렸다 (기능분석서 6장: 30초 · 1회는 잠정).
+DRUG_API_TIMEOUT_SECONDS = float(os.getenv("DRUG_API_TIMEOUT_SECONDS", "10"))
+DRUG_API_RETRIES = int(os.getenv("DRUG_API_RETRIES", "1"))
 
 # 식약처 의약품안전사용서비스(DUR) 품목정보 API (공공데이터포털 15059486). 키는 DRUG_API_KEY와 같다 (13단계).
 # 오퍼레이션 이름(getUsjntTabooInfoList03 등)은 agent/dur_api.py가 붙인다. 버전이 바뀌면 .env에 DUR_API_URL=... 로 적는다.
@@ -62,6 +65,12 @@ def require_openai_key() -> str:
 def database_url() -> str | None:
     """서비스 테이블과 LangGraph 체크포인트가 같이 쓰는 PostgreSQL 주소(DATABASE_URL). 없으면 None."""
     return os.getenv("DATABASE_URL", "").strip() or None
+
+
+def mcp_url() -> str | None:
+    """AGENT_MCP_URL이 있으면 따로 띄운 MCP 서버(python -m agent.mcp_server --http)에 그 주소로 붙는다. 없으면 None (stdio로 띄운다)."""
+    url = os.getenv("AGENT_MCP_URL", "").strip()
+    return url or None
 
 
 def use_mcp() -> bool:
