@@ -21,7 +21,7 @@ LAYERS = {
     "schema": "바닥", "config": "바닥", "errors": "바닥",
     "llm": "가장자리", "drug_api": "가장자리", "dur_api": "가장자리", "checkpoint": "가장자리", "cv_adapter": "가장자리",
     **{n: "판단" for n in ("structure", "validate", "pipeline", "drug_names", "drug_dictionary", "drug_match", "accuracy",
-                          "plan", "dur", "rag", "risk", "consult", "intent", "recheck", "proposal")},
+                          "plan", "dur", "rag", "risk", "consult", "intent", "recheck", "proposal", "inspection")},
     "mcp_server": "MCP 포장", "mcp_client": "MCP 포장",
     **{n: "그래프·입구" for n in ("graph", "nodes", "state", "supervisor", "api")},
 }

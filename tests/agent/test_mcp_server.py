@@ -61,7 +61,7 @@ def with_api(api):
 # ------------------------------------------------------------ 도구 목록
 def test_the_server_offers_the_drug_and_dur_tools_with_descriptions(tools):
     assert tools.tool_names() == list(TOOL_NAMES) == ["search_drug", "check_item_code", "match_drug", "verify_dictionary",
-                                                      "check_interaction", "check_duplicate"]
+                                                      "check_interaction", "check_duplicate", "build_plan", "get_plan"]
     assert all(description for _, description in tools.tools())
 
 

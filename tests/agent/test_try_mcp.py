@@ -42,7 +42,7 @@ def run(argv):
 def test_the_script_shows_four_tools_and_the_same_graph_results(backend):
     code, text = run(["--in-process", "--no-api"])
     assert code == 0, text
-    assert "도구 6개" in text
+    assert "도구 8개" in text
     for name in ("search_drug", "check_item_code", "match_drug", "verify_dictionary", "check_interaction", "check_duplicate"):
         assert f"    {name}: " in text
     assert "사전  202106092  타이레놀정500mg" in text
@@ -146,7 +146,7 @@ def test_run_graph_can_match_through_mcp_and_closes_the_connection(backend, monk
     text = "\n".join(lines)
     assert code == 0, text
     assert opened == [True]
-    assert "약품 매칭: MCP 도구로 부름 (python -m agent.mcp_server, 도구 6개: search_drug, check_item_code, match_drug, verify_dictionary, check_interaction, check_duplicate)" in text
+    assert "약품 매칭: MCP 도구로 부름 (python -m agent.mcp_server, 도구 8개: search_drug, check_item_code, match_drug, verify_dictionary, check_interaction, check_duplicate, build_plan, get_plan)" in text
     assert "(code)" in text and "조제 계획:" in text
     assert threading.active_count() == before                      # 끝나면 MCP 연결을 닫는다
 
@@ -200,14 +200,14 @@ def test_the_script_uses_dur_on_both_sides_when_the_key_is_set(backend, monkeypa
     assert "check_interaction(타이레놀정500mg + 게보린정)\n    찾은 것 없음" in text
 
 
-def test_try_mcp_can_reach_a_separately_started_server_by_its_address(monkeypatch):
+def test_try_mcp_can_reach_a_separately_started_server_by_its_address(backend, monkeypatch):
     urls = []
     monkeypatch.setattr(try_mcp, "http", lambda url: urls.append(url) or in_process(DICT))
     monkeypatch.setattr(try_mcp, "stdio", lambda **kw: pytest.fail("주소를 주면 하위 프로세스를 띄우지 않는다"))
     lines = []
-    try_mcp.main(["--no-api", "--url", "http://127.0.0.1:8765/mcp"], out=lines.append, build=lambda **kw: pytest.skip())
-    assert urls == ["http://127.0.0.1:8765/mcp"]
-    assert lines[0].startswith("서버: HTTP: http://127.0.0.1:8765/mcp") and lines[1] == "도구 6개"
+    assert try_mcp.main(["--no-api", "--url", "http://127.0.0.1:8765/mcp"], out=lines.append) == 0
+    assert urls == ["http://127.0.0.1:8765/mcp"] and "장이 같습니다" in lines[-1]
+    assert lines[0].startswith("서버: HTTP: http://127.0.0.1:8765/mcp") and lines[1] == "도구 8개"
 
 
 def test_try_mcp_says_how_to_start_the_server_when_the_address_does_not_answer(monkeypatch):
@@ -229,4 +229,4 @@ def test_run_graph_can_use_a_separately_started_server(backend, monkeypatch):
     lines = []
     assert run_graph.main(["rx8_01", "--no-api", "--mcp-url", "http://127.0.0.1:8765/mcp"], out=lines.append) == 0
     assert urls == ["http://127.0.0.1:8765/mcp"]
-    assert any(l.startswith("약품 매칭: MCP 도구로 부름 (http://127.0.0.1:8765/mcp, 도구 6개") for l in lines)
+    assert any(l.startswith("약품 매칭: MCP 도구로 부름 (http://127.0.0.1:8765/mcp, 도구 8개") for l in lines)

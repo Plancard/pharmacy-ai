@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING, Any
 from agent.drug_dictionary import DrugDictionary
 from agent.drug_match import ApiSearch
 from agent.dur import DurLookup, DurReport, combine_checks, report_from_json
-from agent.schema import DispensingOrder
+from agent.plan import PlanError
+from agent.schema import DispensingOrder, Plan
 
 if TYPE_CHECKING:
     from mcp.client.stdio import StdioServerParameters
@@ -147,6 +148,14 @@ class DrugTools:
         """drug_match.match_order와 같은 일을 서버가 한다. (매칭한 조제지시서, 서버가 의약품 API를 썼는지)."""
         found = self.call("match_drug", order=order.model_dump(mode="json"))
         return DispensingOrder.model_validate(found["order"]), bool(found["api_used"])
+
+    def build_plan(self, order: DispensingOrder) -> Plan:
+        """plan.build_plan과 같은 일을 서버가 한다. 계획을 만들 수 없으면 PlanError (코드 · 이유는 서버가 준 것)."""
+        made = self.call("build_plan", order=order.model_dump(mode="json"))
+        if made.get("plan") is None:
+            error = made.get("error") or {}
+            raise PlanError(error.get("message") or "조제 계획을 만들 수 없습니다.", code=error.get("code"))
+        return Plan.model_validate(made["plan"])
 
     def check_dur(self, items) -> DurReport:
         """dur.find_all과 같은 대조를 서버가 한다: 병용금기(check_interaction) + 중복(check_duplicate).

@@ -1,11 +1,13 @@
 """뼈대 그래프 동작 확인 (11단계, 팀 체크포인트 '뼈대 그래프' 11/13) — 손으로 돌려 보는 스크립트.
 
-    python scripts/agent/demo.py            # 시나리오 8개를 차례로 돌리고 기대와 같은지 보여 준다
+    python scripts/agent/demo.py            # 시나리오 10개를 차례로 돌리고 기대와 같은지 보여 준다
     python scripts/agent/demo.py --quiet    # 시나리오마다 결과 한 줄만
 
 pytest가 아니다. 웹이 부르는 입구(agent/api.py)를 그대로 써서, 웹 화면에서 일어날 일을 글로 보여 준다.
 시연용 가상 처방전(agent/resources/samples/rx8_a1)을 쓰고, 멈춘 곳은 메모리에 저장한다. 의약품 API와 LLM은 부르지 않는다
-(시연용 처방전은 규칙 경로로 읽힌다). 복용 약 등록 · 재대조 · 트레이 검수 · 상담은 아직 자리만 있어 '준비 중'으로 나온다.
+(시연용 처방전은 규칙 경로로 읽힌다). 복용 약 등록 · 재대조 · 상담은 아직 자리만 있어 '준비 중'으로 나온다.
+트레이 검수는 CV 가짜 모듈(cv/stub.py)로 한다. 사진 ID 끝이 결과를 정한다: tray-ok(전 칸 일치) · tray-mismatch(1칸 불일치) ·
+tray-no_tray(트레이 못 찾음) 등 (cv.stub.SCENARIOS).
 기대와 다른 시나리오가 있으면 1로 끝난다. langgraph가 설치되어 있어야 한다 (pip install -r agent/requirements.txt).
 """
 from __future__ import annotations
@@ -22,7 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent import config  # noqa: E402
-from agent.api import AgentApi, Pause  # noqa: E402
+from agent.api import AgentApi, AgentRunError, Pause  # noqa: E402
 from agent.checkpoint import memory_checkpointer  # noqa: E402
 from agent.drug_dictionary import load_dictionary  # noqa: E402
 from agent.graph import build_graph  # noqa: E402
@@ -43,10 +45,17 @@ def no_llm(text, feedback):
     raise RuntimeError("시연용 처방전은 규칙 경로로 읽혀야 합니다 (LLM을 부르지 않는다)")
 
 
+def stub_tray(image_id: str, plan: dict[str, Any]) -> dict[str, Any]:
+    """CV 가짜 검수. 사진 ID 'tray-<시나리오>'의 시나리오대로 (tray-ok, tray-mismatch, tray-no_tray …)."""
+    from cv import stub
+
+    return stub.inspect(image_id, plan, scenario=image_id.rsplit("-", 1)[-1])
+
+
 def make_api() -> AgentApi:
     dictionary = load_dictionary()
     graph = build_graph(dictionary=dictionary, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=no_llm),
-                        api=None, checkpointer=memory_checkpointer())
+                        api=None, checkpointer=memory_checkpointer(), inspect=stub_tray)
     return AgentApi(graph, dictionary)
 
 
@@ -61,6 +70,11 @@ def show_pause(pause: Pause | None, out: Out) -> None:
     out(f"      멈춤: {pause.hitl_point} - {pause.payload['notice']}")
     if pause.hitl_point == "type_select":
         out("      고를 수 있는 것: " + " · ".join(pause.payload["labels"][c] for c in pause.payload["choices"]))
+        return
+    if pause.hitl_point == "inspection":
+        for line in pause.payload["cells"]:
+            out(f"      칸 {line}")
+        out("      고를 수 있는 것: 확인 완료(confirm) · 재조제(redo)")
         return
     out("      조제지시서: " + " · ".join(f"{d['name']} {d['count_per_dose']}개 x {len(d['times'])}회 x {d['days']}일"
                                     for d in pause.payload["order"]["items"]))
@@ -140,12 +154,48 @@ def s5_tray_photo_with_text(api: AgentApi, out: Out) -> bool:
     api.resume("D5", "rx_approval", approve(pause))
     planned = api.result("D5")
     out("   (같은 대화의 두 번째 메시지: 이번 메시지 칸만 넣는다. 트레이와 온 글은 메모로만)")
-    again = api.send("D5", None, "tray", "게보린 빼 주세요", message_id="m2", image_id="tray-1")
+    again = api.send("D5", None, "tray", "게보린 빼 주세요", message_id="m2", image_id="tray-ok")
     show_pause(again, out)
     result = show_result(api, "D5", out)
     kept = result["order"] == planned["order"] and result["plan"] == planned["plan"]
-    out(f"      승인된 조제지시서 · 조제 계획: {'그대로' if kept else '바뀜'}")
-    return again is None and kept and result["memo"] == "게보린 빼 주세요" and result["proposals"] == []
+    out(f"      승인된 조제지시서 · 조제 계획: {'그대로' if kept else '바뀜'} | 검수: {result['notice']}")
+    return (again is None and kept and result["memo"] == "게보린 빼 주세요" and result["proposals"] == []
+            and result["status"] == "inspected" and result["inspection"]["summary"]["ok"] == 12)
+
+
+def s9_tray_mismatch_redo_then_ok(api: AgentApi, out: Out) -> bool:
+    out("   약사: 처방전(rx8_02)을 승인한 뒤 트레이 사진: 1칸에 1알이 빠짐")
+    api.resume("D9", "rx_approval", approve(api.start("D9", load("rx8_02"))))
+    pause = api.send("D9", None, "tray", image_id="tray-mismatch")
+    show_pause(pause, out)
+    out("   약사: 재조제(redo) → 다시 채워 찍은 사진")
+    back = api.resume("D9", "inspection", {"action": "redo"})
+    stage = api.stage("D9")
+    out(f"      단계: {stage} (다시 찍은 사진을 기다림)")
+    done = api.send("D9", None, "tray", image_id="tray-ok")
+    result = show_result(api, "D9", out)
+    return (pause is not None and pause.hitl_point == "inspection" and len(pause.payload["cells"]) == 1
+            and back is None and stage == "await_tray" and done is None and result["status"] == "inspected")
+
+
+def s10_tray_not_found_then_confirm(api: AgentApi, out: Out) -> bool:
+    out("   약사: 처방전(rx8_03)을 승인한 뒤 트레이가 안 보이는 사진")
+    api.resume("D10", "rx_approval", approve(api.start("D10", load("rx8_03"))))
+    try:
+        api.send("D10", None, "tray", image_id="tray-no_tray")
+        failed = None
+    except AgentRunError as e:
+        failed = e
+        out(f"      오류: {e.code} - {e}")
+    stage = api.stage("D10")
+    out(f"      단계: {stage} (조제 계획은 그대로, 다시 찍으면 된다)")
+    out("   약사: 다시 찍은 사진: 저신뢰 칸 1개 → 약사가 보고 확인 완료(confirm)")
+    pause = api.send("D10", None, "tray", image_id="tray-review")
+    show_pause(pause, out)
+    api.resume("D10", "inspection", {"action": "confirm"})
+    result = show_result(api, "D10", out)
+    return (failed is not None and failed.code == "E_TRAY_NOT_FOUND" and stage == "await_tray"
+            and pause is not None and "신뢰도 낮음" in pause.payload["cells"][0] and result["status"] == "inspected")
 
 
 def s6_text_alone(api: AgentApi, out: Out) -> bool:
@@ -181,15 +231,17 @@ SCENARIOS: list[tuple[str, Callable[[AgentApi, Out], bool]]] = [
     ("처방전 사진 + 질문 → 처방 흐름 다음에 상담 (정해진 순서)", s2_prescription_with_question),
     ("계획을 못 만들면 승인 대기로 돌아와 고치기", s3_edit_after_a_plan_that_cannot_be_made),
     ("사진 종류가 애매하면 되묻기 (type_select)", s4_unclear_photo_kind),
-    ("승인 뒤 같은 대화에 트레이 사진 + 글 → 글은 메모, 조제지시서 · 계획은 그대로", s5_tray_photo_with_text),
+    ("승인 뒤 같은 대화에 트레이 사진 + 글 → 전 칸 일치, 글은 메모, 조제지시서 · 계획은 그대로", s5_tray_photo_with_text),
     ("처방 없는 대화에 글만 → 상담", s6_text_alone),
     ("열린 처방에 글만 → 승인 카드의 제안", s7_text_for_an_open_prescription),
     ("상담 대화에 처방전 사진 → 같은 ID로 처방 대화", s8_consultation_becomes_a_prescription),
+    ("트레이 불일치 → 검수 확인(HITL ②)에서 재조제 → 다시 찍어 전 칸 일치", s9_tray_mismatch_redo_then_ok),
+    ("트레이를 못 찾음 → 오류 코드, 계획은 그대로 → 다시 찍어 확인 완료", s10_tray_not_found_then_confirm),
 ]
 
 
 def main(argv: list[str] | None = None, *, out: Out = print, api_factory: Callable[[], AgentApi] = make_api) -> int:
-    parser = argparse.ArgumentParser(description="뼈대 그래프 동작 확인 (시나리오 7개)")
+    parser = argparse.ArgumentParser(description="뼈대 그래프 동작 확인 (시나리오 10개)")
     parser.add_argument("--quiet", action="store_true", help="시나리오마다 결과 한 줄만")
     args = parser.parse_args(argv)
     try:

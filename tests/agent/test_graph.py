@@ -173,8 +173,12 @@ def test_the_supervisor_can_start_any_flow_and_the_flows_only_go_forward():
     assert set(targets) - {"end"} == set(FLOWS) == set(FLOW_ORDER)
     for i, flow in enumerate(FLOW_ORDER):                             # 앞에서 뒤로만: 되돌아가는 길이 없다
         _, after = TOP_CHART.branches[flow]
-        assert set(after) == {*FLOW_ORDER[i + 1:], "end"}
+        extra = {"tray_review"} if flow == "tray" else set()          # 트레이 검수만 약사 확인 노드를 하나 더 거칠 수 있다
+        assert set(after) == {*FLOW_ORDER[i + 1:], "end", *extra}
         assert after["end"] == END and all(after[f] == f for f in FLOW_ORDER[i + 1:])
+    _, after_review = TOP_CHART.branches["tray_review"]               # 검수 확인 뒤에는 트레이 다음 흐름으로만
+    assert set(after_review) == {*FLOW_ORDER[FLOW_ORDER.index("tray") + 1:], "end"}
+    assert [n for n, targets in TOP_CHART.successors().items() if "tray_review" in targets] == ["tray"]
 
 
 def test_the_prescription_flow_is_a_subgraph_that_goes_structure_match_risk_approve_plan():
@@ -592,7 +596,7 @@ ROUTES = [
     # photo_kind, ocr, 지난 노드, 흐름, 상태
     ("med_bag", None, ["supervisor", "recheck"], "recheck", "not_ready"),
     (None, {"doc_type": "med_bag", "lines": []}, ["supervisor", "recheck"], "recheck", "not_ready"),
-    ("tray", None, ["supervisor", "tray"], "tray", "not_ready"),
+    ("tray", None, ["supervisor", "tray"], "tray", "noted"),         # 조제 계획이 없으면 검수하지 않고 안내만 (14단계)
 ]
 ASKED = [
     (None, None, "사진 종류 정보가 없습니다."),
@@ -634,7 +638,8 @@ def test_choosing_the_tray_goes_to_the_tray(backend, calls):
     send(compiled, "P0001")
     calls.clear()
     final = resume_run(compiled, "P0001", {"choice": "tray"})
-    assert calls == ["ask_type", "tray"] and final["status"] == "not_ready" and paused(final) is None
+    assert calls == ["ask_type", "tray"] and final["status"] == "noted" and paused(final) is None
+    assert "조제 계획이 아직 없습니다" in final["notice"]
 
 
 def test_a_photo_kind_that_is_given_wins_over_nothing_but_not_over_a_disagreeing_ocr(backend, calls):

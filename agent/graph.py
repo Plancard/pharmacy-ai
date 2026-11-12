@@ -2,12 +2,14 @@
 
 상위 그래프: 슈퍼바이저가 메시지 하나(사진 · 글)의 흐름과 순서(route)를 정하고, 흐름을 정해진 순서로 하나씩 실행한다.
 
-    START -> supervisor -> [ask_type] -> [prescription] -> [register_meds] -> [recheck] -> [tray] -> [consult] -> END
+    START -> supervisor -> [ask_type] -> [prescription] -> [register_meds] -> [recheck] -> [tray (-> tray_review)] -> [consult] -> END
     (대괄호 = route에 있을 때만 들른다. 각 노드는 route에서 자기보다 뒤에 있는 첫 흐름으로 가고, 없으면 끝난다)
+    tray_review는 트레이 검수에 약사 확인이 필요할 때(status=inspecting)만 들른다 (HITL ② inspection에서 멈춤)
 
     ask_type       되묻기 (HITL type_select에서 멈춤). 약사가 고르면 route를 다시 정한다
     prescription   처방 서브그래프 (아래)
-    그 밖           자리만 있다 (복용 약 등록 · 재대조 15단계, 트레이 14단계, 상담 16단계)
+    tray           트레이 검수 (CV deps.inspect). ok가 아닌 칸이 있으면 tray_review에서 약사 확인 (14단계)
+    그 밖           자리만 있다 (복용 약 등록 · 재대조 15단계, 상담 16단계)
 
 처방 서브그래프: 처방전 한 장을 승인 대기까지 데려간다.
 
@@ -30,7 +32,9 @@
   처음 상태를 다시 넣으면 체크포인터가 앞서 승인된 조제지시서(order)와 조제 계획(plan)을 None으로 덮어쓴다.
 - ask_type도 interrupt로 멈춘다 (HITL type_select). 응답은 {"choice": 값}이다.
 - 조제 계획(make_plan)은 승인된 조제지시서로만 만든다 (정할 것 10).
-- 복용 약 재대조(recheck)와 트레이 검수(tray)는 자리만 있다. 15단계와 12단계에서 채운다.
+- 복용 약 재대조(recheck)는 자리만 있다. 15단계에서 채운다.
+- 트레이 검수는 두 노드다: tray가 CV를 한 번 부르고, tray_review가 멈춘다. interrupt에서 이어 갈 때 노드가 처음부터 다시 돌기 때문에
+  한 노드에 두면 약사가 응답할 때마다 CV 추론을 다시 하고, 결과가 달라질 수도 있다.
 """
 from __future__ import annotations
 
@@ -58,6 +62,8 @@ from agent.nodes import (
     structure_node,
     supervisor_node,
     tray_node,
+    tray_review_node,
+    InspectFn,
 )
 from agent.pipeline import structure_prescription
 from agent.schema import DispensingOrder
@@ -82,6 +88,7 @@ STEPS: dict[str, NodeFn] = {
     "register_meds": register_meds_node,
     "recheck": recheck_node,
     "tray": tray_node,
+    "tray_review": tray_review_node,
     "consult": consult_node,
 }
 
@@ -163,12 +170,23 @@ PRESCRIPTION_CHART = Chart(
     },
 )
 
+def after_tray(state: dict[str, Any]) -> str:
+    """검수 결과에 약사 확인이 필요하면 tray_review로, 아니면 다음 흐름으로."""
+    if state.get("status") == "inspecting":
+        return "tray_review"
+    return next_flow("tray")(state)
+
+
+TRAY_REVIEW = "tray_review"
+
 TOP_CHART = Chart(
     entry="supervisor",
-    nodes=("supervisor", *FLOW_ORDER),
+    nodes=("supervisor", *FLOW_ORDER, TRAY_REVIEW),
     edges=(),
     branches={"supervisor": (after_supervisor, _forward("supervisor")[1]),
-              **{flow: _forward(flow) for flow in FLOW_ORDER}},
+              **{flow: _forward(flow) for flow in FLOW_ORDER},
+              "tray": (after_tray, {**_forward("tray")[1], TRAY_REVIEW: TRAY_REVIEW}),
+              TRAY_REVIEW: _forward("tray")},
 )
 
 # 상위 그래프에서 서브그래프를 부르는 노드의 이름
@@ -189,6 +207,7 @@ def _make_deps(
     api: ApiSearch | None | object,
     tools: DrugTools | None = None,
     dur: DurLookup | None | object = _FROM_SETTINGS,
+    inspect: InspectFn | None = None,
 ) -> Deps:
     if dur is _FROM_SETTINGS:              # api를 따로 정하지 않았을 때만 설정을 따른다 (api=None이면 DUR도 쓰지 않는다)
         dur = default_dur_api() if api is _FROM_SETTINGS else None
@@ -198,6 +217,7 @@ def _make_deps(
         api=default_api() if api is _FROM_SETTINGS else api,
         tools=tools,
         dur=dur,
+        inspect=inspect,
     )
 
 
@@ -279,6 +299,7 @@ def build_graph(
     checkpointer: Any = _FROM_SETTINGS,
     tools: DrugTools | None = None,
     dur: DurLookup | None | object = _FROM_SETTINGS,
+    inspect: InspectFn | None = None,
 ):
     """상위 그래프를 만들어 compile한 결과를 돌려준다 (처방 서브그래프가 그 안에 들어 있다).
 
@@ -289,9 +310,11 @@ def build_graph(
     api=None을 주면 키가 있어도 사전만 쓴다 (테스트·정확도 측정용).
     checkpointer를 주지 않으면 설정에 맞는 것을 붙인다 (checkpoint.default_checkpointer). 승인 대기에서 멈추려면 꼭 있어야 한다.
     dur(DUR 조회)를 주지 않으면 api와 같이 정한다: api를 주지 않았으면 키가 있을 때 DUR API, api=None이면 쓰지 않는다.
-    tools(mcp_client.DrugTools)를 주면 약품 매칭과 위험 신호 대조를 MCP 도구로 부른다. 그때 API는 서버가 쓴다.
+    tools(mcp_client.DrugTools)를 주면 약품 매칭 · 위험 신호 대조 · 조제 계획을 MCP 도구로 부른다. 그때 API는 서버가 쓴다.
+    inspect(트레이 검수, CV)를 주지 않으면 트레이 사진은 '검수하지 못함'(E_CV_INFER)으로 끝난다. 가짜 결과를 기본으로 쓰지 않는다
+    (데모 · 시험은 agent.cv_adapter.stub_inspect를 넘긴다).
     """
-    deps = _make_deps(dictionary, structure, api, tools, dur)
+    deps = _make_deps(dictionary, structure, api, tools, dur, inspect)
     prescription = _compile_prescription(deps)
 
     def make_node(name: str):

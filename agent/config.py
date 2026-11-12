@@ -17,6 +17,10 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini-2025-08-07")
 # LLM 호출 한 번의 제한 시간(초)과 자동 재시도 횟수. 처방전 1장 -> 조제지시서 1분 이내(REQ-NF-01)를 지키려고 짧게 둔다.
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
+# 추론 강도 (gpt-5 계열: minimal · low · medium · high). 지정하지 않으면 모델 기본값(medium)으로 오래 생각해 20초 제한에 걸린다
+# (11/12 촬영본 20장 점검: 8장이 두 번 모두 시간 초과, 성공한 것도 13~14초). 표를 옮겨 적는 일이라 low로 둔다.
+# 빈 값(LLM_REASONING_EFFORT=)이면 보내지 않는다 (이 옵션을 받지 않는 모델로 바꿀 때).
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "low").strip().lower()
 
 # 자료 폴더 (agent/resources). git에 올라가는 사전·샘플·RAG 문서가 여기 있다. 어디서 실행해도 같은 곳을 가리킨다.
 # 주의: 폴더 이름을 data/로 하면 .gitignore의 data/ 규칙에 걸려 git add가 무시한다.

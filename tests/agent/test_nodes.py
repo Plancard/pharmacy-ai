@@ -767,11 +767,11 @@ def test_a_choice_that_cannot_be_chosen_is_refused(reply):
 
 
 def test_the_flows_that_are_not_built_yet_say_so():
-    for node, flow in ((register_meds_node, "register_meds"), (recheck_node, "recheck"), (tray_node, "tray"), (consult_node, "consult")):
+    for node, flow in ((register_meds_node, "register_meds"), (recheck_node, "recheck"), (consult_node, "consult")):
         assert node(first_state("P0001"), deps()) == {
             "notes": [NOT_READY_NOTICES[flow]], "status": "not_ready", "notice": NOT_READY_NOTICES[flow],
         }
-    assert len(set(NOT_READY_NOTICES.values())) == 4
+    assert len(set(NOT_READY_NOTICES.values())) == 3 and "tray" not in NOT_READY_NOTICES      # 트레이 검수는 14단계에서 만들었다
 
 
 def test_a_flow_that_is_not_built_yet_does_not_hide_what_the_prescription_did():

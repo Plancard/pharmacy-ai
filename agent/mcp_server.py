@@ -5,7 +5,7 @@
     python -m agent.mcp_server --http     # HTTP로 띄운다: http://127.0.0.1:8765/mcp (따로 띄운 서버에 클라이언트가 주소로 붙는다)
     python -m agent.mcp_server --http --host 0.0.0.0 --port 9000   # 다른 컨테이너 · PC에서 붙을 때
 
-도구 (지금 6개. 조제 2개는 14단계에서 더한다)
+도구 8개
     search_drug        이름으로 약 찾기: 약품 사전에서 비슷한 약 + (API가 있으면) 의약품 API의 제품
                        <- drug_match.rank_by_name, ApiSearch
     check_item_code    품목기준코드가 이 이름의 제품 코드가 맞는지 의약품 API로 확인  <- drug_match.check_item_code
@@ -13,6 +13,9 @@
     verify_dictionary  약품 사전 8종의 코드를 의약품 API로 한 번에 확인                 <- drug_match.check_item_code
     check_interaction  처방약끼리 병용금기 (DUR API)                                   <- dur.check_interaction
     check_duplicate    처방약끼리 성분 중복(사전) + 효능군 중복(DUR API)               <- dur.check_duplicate
+    build_plan         승인된 조제지시서(A.5)로 칸별 조제 계획(A.4)을 만든다 (14단계)  <- plan.build_plan
+    get_plan           조제 계획(A.4)의 칸 내용을 약 이름과 함께 읽는다 (일자 · 시점으로 거를 수 있다)  <- plan.plan_lines
+                       서버는 대화 상태(체크포인터)를 모른다. 계획은 부르는 쪽이 넘긴다 (그래프 state의 plan)
 
 규칙
 - 서버는 표준 출력(stdout)에 아무것도 쓰지 않는다. stdout이 MCP 통신선이다(stdio일 때). 알림은 표준 오류(stderr)로만 간다.
@@ -39,10 +42,12 @@ from agent.drug_names import match_key, search_term
 from agent.dur import DurLookup, Ref, check_duplicate, check_interaction, report_to_json
 from agent.dur_api import default_dur_api
 from agent.errors import ConfigError, DrugApiError
-from agent.schema import DispensingOrder
+from agent.plan import TIME_LABELS, PlanError, build_plan, plan_lines
+from agent.schema import TIME_SLOTS, DispensingOrder, Plan
 
 SERVER_NAME = "pharmacy-agent"
-TOOL_NAMES = ("search_drug", "check_item_code", "match_drug", "verify_dictionary", "check_interaction", "check_duplicate")
+TOOL_NAMES = ("search_drug", "check_item_code", "match_drug", "verify_dictionary", "check_interaction", "check_duplicate",
+              "build_plan", "get_plan")
 MAX_RESULTS = 5          # 사전 · API에서 보여 줄 약의 수
 NO_API = "의약품 API를 쓰지 않는 서버입니다 (.env에 DRUG_API_KEY가 없거나 --no-api로 띄웠습니다)."
 NO_DUR = "DUR API를 쓰지 않는 서버입니다 (.env에 DRUG_API_KEY가 없거나 --no-api로 띄웠습니다)."
@@ -148,6 +153,50 @@ def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: 
                  description="처방약끼리 성분 중복(약품 사전)과 효능군 중복(DUR API, 있을 때)을 찾는다. items: [{item_code, name}].")
     def check_duplicate_tool(items: list[dict[str, Any]]) -> dict[str, Any]:
         return report_to_json(check_duplicate(_refs(items), dictionary, dur))
+
+    def names_of(codes) -> dict[str, str]:
+        out = {}
+        for code in codes:
+            entry = dictionary.by_item_code(code)
+            if entry is not None:
+                out[code] = entry.name
+        return out
+
+    @server.tool(name="build_plan",
+                 description="약사가 승인한 조제지시서(A.5)로 트레이 칸별 조제 계획(A.4)을 만든다. 만들 수 없으면(3일 초과 · 칸당 2알 초과 · "
+                             "약을 정하지 못한 줄) plan은 null이고 error에 코드와 이유가 있다. 승인 여부는 부르는 쪽이 지킨다.")
+    def build_plan_tool(order: dict[str, Any]) -> dict[str, Any]:
+        try:
+            parsed = DispensingOrder.model_validate(order)
+        except ValidationError as e:
+            raise ToolError(f"조제지시서(A.5) 형식이 아닙니다: {e.error_count()}곳이 틀립니다.") from None
+        try:
+            plan = build_plan(parsed)
+        except PlanError as e:            # 계획을 못 만드는 것은 도구 실패가 아니라 결과다 (약사에게 돌아갈 이유)
+            return {"plan": None, "error": {"code": e.code, "message": str(e)}, "lines": []}
+        names = {i.item_code: i.name for i in parsed.items if i.item_code}
+        return {"plan": plan.model_dump(mode="json"), "error": None, "lines": plan_lines(plan, names)}
+
+    @server.tool(name="get_plan",
+                 description="조제 계획(A.4)의 칸 내용을 약 이름과 함께 돌려준다. day(1~3) · time(morning · noon · evening · bedtime)을 "
+                             "주면 그 칸만. 약 이름은 약품 사전에서 찾고, 없으면 품목기준코드를 그대로 쓴다.")
+    def get_plan_tool(plan: dict[str, Any], day: int | None = None, time: str | None = None) -> dict[str, Any]:
+        try:
+            parsed = Plan.model_validate(plan)
+        except ValidationError as e:
+            raise ToolError(f"조제 계획(A.4) 형식이 아닙니다: {e.error_count()}곳이 틀립니다.") from None
+        if time is not None and time not in TIME_SLOTS:
+            raise ToolError(f"time은 {' · '.join(TIME_SLOTS)} 중 하나여야 합니다.")
+        names = names_of({i.item_code for c in parsed.plan for i in c.items})
+        cells = [
+            {"day": c.day, "time": c.time, "label": f"{c.day}일 {TIME_LABELS[c.time]}",
+             "items": [{"item_code": i.item_code, "name": names.get(i.item_code, i.item_code), "count": i.count} for i in c.items],
+             "total": sum(i.count for i in c.items)}
+            for c in parsed.plan
+            if (day is None or c.day == day) and (time is None or c.time == time)
+        ]
+        return {"prescription_id": parsed.prescription_id, "days": parsed.days, "cells": cells,
+                "pills": sum(c["total"] for c in cells), "lines": plan_lines(parsed, names)}
 
     return server
 

@@ -21,6 +21,11 @@ HITL ①(rx_approval)의 응답은 {"action": "approve" | "edit" | "manual", "or
            계획을 만들 수 없으면(3일 초과 · 칸당 2알 초과 등) 이유를 안내에 담아 다시 승인 대기로 멈춘다.
   edit (또는 줄을 바꾼 approve): 고친 값으로 약품 매칭 · 위험 신호 대조를 다시 하고 다시 승인 대기로 멈춘다. LLM은 다시 부르지 않는다.
 HITL type_select(되묻기)의 응답은 {"choice": 값}이다. 고를 수 있는 값은 Pause.payload의 choices에 있다.
+트레이 사진(조제 계획이 있는 처방 대화에 send(conv_id, None, "tray", image_id=...))은 CV로 검수한다 (14단계).
+  전 칸 일치면 None, stage는 inspected. ok가 아닌 칸이 있으면 HITL ②(inspection)에서 멈춘다 → Pause.
+  HITL ② 응답은 {"action": "confirm"}(확인 완료 → inspected) 또는 {"action": "redo"}(재조제 → await_tray, 다시 찍은 사진을 기다림).
+  검수하지 못하면(트레이 못 찾음 E_TRAY_NOT_FOUND 등) AgentRunError. 단계는 await_tray 그대로라 다시 찍어 보내면 된다.
+  검수 결과(A.3)는 result()의 inspection에 있다.
 처방 처리가 실패하면(구조화 실패 등) 오류 코드(명세서 A.7)가 붙은 AgentRunError를 올린다.
 """
 from __future__ import annotations
@@ -33,6 +38,7 @@ from agent.drug_dictionary import DrugDictionary, load_dictionary
 from agent.graph import build_graph, resume_run, run_message, thread_config
 from agent.mcp_client import DrugTools, from_settings as mcp_from_settings
 from agent.intent import PATIENT_INFO, EDIT_REQUEST, NOTE, QUESTION, classify
+from agent.inspection import HITL_INSPECTION, read_inspection_reply
 from agent.nodes import HITL_APPROVAL, HITL_TYPE, read_choice, read_reply
 from agent.proposal import make_proposals
 from agent.schema import DispensingOrder
@@ -131,6 +137,8 @@ class AgentApi:
             read_reply(reply, DispensingOrder.model_validate(pause.payload["order"]))     # 이어 가기 전에 거른다
         elif hitl_point == HITL_TYPE:
             read_choice(reply, pause.payload["about"])
+        elif hitl_point == HITL_INSPECTION:
+            read_inspection_reply(reply)
         resume_run(self.graph, rx_id, reply)
         return self._after_run(rx_id)
 
@@ -148,7 +156,7 @@ class AgentApi:
         """지금 저장된 상태에서 웹이 쓰는 칸만. 멈춰 있는 동안의 조제지시서는 pending의 payload에 있다."""
         values = self._snapshot(rx_id).values
         keys = ("conversation_id", "prescription_id", "message_id", "status", "flow", "route", "intents", "order", "plan",
-                "notice", "error_code", "proposals", "memo", "notes")
+                "inspection", "notice", "error_code", "proposals", "memo", "notes")
         return {key: values.get(key) for key in keys}
 
     def handle_text(self, rx_id: str, text: str) -> dict[str, Any]:
@@ -190,6 +198,6 @@ class AgentApi:
         if pause is not None:
             return pause
         values = self._snapshot(rx_id).values
-        if values.get("status") == "failed":
+        if values.get("status") == "failed" or values.get("error_code"):     # 트레이 검수 실패는 상태가 planned 그대로다
             raise AgentRunError(values.get("error_code"), values.get("notice") or "처방 처리에 실패했습니다.")
         return None
