@@ -1,0 +1,35 @@
+{
+ "image_id": "rx8_08",
+ "purpose": "1일 처방 · 세 시점 (요비신정 · 트리스펜)",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "201110120",
+   "name": "트리스펜연질캡슐",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 1,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200713170",
+   "name": "아이월드요비신정 416.7mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 1,
+   "usage": "PO 식후 30분",
+   "target": true
+  }
+ ]
+}

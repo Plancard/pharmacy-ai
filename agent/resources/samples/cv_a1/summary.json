@@ -1,0 +1,122 @@
+[
+  {
+    "image": "rx_001.png",
+    "seconds": 9.99,
+    "n_items": 83,
+    "mean_conf": 0.817,
+    "drug_hit_rate": 0.5,
+    "drug_hits": [
+      {
+        "drug": "타이레놀정/500mg",
+        "hit": true,
+        "best_ratio": 81.8
+      },
+      {
+        "drug": "알모탄정",
+        "hit": false,
+        "best_ratio": 75.0
+      }
+    ]
+  },
+  {
+    "image": "rx_002.png",
+    "seconds": 7.46,
+    "n_items": 91,
+    "mean_conf": 0.839,
+    "drug_hit_rate": 0.3333333333333333,
+    "drug_hits": [
+      {
+        "drug": "게보린정",
+        "hit": true,
+        "best_ratio": 100.0
+      },
+      {
+        "drug": "프론크논캡슐",
+        "hit": false,
+        "best_ratio": 66.7
+      },
+      {
+        "drug": "알모탄정",
+        "hit": false,
+        "best_ratio": 75.0
+      }
+    ]
+  },
+  {
+    "image": "rx_003.png",
+    "seconds": 7.41,
+    "n_items": 87,
+    "mean_conf": 0.851,
+    "drug_hit_rate": 0.0,
+    "drug_hits": [
+      {
+        "drug": "트리스펜연질캡슐",
+        "hit": false,
+        "best_ratio": 62.5
+      },
+      {
+        "drug": "알모탄정",
+        "hit": false,
+        "best_ratio": 75.0
+      }
+    ]
+  },
+  {
+    "image": "rx_004.png",
+    "seconds": 7.63,
+    "n_items": 95,
+    "mean_conf": 0.807,
+    "drug_hit_rate": 0.5,
+    "drug_hits": [
+      {
+        "drug": "타이레놀정/500mg",
+        "hit": true,
+        "best_ratio": 81.8
+      },
+      {
+        "drug": "게보린정",
+        "hit": true,
+        "best_ratio": 100.0
+      },
+      {
+        "drug": "프론크논캡슐",
+        "hit": false,
+        "best_ratio": 66.7
+      },
+      {
+        "drug": "알모탄정",
+        "hit": false,
+        "best_ratio": 75.0
+      }
+    ]
+  },
+  {
+    "image": "rx_005.png",
+    "seconds": 7.63,
+    "n_items": 97,
+    "mean_conf": 0.83,
+    "drug_hit_rate": 1.0,
+    "drug_hits": [
+      {
+        "drug": "펠루비서방정/45mg",
+        "hit": true,
+        "best_ratio": 88.9
+      },
+      {
+        "drug": "에스코텐정/10mg",
+        "hit": true,
+        "best_ratio": 100.0
+      },
+      {
+        "drug": "릴렉시아정/250mg",
+        "hit": true,
+        "best_ratio": 85.7
+      },
+      {
+        "drug": "타세놀8시간이알서방정/650mg",
+        "hit": true,
+        "best_ratio": 82.4
+      }
+    ]
+  }
+]

@@ -7,9 +7,21 @@ pydantic==2.13.5
 
 # LLM 호출 (agent/llm.py). 실제로 부를 때만 필요하고, 시험은 이 패키지 없이 돈다.
 # 설치해서 확인한 뒤 `pip freeze` 결과로 버전을 고정한다 (3단계).
-openai==3.37.0
+openai
 
 # 테스트 (python -m pytest tests/agent -q)
 pytest==9.1.1
 
+# 그래프 (agent/graph.py). 7단계부터. 진짜 LangGraph로 돌려 확인한 버전
 langgraph==1.2.17
+
+# 체크포인트 저장 (agent/checkpoint.py, 10단계). .env에 DATABASE_URL이 있을 때만 쓴다 (없으면 메모리).
+# psycopg · psycopg-pool은 web/requirements.txt와 같은 버전이어야 한다 (한 이미지에 같이 설치됨).
+# langgraph-checkpoint-postgres는 설치해 확인한 뒤 `pip freeze` 결과로 버전을 고정한다.
+langgraph-checkpoint-postgres
+psycopg[binary]==3.2.13
+psycopg-pool==3.3.3
+
+# MCP 약품 도구 (agent/mcp_server.py · mcp_client.py, 12단계). mcp 2.x: 서버는 MCPServer, 클라이언트는 Client.
+# 1.x(FastMCP)와 이름이 달라 버전을 고정한다. 샌드박스에서 2.3.0으로 서버 · 클라이언트 · stdio를 확인했다.
+mcp==2.3.0

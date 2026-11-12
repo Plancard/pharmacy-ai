@@ -36,6 +36,7 @@ RiskLevel = Literal["none", "caution", "warning", "danger"]
 RISK_LEVELS: tuple[str, ...] = get_args(RiskLevel)
 FindingLevel = Literal["caution", "warning", "danger"]        # 항목 하나의 수준. 항목이 있다는 것은 none이 아니라는 뜻이다
 RiskScope = Literal["rx_only", "rx_with_current_meds"]        # 대조한 범위: 처방약끼리 / 복용 중인 약까지
+ConsultScope = Literal["none", "rx_only", "rx_with_current_meds"]   # A.6만: none = 대조 없이 한 일반 상담 (처방 없는 대화, 11/12)
 
 # 약품 매칭이 약을 정한 방법 (Agent 내부, 4~5단계). code=인쇄된 코드가 사전의 품목기준코드와 같다 · name=사전에서 이름으로 · api=식약처 API에서 이름으로 · none=정하지 못함.
 # 자동 확정은 code뿐이다. name · api · none 줄은 언제나 약사 확인 표시가 붙는다 (drug_match.py가 지킨다).
@@ -339,10 +340,14 @@ class Evidence(_Model):
 
 
 class ConsultResult(_Model):
-    """상담 한 번의 결과. risk_level은 A.5 risk_check와 이번 재대조 중 높은 쪽이다."""
+    """상담 한 번의 결과. risk_level은 A.5 risk_check와 이번 재대조 중 높은 쪽이다.
 
-    prescription_id: str = Field(min_length=1)
-    risk_scope: RiskScope
+    처방이 없는 대화(상담 대화)에서는 prescription_id가 None이고 risk_scope는 none이다 (대조 없이 한 일반 상담).
+    """
+
+    conversation_id: str = Field(min_length=1)   # 대화 ID (= thread_id). 처방 대화에서는 prescription_id와 같다
+    prescription_id: str | None = Field(default=None, min_length=1)
+    risk_scope: ConsultScope
     new_findings: list[RiskFinding] = Field(default_factory=list)   # 승인 화면(A.5)에서 이미 보인 것을 뺀, 이번에 새로 나온 항목
     recheck_after_dispense: bool             # 조제가 끝난 뒤 다시 대조해야 하는가
     risk_level: RiskLevel
@@ -351,6 +356,11 @@ class ConsultResult(_Model):
 
     @model_validator(mode="after")
     def _consistent(self):
+        if self.risk_scope == "none":
+            if self.new_findings or self.risk_level != "none" or self.recheck_after_dispense:
+                raise ValueError("대조 없이 한 상담(none)에는 새 항목 · 위험 단계 · 재검토 표시가 없다")
+        elif self.prescription_id is None:
+            raise ValueError("처방이 없는 대화의 상담은 risk_scope가 none이어야 합니다 (대조할 처방약이 없다)")
         if self.risk_scope == "rx_only" and self.new_findings:
             raise ValueError("처방약끼리만 본 상담(rx_only)에는 새 항목이 없다 (이미 A.5 risk_check로 보였다)")
         if risk_rank(self.risk_level) < risk_rank(max_risk(f.level for f in self.new_findings)):

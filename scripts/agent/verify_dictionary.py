@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None, *, fetch: Fetch = http_get_json, out: Ca
                 out(f"    {p.item_code}  {p.name}  [{p.company or '업체 모름'}]  유사도 {score:.3f}")
 
     ok = results.count(CODE_FOUND)
-    out(f"전체 {len(results)}종 중 {ok}종 일치" + ("" if ok == len(results) else " — 일치하지 않은 약은 팀이 확인한 뒤 사전을 고치세요"))
+    out(f"전체 {len(results)}종 중 {ok}종 일치" + ("" if ok == len(results) else ". 일치하지 않은 약은 팀이 확인한 뒤 사전을 고치세요"))
     if FAILED in results and ok == 0:
         for line in failure_hints(statuses):
             out("    " + line)

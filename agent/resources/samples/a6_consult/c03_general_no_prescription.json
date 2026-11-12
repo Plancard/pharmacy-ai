@@ -1,0 +1,16 @@
+{
+  "conversation_id": "C0001",
+  "prescription_id": null,
+  "risk_scope": "none",
+  "new_findings": [],
+  "recheck_after_dispense": false,
+  "risk_level": "none",
+  "answer": "(가짜 데이터) 처방 없이 받은 일반 상담 예시입니다. 아세트아미노펜은 하루 최대 용량을 넘지 않도록 복용합니다.",
+  "evidence": [
+    {
+      "title": "(가짜 데이터) 아세트아미노펜 복용 안내",
+      "source": "예시 출처",
+      "excerpt": "(가짜 데이터) 하루 총량을 지키라는 예시 문장입니다."
+    }
+  ]
+}

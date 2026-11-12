@@ -1,0 +1,44 @@
+{
+ "image_id": "rx8_12",
+ "purpose": "약 3종: 아침 · 저녁만 먹는 약 (칸당 2알 꽉 채움)",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "197900277",
+   "name": "게보린정",
+   "count_per_dose": 1,
+   "times": [
+    "morning"
+   ],
+   "days": 2,
+   "usage": "PO 아침 식후",
+   "target": true
+  },
+  {
+   "item_code": "200200099",
+   "name": "프론크논캡슐",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 2,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200713170",
+   "name": "아이월드요비신정 416.7mg",
+   "count_per_dose": 1,
+   "times": [
+    "evening"
+   ],
+   "days": 2,
+   "usage": "PO 저녁 식후",
+   "target": true
+  }
+ ]
+}

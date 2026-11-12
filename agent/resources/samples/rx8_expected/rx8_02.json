@@ -1,0 +1,33 @@
+{
+ "image_id": "rx8_02",
+ "purpose": "시연 조합 B: 이부프로펜 중복 (경고)",
+ "risk_level": "warning",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "201110120",
+   "name": "트리스펜연질캡슐",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200201239",
+   "name": "아르펜정",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  }
+ ]
+}

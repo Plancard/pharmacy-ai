@@ -1,8 +1,17 @@
 {
+  "conversation_id": "P0003",
   "prescription_id": "P0003",
   "risk_scope": "rx_with_current_meds",
   "new_findings": [
-    {"type": "ingredient_dup", "item_codes": ["200200099", "197900277"], "level": "caution", "message": "(가짜 데이터) 복용 중인 게보린정과 겹치는 성분이 있다는 예시입니다."}
+    {
+      "type": "ingredient_dup",
+      "item_codes": [
+        "200200099",
+        "197900277"
+      ],
+      "level": "caution",
+      "message": "(가짜 데이터) 복용 중인 게보린정과 겹치는 성분이 있다는 예시입니다."
+    }
   ],
   "recheck_after_dispense": true,
   "risk_level": "caution",

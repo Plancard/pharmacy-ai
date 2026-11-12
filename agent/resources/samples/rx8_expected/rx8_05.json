@@ -1,0 +1,32 @@
+{
+ "image_id": "rx8_05",
+ "purpose": "1회 2알 + 취침 전 (칸당 2알 꽉 채움)",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "200308774",
+   "name": "뮤코다인캡슐 200mg",
+   "count_per_dose": 2,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200002714",
+   "name": "트립라인정",
+   "count_per_dose": 1,
+   "times": [
+    "bedtime"
+   ],
+   "days": 3,
+   "usage": "PO 취침 전",
+   "target": true
+  }
+ ]
+}

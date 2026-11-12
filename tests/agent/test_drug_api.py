@@ -6,7 +6,7 @@ import urllib.error
 import pytest
 
 from agent import config, drug_api
-from agent.drug_api import ApiDrug, parse_products, search_drugs
+from agent.drug_api import ApiDrug, parse_products, raw_items, search_drugs
 from agent.errors import ConfigError, DrugApiError
 
 
@@ -31,6 +31,19 @@ class FakeFetch:
 
 
 # ------------------------------------------------------------ 응답 읽기
+
+
+def test_raw_items_keep_every_field_of_every_item_even_the_ones_parse_products_drops():
+    full = {**product(), "MATERIAL_NAME": "성분명 : 아세트아미노펜", "ITEM_PERMIT_DATE": "20200101"}
+    cancelled = product("201900001", "취하된약정", cancel="취하")
+    assert raw_items(response(full, cancelled)) == [full, cancelled]
+    assert [p.item_code for p in parse_products(response(full, cancelled))] == ["202005623"]
+
+
+@pytest.mark.parametrize("data", [None, [], "x", {"body": None}, response(code="30")])
+def test_raw_items_refuse_an_odd_response_like_parse_products(data):
+    with pytest.raises(DrugApiError):
+        raw_items(data)
 
 
 def test_products_are_read_from_the_usual_response():

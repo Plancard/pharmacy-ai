@@ -1,0 +1,36 @@
+{
+ "image_id": "rx8_18",
+ "purpose": "트레이 초과: 투약 4일 (조제 계획 E_PLAN_RANGE, 약사 확인)",
+ "risk_level": "none",
+ "plan": "E_PLAN_RANGE",
+ "flagged": [
+  0,
+  1
+ ],
+ "items": [
+  {
+   "item_code": "197900277",
+   "name": "게보린정",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 4,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200002714",
+   "name": "트립라인정",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 4,
+   "usage": "PO 식후 30분",
+   "target": true
+  }
+ ]
+}

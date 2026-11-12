@@ -80,11 +80,10 @@ def test_each_sample_has_its_own_line():
 def test_the_matching_result_is_counted_and_the_candidate_lines_are_listed():
     _, text = run([])
     assert (
-        "약품 매칭 (15줄): 정답 코드를 정함 4 · 정답을 후보로 보임 3 · 대상 약 아님 8 · 못 찾음 0 · 잘못 정함 0 · 줄 못 읽음 0"
+        "약품 매칭 (15줄): 정답 코드를 정함 7 · 정답을 후보로 보임 0 · 대상 약 아님 8 · 못 찾음 0 · 잘못 정함 0 · 줄 못 읽음 0"
     ) in text
-    assert "약품 매칭 - 정답을 후보로 보임:" in text
-    assert "rx_002 2번째 약품 '프론크논캠술': 정답 200200099, 결과 정하지 않음 (정답을 후보로 보임)" in text
-    assert "rx_003 1번째 약품 '트리스편연질캠술'" in text and "rx_004 3번째 약품 '프론크논램술'" in text
+    # OCR이 캠술 · 램술 · 편으로 읽은 줄도 OCR 한글 보정으로 정답 코드를 정한다 (11/10에는 후보 3줄이었다)
+    assert "약품 매칭 - 정답을 후보로 보임:" not in text
     # 문제가 아닌 줄은 하나씩 풀어 쓰지 않는다
     assert "약품 매칭 - 정답 코드를 정함" not in text and "약품 매칭 - 대상 약 아님" not in text
     assert "약품 매칭 - 잘못 정함" not in text
@@ -97,7 +96,7 @@ def test_the_schedule_record_line_can_be_pasted_as_it_is():
         "2026-11-10 | 규칙 경로 | 처방전 5장 · 약품 15줄"
         " | 약품명 100.0% (15/15) · 1회 투약량 100.0% (15/15) · 1일 횟수 100.0% (15/15) · 투약 일수 100.0% (15/15)"
         " | 칸 정확도 100.0% (80/80) · 목표 90% 달성"
-        " | 약품 매칭: 정답 코드 4줄 · 후보로 정답 3줄 · 잘못 정함 0줄"
+        " | 약품 매칭: 정답 코드 7줄 · 후보로 정답 0줄 · 잘못 정함 0줄"
     )
 
 
@@ -149,7 +148,7 @@ def test_llm_mistakes_and_failures_are_counted_and_listed():
     assert "rx_002 1번째 약품 '타이레놀정 500mg': 정답 197900277, 결과 202106092 (잘못 정함)" in llm_part
     assert "rx_005 1번째 약품 '필루비서방정 145mg': 정답 없음(대상 약 아님), 결과 정하지 않음 (줄 못 읽음)" in llm_part
     record = text.split("== 일정표 정확도 기록 (그대로 붙여 넣으세요) ==\n")[1].strip().split("\n")[1]
-    assert record.endswith("약품 매칭: 정답 코드 3줄 · 후보로 정답 3줄 · 잘못 정함 1줄")
+    assert record.endswith("약품 매칭: 정답 코드 6줄 · 후보로 정답 0줄 · 잘못 정함 1줄")
 
 
 def test_the_llm_record_line_carries_the_model_name(monkeypatch):
@@ -206,13 +205,13 @@ def test_results_can_be_saved_as_json_and_the_folder_is_created(tmp_path):
     assert (rule["all_correct"], rule["samples"], rule["failed"], rule["flagged"]) == (5, 5, 0, 15)
     assert rule["fields"]["name"] == {"correct": 15, "total": 15} and rule["fields"]["issue_no"] == {"correct": 5, "total": 5}
     assert rule["matches"] == {
-        "confirmed": 4, "candidate": 3, "not_target": 8, "not_found": 0, "wrong": 0, "missing": 0,
+        "confirmed": 7, "candidate": 0, "not_target": 8, "not_found": 0, "wrong": 0, "missing": 0,
     }
     assert [r["sample_id"] for r in rule["results"]] == SAMPLE_IDS
     bad = [c for r in rule["results"] for c in r["true_checks"] if not c["ok"]]
     assert bad == [{"line": None, "field": "issue_no", "want": "2026년11월03일 00058호", "got": "2026년11월03일 000583", "ok": False}]
     first = rule["results"][1]["match_checks"][1]
-    assert first == {"line": 1, "name": "프론크논캠술", "want": "200200099", "got": None, "outcome": "candidate"}
+    assert first == {"line": 1, "name": "프론크논캠술", "want": "200200099", "got": "200200099", "outcome": "confirmed"}
 
 
 def test_the_json_of_the_llm_path_has_the_model_name(tmp_path, monkeypatch):

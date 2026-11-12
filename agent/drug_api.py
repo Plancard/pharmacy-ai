@@ -95,6 +95,14 @@ def _items(data: Any) -> list[dict[str, Any]]:
     return [i for i in items if isinstance(i, dict)]
 
 
+def raw_items(data: Any) -> list[dict[str, Any]]:
+    """응답에서 제품 목록을 원본 필드 그대로 꺼낸다 (parse_products는 쓰는 필드만 남긴다). 형식이 이상하면 DrugApiError.
+
+    저장해 둔 응답에서 필드를 살펴보는 스크립트(verify_ingredients.py)가 쓴다.
+    """
+    return _items(data)
+
+
 def parse_products(data: Any) -> list[ApiDrug]:
     """응답에서 쓸 수 있는 제품만 골라 ApiDrug로. 코드가 9자리가 아니거나 이름이 없거나 취하·취소된 제품은 뺀다."""
     products: list[ApiDrug] = []

@@ -1,0 +1,35 @@
+{
+ "image_id": "rx8_16",
+ "purpose": "병용금기 시연: 아르펜 처방 + 복용 약 메토트렉세이트 (복용 약 등록 시 위험)",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "200201239",
+   "name": "아르펜정",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200308774",
+   "name": "뮤코다인캡슐 200mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 3,
+   "usage": "PO 식후 30분",
+   "target": true
+  }
+ ]
+}

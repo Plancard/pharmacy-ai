@@ -1,0 +1,34 @@
+{
+ "image_id": "rx8_06",
+ "purpose": "한약제제 요비신정 + 2일 처방",
+ "risk_level": "none",
+ "plan": "ok",
+ "flagged": [],
+ "items": [
+  {
+   "item_code": "200713170",
+   "name": "아이월드요비신정 416.7mg",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "evening"
+   ],
+   "days": 2,
+   "usage": "PO 식후 30분",
+   "target": true
+  },
+  {
+   "item_code": "200201239",
+   "name": "아르펜정",
+   "count_per_dose": 1,
+   "times": [
+    "morning",
+    "noon",
+    "evening"
+   ],
+   "days": 2,
+   "usage": "PO 식후 30분",
+   "target": true
+  }
+ ]
+}

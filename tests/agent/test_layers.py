@@ -4,7 +4,8 @@
 - 가장자리   llm · drug_api · dur_api · checkpoint · cv_adapter   → 바닥과 가장자리
 - 판단       structure · validate · … · proposal  → 바닥과 판단. 가장자리를 직접 import하지 않는다
              (LLM·API는 호출 함수를 인자로 받아야 네트워크 없이 시험할 수 있다)
-- MCP 포장   mcp_server · mcp_client             → 바닥, 판단, MCP 포장
+- MCP 포장   mcp_server · mcp_client             → 바닥, 가장자리, 판단, MCP 포장
+             (mcp_server는 따로 도는 서버 프로세스의 입구라 의약품 API 연결을 스스로 만들어 판단 함수에 넘긴다)
 - 그래프·입구 graph · nodes · state · supervisor · api   → 제한 없음
 
 agent/ 에 새 파일을 만들면 아래 LAYERS에 이름과 층을 적는다. 일정표·설계 문서에 없는 이름이면 먼저 정한다.
@@ -28,7 +29,7 @@ ALLOWED = {
     "바닥": {"바닥"},
     "가장자리": {"바닥", "가장자리"},
     "판단": {"바닥", "판단"},
-    "MCP 포장": {"바닥", "판단", "MCP 포장"},
+    "MCP 포장": {"바닥", "가장자리", "판단", "MCP 포장"},
     "그래프·입구": {"바닥", "가장자리", "판단", "MCP 포장", "그래프·입구"},
 }
 
