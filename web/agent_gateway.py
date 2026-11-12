@@ -3,7 +3,12 @@
     start(rx_id, image_path)          처방전 처리 시작. HITL에서 멈추면 Pause를 돌려준다
     pending(rx_id)                    지금 멈춰 있는 지점과 화면에 보여 줄 내용 (없으면 None)
     resume(rx_id, hitl_point, reply)  약사 응답으로 이어 간다. 다시 멈추면 Pause
-    stage(rx_id)                      멈춘 곳이 아닐 때 지금 단계 (예: 'await_tray')
+    approved_order(rx_id)             승인된 조제지시서 (트레이 대기 카드에 보여 줌)
+
+start·resume은 셋 중 하나를 돌려준다.
+    Pause  HITL에서 멈춤 → 처방 상태 waiting_approval
+    Wait   이번 실행이 끝났고 약사의 다음 사진을 기다림 → 처방 상태 Wait.status (지금은 waiting_tray뿐)
+    None   아직 처리 중 (상태를 바꾸지 않음)
 
 실패는 code 속성(명세서 A.7 오류 코드)이 있는 예외로 올린다 (cv.stub.CVError, AgentError).
 
@@ -13,6 +18,8 @@ Agent 그래프에 interrupt와 PostgresSaver가 붙으면 LangGraphGateway를 �
   - start  → graph.invoke(initial_state, config={"configurable": {"thread_id": rx_id}})
   - pending→ graph.get_state(config).interrupts[0].value
   - resume → graph.invoke(Command(resume=reply), config)
+  - 그래프가 멈추지 않고 끝나면 마지막 state.status로 Wait를 정한다: 'planned' → Wait('waiting_tray')
+    (Agent 상태와 DB 처방 상태는 이름이 다르다. 대응표는 기능분석서 5.2절)
 """
 from __future__ import annotations
 
@@ -37,6 +44,19 @@ class AgentError(Exception):
 class Pause:
     hitl_point: str
     payload: dict[str, Any]     # rx_approval: {"order": A.5, "ocr_lines": {line_id: {text, conf}}}
+
+
+WAIT_STATUSES = ("waiting_tray",)
+
+
+@dataclass(frozen=True)
+class Wait:
+    """그래프가 멈추지 않고 이번 실행을 끝냈고, 약사의 다음 입력(사진)을 기다린다."""
+    status: str                 # DB 처방 상태. WAIT_STATUSES 중 하나
+
+    def __post_init__(self):
+        if self.status not in WAIT_STATUSES:
+            raise ValueError(f"Wait.status={self.status} (가능: {', '.join(WAIT_STATUSES)})")
 
 
 def init_app(app: Flask) -> None:
@@ -107,7 +127,7 @@ class FakeGateway:
         return {"prescription_id": rx_id, "items": items,
                 "risk_check": {"scope": "rx_only", "level": level, "findings": findings}}
 
-    def start(self, rx_id: str, image_path: Path) -> Pause | None:
+    def start(self, rx_id: str, image_path: Path) -> Pause | Wait | None:
         from cv import stub   # CV 가짜 모듈. 실제 모듈이 나오면 cv.pipeline으로 바꾼다
 
         if self.scenario == "fail":
@@ -119,7 +139,7 @@ class FakeGateway:
                  for l in a1["lines"] if l["line_id"] in used}
         pause = Pause("rx_approval", {"order": order, "ocr_lines": lines})
         self._save(rx_id, {"pause": {"hitl_point": pause.hitl_point, "payload": pause.payload},
-                           "stage": None, "approved_order": None})
+                           "approved_order": None})
         return pause
 
     def pending(self, rx_id: str) -> Pause | None:
@@ -128,19 +148,17 @@ class FakeGateway:
             return None
         return Pause(data["pause"]["hitl_point"], data["pause"]["payload"])
 
-    def resume(self, rx_id: str, hitl_point: str, reply: dict[str, Any]) -> Pause | None:
+    def resume(self, rx_id: str, hitl_point: str, reply: dict[str, Any]) -> Pause | Wait | None:
         data = self._load(rx_id)
         if not data or not data.get("pause") or data["pause"]["hitl_point"] != hitl_point:
             raise AgentError("E_LLM", "멈춰 있는 지점이 없거나 다릅니다.")
         if hitl_point == "rx_approval":
-            # 실제 그래프: 승인된 조제지시서 → 조제 계획(A.4) → 트레이 사진을 기다린다
-            data.update(pause=None, stage="await_tray", approved_order=reply["order"])
+            # 실제 그래프: 승인된 조제지시서 → 조제 계획(A.4) → state.status = 'planned'로 끝난다
+            data.update(pause=None, approved_order=reply["order"])
+            self._save(rx_id, data)
+            return Wait("waiting_tray")
         self._save(rx_id, data)
         return None
-
-    def stage(self, rx_id: str) -> str | None:
-        data = self._load(rx_id)
-        return data.get("stage") if data else None
 
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         data = self._load(rx_id)

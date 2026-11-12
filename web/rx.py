@@ -75,6 +75,19 @@ def set_waiting(rx_id: uuid.UUID, hitl_point: str) -> bool:
     return row is not None
 
 
+def set_waiting_tray(rx_id: uuid.UUID) -> bool:
+    """처리 중 → 트레이 대기. 조제 계획까지 끝나 약사가 조제 후 트레이 사진을 올리기를 기다린다.
+
+    HITL(interrupt)이 아니라 그래프 실행이 끝난 상태다. 트레이 사진은 새 메시지로 들어와 새 실행이 된다.
+    """
+    row = db.execute(
+        "UPDATE prescriptions SET status = 'waiting_tray', hitl_point = NULL "
+        "WHERE id = %s AND status = 'processing' RETURNING id",
+        (rx_id,),
+    )
+    return row is not None
+
+
 def set_failed(rx_id: uuid.UUID, error_code: str | None) -> bool:
     """처리 중 → 실패. error_code는 명세서 A.7 코드 또는 None(원인 미상, 로그 확인)."""
     row = db.execute(

@@ -61,6 +61,13 @@ class FakeRx:
         r.update(status="waiting_approval", hitl_point=hitl_point)
         return True
 
+    def set_waiting_tray(self, rx_id):
+        r = self.rows[rx_id]
+        if r["status"] != "processing":
+            return False
+        r.update(status="waiting_tray", hitl_point=None)
+        return True
+
     def set_failed(self, rx_id, error_code):
         r = self.rows[rx_id]
         if r["status"] != "processing":
@@ -81,7 +88,7 @@ class FakeRx:
 @pytest.fixture
 def fake_rx(monkeypatch):
     f = FakeRx()
-    for name in ("create", "get", "first_image", "image", "set_waiting", "set_failed", "respond"):
+    for name in ("create", "get", "first_image", "image", "set_waiting", "set_waiting_tray", "set_failed", "respond"):
         monkeypatch.setattr(rx, name, getattr(f, name))
     return f
 
@@ -199,8 +206,31 @@ def test_approve_records_history_and_moves_on(client, fake_rx):
     assert a["action"] == "approve" and a["hitl_point"] == "rx_approval" and a["before"] == a["after"]
 
     d = client.get(f"/api/prescriptions/{rx_id}").get_json()
-    assert d["status"] == "processing" and d["stage"] == "await_tray"
+    assert d["status"] == "waiting_tray" and d["hitl_point"] is None and "stage" not in d
     assert d["card"]["order"]["items"][0]["item_code"] == "202106092"
+
+
+def test_tray_wait_survives_restart(monkeypatch, tmp_path, fake_rx):
+    """승인 뒤 트레이 대기 카드도 서버를 다시 켜면 그대로 보인다 (REQ-WEB-03)."""
+    c1 = make_client(monkeypatch, tmp_path)
+    rx_id = upload(c1).get_json()["id"]
+    assert approve(c1, rx_id, confirmed=True).status_code == 202
+    c2 = make_client(monkeypatch, tmp_path)
+    d = c2.get(f"/api/prescriptions/{rx_id}").get_json()
+    assert d["status"] == "waiting_tray" and d["card"]["order"]["items"]
+    # 트레이 대기에서는 다시 승인할 수 없다
+    assert approve(c2, rx_id, confirmed=True).status_code == 409
+
+
+def test_status_labels_cover_every_db_status():
+    """schema.sql의 처방 상태 값과 화면 라벨(STATUS_LABELS)이 어긋나지 않는다."""
+    import re
+    from pathlib import Path
+    from web import STATUS_LABELS
+    sql = (Path(__file__).resolve().parents[2] / "web" / "schema.sql").read_text(encoding="utf-8")
+    m = re.search(r"prescriptions_status_check\s+CHECK \(status IN \(([^)]*)\)\)", sql)
+    assert m, "schema.sql에서 prescriptions_status_check를 찾지 못함"
+    assert set(re.findall(r"'(\w+)'", m.group(1))) == set(STATUS_LABELS)
 
 
 def test_double_approve_is_rejected(client, fake_rx):

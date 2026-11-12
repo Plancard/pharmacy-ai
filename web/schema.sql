@@ -36,8 +36,7 @@ CREATE TABLE IF NOT EXISTS prescriptions (
     pharmacy_id BIGINT      NOT NULL REFERENCES pharmacies(id),
     display_no  TEXT        NOT NULL,                                -- 화면 표시용 번호 (예: P0001)
     user_id     BIGINT      NOT NULL REFERENCES users(id),
-    status      TEXT        NOT NULL DEFAULT 'processing'
-                CHECK (status IN ('processing', 'waiting_approval', 'done', 'failed')),
+    status      TEXT        NOT NULL DEFAULT 'processing',          -- 값 목록은 아래 prescriptions_status_check
     hitl_point  TEXT        CHECK (hitl_point IN ('type_select', 'rx_approval', 'inspection', 'risk')),
     error_code  TEXT        CHECK (error_code IN ('E_OCR_EMPTY', 'E_TRAY_NOT_FOUND', 'E_CV_INFER', 'E_PLAN_RANGE',
                                                   'E_BARCODE_FAIL', 'E_LLM', 'E_EXT_API', 'E_DB')),
@@ -49,6 +48,16 @@ CREATE TABLE IF NOT EXISTS prescriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_prescriptions_status  ON prescriptions(pharmacy_id, status);
 CREATE INDEX IF NOT EXISTS idx_prescriptions_created ON prescriptions(pharmacy_id, created_at);
+
+-- 처방 상태 값 (기능분석서 5.2절). 값을 늘리면 이미 만든 DB에도 앱 시작(init-db) 때 반영되도록 따로 건다.
+--   processing        그래프 실행 중
+--   waiting_approval  HITL에서 약사 응답 대기 (hitl_point 있음)
+--   waiting_tray      조제 계획까지 끝남, 조제 후 트레이 사진 대기 (hitl_point 없음)
+--   done              처방 흐름 종료, 조제 기록 저장 완료
+--   failed            오류로 중단
+ALTER TABLE prescriptions DROP CONSTRAINT IF EXISTS prescriptions_status_check;
+ALTER TABLE prescriptions ADD CONSTRAINT prescriptions_status_check
+    CHECK (status IN ('processing', 'waiting_approval', 'waiting_tray', 'done', 'failed'));
 
 -- ------------------------------------------------------------ 이미지
 CREATE TABLE IF NOT EXISTS images (

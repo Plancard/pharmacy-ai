@@ -109,7 +109,7 @@
     if (id !== current) return;   // 그사이 다른 처방을 골랐다
     upsertListItem(rx);
     render(view(rx));
-    if (rx.status === "processing" && rx.stage !== "await_tray") {
+    if (rx.status === "processing") {
       timer = setTimeout(refresh, POLL_MS);
     }
   }
@@ -133,8 +133,8 @@
         rx.error_code ? h("p", { class: "muted mono" }, rx.error_code) : null);
       return wrap;
     }
-    if (rx.status === "processing" && rx.stage === "await_tray") {
-      wrap.append(h("p", { class: "ok-note" }, "조제지시서를 승인했습니다. 다음 단계는 트레이 사진 검수입니다 (준비 중)."),
+    if (rx.status === "waiting_tray" && rx.card && rx.card.order) {
+      wrap.append(h("p", { class: "ok-note" }, "조제지시서를 승인했습니다. 조제 후 트레이 사진을 올려 주세요 (트레이 검수는 준비 중)."),
         itemsTable(rx.card.order, {}));
       return wrap;
     }
