@@ -69,19 +69,21 @@ def _read_names():
 
 
 def test_thresholds_fit_what_was_measured_on_the_samples_and_the_dictionary():
-    """기준값은 사전 8종과 샘플 5장에서 잰 값 사이에 놓여 있다 (11/10 측정). 사전이나 샘플이 바뀌면 다시 재서 맞춘다.
+    """기준값은 사전 8종과 샘플 5장에서 잰 값 사이에 놓여 있다 (11/10 측정, 11/12 OCR 한글 보정 뒤 다시 잼). 사전이나 샘플이 바뀌면 다시 재서 맞춘다.
 
-    OCR이 읽은 대상 약 이름 vs 사전의 같은 약: 0.812 ~ 1.0 / 대상이 아닌 약 vs 사전 어느 약이든: 최대 0.667 / 사전의 약끼리: 최대 0.541
+    OCR이 읽은 대상 약 이름 vs 사전의 같은 약: 보정 전 0.812 ~ 1.0, 보정 뒤 모두 1.0 (캠술 · 램술 · 편이 이 샘플의 오인식 전부였다)
+    대상이 아닌 약 vs 사전 어느 약이든: 최대 0.667 / 사전의 약끼리: 최대 0.541
     """
     target = [similarity(match_key(n), DICT.by_item_code(code).key) for n, code in _read_names() if code]
     others = [max(similarity(match_key(n), e.key) for e in DICT.entries) for n, code in _read_names() if not code]
     pairs = [similarity(a.key, b.key) for a, b in itertools.combinations(DICT.entries, 2)]
-    assert (round(min(target), 3), round(max(others), 3), round(max(pairs), 3)) == (0.812, 0.667, 0.541)
+    assert (round(min(target), 3), round(max(others), 3), round(max(pairs), 3)) == (1.0, 0.667, 0.541)
     assert max(others) < NAME_MATCH_MIN <= min(target)          # 코드로 찾은 약과 이름이 맞는지 가르는 선
     assert max(pairs) < CANDIDATE_MIN                            # 사전 약끼리는 서로의 후보가 되지 않는다
     assert CANDIDATE_MIN <= min(target) and CANDIDATE_MIN <= max(others)   # 오독한 대상 약은 후보로 보이고, 비슷한 다른 약도 후보까지는 간다
     assert max(others) < NAME_ONLY_MIN                           # 대상이 아닌 약은 이름만으로 정해지지 않는다
-    assert min(target) < NAME_ONLY_MIN                           # OCR이 틀리게 읽은 이름은 이름만으로 정하지 않고 후보로 둔다
+    assert NAME_ONLY_MIN <= min(target)                          # 보정한 대상 약 이름은 이름으로 정한다 (언제나 약사 확인 표시)
+    # 보정 목록에 없는 오인식은 여전히 후보로만 남는다: test_a_similar_name_is_not_chosen_only_offered_as_a_candidate
 
 
 # ------------------------------------------------------------ 사전 8종 찾기
@@ -196,12 +198,20 @@ def test_a_code_missing_from_the_dictionary_falls_back_to_the_name():
 
 
 def test_a_similar_name_is_not_chosen_only_offered_as_a_candidate():
-    # OCR이 한 글자를 틀리게 읽은 이름(0.875)은 이름만으로 확정하지 않는다. 사전의 약을 후보로 보여 준다
-    got = match_line(line("프론크논캠술", "900000051"), DICT)
+    # 보정 목록에 없는 오인식(프룬그논, 0.875)은 이름만으로 확정하지 않는다. 사전의 약을 후보로 보여 준다
+    got = match_line(line("프룬그논캡슐", "900000051"), DICT)
     assert (got.item_code, got.match_method) == (None, "none")
     assert [(c.item_code, c.score, c.reason) for c in got.match_candidates] == [(FRONK, 0.875, "이름이 비슷함")]
     assert got.needs_pharmacist_check
     assert got.check_reasons == ["처방전 코드(900000051)로는 사전의 약을 찾지 못했습니다. 이름이 비슷한 약은 있지만 확정하지 않고 후보로만 보여 드립니다."]
+
+
+@pytest.mark.parametrize("read, expected", [("프론크논캠술", FRONK), ("프론크논램술", FRONK), ("트리스편연질캠술", TRISPEN)])
+def test_known_ocr_misreadings_are_chosen_by_name_but_always_checked(read, expected):
+    # 실제 OCR에서 나온 오인식(캡슐 -> 캠술 · 램술, 펜 -> 편)은 비교 열쇠에서 맞춰 이름으로 정한다. 보이는 이름은 그대로다
+    got = match_line(line(read, "900000051"), DICT)
+    assert (got.item_code, got.match_method, got.name) == (expected, "name", read)
+    assert got.needs_pharmacist_check and got.match_candidates == []
 
 
 def test_a_name_below_the_name_only_threshold_is_not_chosen():
@@ -406,9 +416,9 @@ def matched(sample_id, *, print_item_codes=False):
 # 인쇄된 코드가 가상 코드(9000000xx)·보험코드라서 코드 단계는 건너뛰고 이름 단계로 간다: (품목기준코드, 방법)
 BY_NAME = {
     "rx_001": [(TYLENOL, "name"), (None, "none")],
-    "rx_002": [(GEVORIN, "name"), (None, "none"), (None, "none")],        # 프론크논캠술은 0.875라 후보로만
-    "rx_003": [(None, "none"), (None, "none")],                           # 트리스편연질캠술은 0.857이라 후보로만
-    "rx_004": [(TYLENOL, "name"), (GEVORIN, "name"), (None, "none"), (None, "none")],
+    "rx_002": [(GEVORIN, "name"), (FRONK, "name"), (None, "none")],       # 프론크논캠술은 OCR 한글 보정으로 이름이 같아진다
+    "rx_003": [(TRISPEN, "name"), (None, "none")],                        # 트리스편연질캠술도 (보정 전에는 0.857이라 후보로만)
+    "rx_004": [(TYLENOL, "name"), (GEVORIN, "name"), (FRONK, "name"), (None, "none")],
     "rx_005": [(None, "none")] * 4,
 }
 # 인쇄된 코드를 품목기준코드로 바꾸면 코드 단계가 약을 정한다. 확인 표시가 붙는 줄(0부터): 낮은 신뢰도, 사전에 없는 약, 4일 처방
@@ -464,8 +474,8 @@ def test_a_line_without_a_code_is_always_flagged_so_the_web_can_show_it(sample_i
 
 
 DUMMY_IDS = ["s01_combo_a", "s02_combo_b", "s03_no_risk", "s04_flagged", "s05_no_code"]
-# s04의 프론크논은 OCR이 '프론크논램술'로 읽은 것이라 후보로만 보인다. 나머지는 이름이 사전과 같아서 이름 단계가 정한다
-DUMMY_UNCHOSEN = {"s04_flagged": [0, 3]}           # 약을 못 정하는 줄 (0부터): 프론크논램술 · 알모탄정(대상 아님)
+# s04의 프론크논은 OCR이 '프론크논램술'로 읽은 것이지만 OCR 한글 보정으로 이름 단계가 정한다. 나머지도 이름이 사전과 같다
+DUMMY_UNCHOSEN = {"s04_flagged": [3]}              # 약을 못 정하는 줄 (0부터): 알모탄정(대상 아님)
 
 
 def dummy_lines(sample_id):
@@ -563,13 +573,13 @@ def test_without_an_api_nothing_changes():
 
 
 def test_a_misread_name_is_still_a_candidate_when_the_api_finds_nothing():
-    # OCR이 '프론크논캡슐'을 '프론크논램술'로 읽었다. API는 이 이름으로 아무것도 찾지 못한다. 사전의 약이 후보로 남는다
+    # OCR이 '프론크논캡슐'을 '프룬그논캡슐'로 읽었다(보정 목록에 없음). API는 이 이름으로 아무것도 찾지 못한다. 사전의 약이 후보로 남는다
     api = FakeApi()
-    got = match_line(line("프론크논램술", "900000051"), DICT, api=api)
+    got = match_line(line("프룬그논캡슐", "900000051"), DICT, api=api)
     assert (got.item_code, got.match_method) == (None, "none")
     assert [(c.item_code, c.reason) for c in got.match_candidates] == [(FRONK, "이름이 비슷함")]
     assert got.check_reasons == ["처방전 코드(900000051)로는 사전의 약을 찾지 못했습니다. 사전과 의약품 API 어디에서도 약을 정하지 못했습니다."]
-    assert api.calls == ["프론크논램술"]
+    assert api.calls == ["프룬그논캡슐"]
 
 
 def test_api_results_that_are_not_clear_become_candidates():

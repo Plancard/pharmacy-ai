@@ -24,8 +24,10 @@
   같은 서브그래프를 불러 그 결과를 상태에 옮겨 담는다. 그래서 두 길의 결과가 같다.
 - risk는 처방약끼리 위험 신호를 대조한다 (지금은 성분 중복). 13단계에서 병용금기와 효능군 중복이 같은 노드에 더해진다.
 - approve는 interrupt로 멈춘다(HITL ①). 멈추려면 체크포인터가 있어야 하므로 그래프를 만들 때 체크포인터를 붙인다
-  (checkpoint.py: DATABASE_URL이 있으면 PostgreSQL, 없으면 메모리). thread_id는 처방 ID다.
-  웹은 api.py의 start · pending · resume · stage로 이것을 쓴다.
+  (checkpoint.py: DATABASE_URL이 있으면 PostgreSQL, 없으면 메모리). thread_id는 대화 ID다 (처방 대화에서는 처방 ID와 같다).
+  웹은 api.py의 start · send · pending · resume · stage로 이것을 쓴다.
+- 같은 대화의 두 번째 이후 메시지(트레이 사진, 질문 등)는 이번 메시지 칸만 넣는다 (state.message_input).
+  처음 상태를 다시 넣으면 체크포인터가 앞서 승인된 조제지시서(order)와 조제 계획(plan)을 None으로 덮어쓴다.
 - ask_type도 interrupt로 멈춘다 (HITL type_select). 응답은 {"choice": 값}이다.
 - 조제 계획(make_plan)은 승인된 조제지시서로만 만든다 (정할 것 10).
 - 복용 약 재대조(recheck)와 트레이 검수(tray)는 자리만 있다. 15단계와 12단계에서 채운다.
@@ -59,7 +61,7 @@ from agent.nodes import (
 )
 from agent.pipeline import structure_prescription
 from agent.schema import DispensingOrder
-from agent.state import GraphState, initial_state
+from agent.state import GraphState, initial_state, message_input
 from agent.supervisor import FLOW_ORDER
 
 END = "END"              # 표에서 '끝'을 뜻한다. 만드는 함수가 LangGraph의 END로 바꿔 끼운다
@@ -300,32 +302,45 @@ def build_graph(
     return _compile(TOP_CHART, make_node, _checkpointer(checkpointer))
 
 
-def thread_config(prescription_id: str) -> dict[str, Any]:
-    """체크포인터가 처방 하나를 가리키는 설정. thread_id는 처방 ID다."""
-    return {"configurable": {"thread_id": prescription_id}}
+def thread_config(conversation_id: str) -> dict[str, Any]:
+    """체크포인터가 대화 하나를 가리키는 설정. thread_id는 대화 ID다 (처방 대화에서는 처방 ID와 같다)."""
+    return {"configurable": {"thread_id": conversation_id}}
+
+
+def has_thread(graph, conversation_id: str) -> bool:
+    """이 대화가 체크포인터에 이미 있는가. 체크포인터가 없는 그래프는 늘 새 대화다."""
+    if getattr(graph, "checkpointer", None) is None:
+        return False
+    return bool(graph.get_state(thread_config(conversation_id)).values)
 
 
 def run_message(
     graph,
-    prescription_id: str,
+    conversation_id: str,
+    message: dict[str, Any] | None = None,
     ocr: dict[str, Any] | None = None,
-    photo_kind: str | None = None,
-    text: str | None = None,
+    prescription_id: str | None = None,
 ) -> dict[str, Any]:
-    """메시지 하나(사진 한 장 · 글)를 상위 그래프에 넣어 끝까지(또는 멈출 때까지) 돌린 상태.
+    """메시지 하나({message_id, text, image_id, kind})를 상위 그래프에 넣어 끝까지(또는 멈출 때까지) 돌린 상태.
 
+    대화의 첫 메시지면 initial_state, 이미 있는 대화면 이번 메시지 칸만(message_input) 넣는다.
     멈췄으면 돌려준 값에 '__interrupt__'가 들어 있다. 멈춘 내용은 api.py가 checkpointer에서 다시 읽는다.
     """
-    return graph.invoke(initial_state(prescription_id, ocr, photo_kind, text), thread_config(prescription_id))
+    if has_thread(graph, conversation_id):
+        given = message_input(message, ocr, prescription_id)
+    else:
+        given = initial_state(conversation_id, message, prescription_id, ocr)
+    return graph.invoke(given, thread_config(conversation_id))
 
 
 def run_prescription(graph, prescription_id: str, ocr: dict[str, Any] | None = None) -> dict[str, Any]:
-    """처방전 한 장을 처방 서브그래프에만 넣어 돌린 상태 (슈퍼바이저를 거치지 않는다)."""
-    return graph.invoke(initial_state(prescription_id, ocr, "prescription"), thread_config(prescription_id))
+    """처방전 한 장을 처방 서브그래프에만 넣어 돌린 상태 (슈퍼바이저를 거치지 않는다). 대화 ID = 처방 ID."""
+    state = initial_state(prescription_id, {"kind": "prescription"}, prescription_id, ocr)
+    return graph.invoke(state, thread_config(prescription_id))
 
 
-def resume_run(graph, prescription_id: str, reply: Any) -> dict[str, Any]:
-    """멈춘 처방을 약사 응답으로 이어 간다 (LangGraph Command(resume=응답))."""
+def resume_run(graph, conversation_id: str, reply: Any) -> dict[str, Any]:
+    """멈춘 대화를 약사 응답으로 이어 간다 (LangGraph Command(resume=응답))."""
     from langgraph.types import Command
 
-    return graph.invoke(Command(resume=reply), thread_config(prescription_id))
+    return graph.invoke(Command(resume=reply), thread_config(conversation_id))

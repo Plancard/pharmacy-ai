@@ -1,6 +1,6 @@
 """뼈대 그래프 동작 확인 (11단계, 팀 체크포인트 '뼈대 그래프' 11/13) — 손으로 돌려 보는 스크립트.
 
-    python scripts/agent/demo.py            # 시나리오 7개를 차례로 돌리고 기대와 같은지 보여 준다
+    python scripts/agent/demo.py            # 시나리오 8개를 차례로 돌리고 기대와 같은지 보여 준다
     python scripts/agent/demo.py --quiet    # 시나리오마다 결과 한 줄만
 
 pytest가 아니다. 웹이 부르는 입구(agent/api.py)를 그대로 써서, 웹 화면에서 일어날 일을 글로 보여 준다.
@@ -135,21 +135,35 @@ def s4_unclear_photo_kind(api: AgentApi, out: Out) -> bool:
 
 
 def s5_tray_photo_with_text(api: AgentApi, out: Out) -> bool:
-    out("   약사: 트레이 사진 + 글 '게보린 빼 주세요' (트레이와 온 글은 메모로만)")
-    pause = api.start("D5", None, "tray", "게보린 빼 주세요")
-    show_pause(pause, out)
+    out("   약사: 처방전(rx8_01)을 승인해 조제 계획까지 만든 뒤, 같은 대화에 트레이 사진 + 글 '게보린 빼 주세요'")
+    pause = api.start("D5", load("rx8_01"))
+    api.resume("D5", "rx_approval", approve(pause))
+    planned = api.result("D5")
+    out("   (같은 대화의 두 번째 메시지: 이번 메시지 칸만 넣는다. 트레이와 온 글은 메모로만)")
+    again = api.send("D5", None, "tray", "게보린 빼 주세요", message_id="m2", image_id="tray-1")
+    show_pause(again, out)
     result = show_result(api, "D5", out)
-    return pause is None and result["memo"] == "게보린 빼 주세요" and result["proposals"] == []
+    kept = result["order"] == planned["order"] and result["plan"] == planned["plan"]
+    out(f"      승인된 조제지시서 · 조제 계획: {'그대로' if kept else '바뀜'}")
+    return again is None and kept and result["memo"] == "게보린 빼 주세요" and result["proposals"] == []
 
 
 def s6_text_alone(api: AgentApi, out: Out) -> bool:
-    out("   약사: 글만 '타이레놀 먹고 있는데 괜찮나요?'")
+    out("   약사: 처방 없이 새 대화에 글만 '타이레놀 먹고 있는데 괜찮나요?' (상담 대화)")
     pause = api.start("D6", None, None, "타이레놀 먹고 있는데 괜찮나요?")
     show_pause(pause, out)
     result = show_result(api, "D6", out)
-    for p in result["proposals"]:
-        out(f"      제안({PROPOSAL_LABELS[p['kind']]}): {', '.join(d['name'] for d in p['drugs'])}")
-    return result["route"] == ["register_meds", "consult"]
+    out(f"      처방 ID: {result['prescription_id']} | 의도: {', '.join(result['intents'])}")
+    return result["route"] == ["consult"] and result["prescription_id"] is None and result["proposals"] == []
+
+
+def s8_consultation_becomes_a_prescription(api: AgentApi, out: Out) -> bool:
+    out("   약사: 상담 대화(D8)에서 글로 묻다가, 같은 대화에 처방전 사진(rx8_02)을 올린다")
+    api.start("D8", None, None, "이부프로펜 하루에 몇 번 먹어요?")
+    pause = api.send("D8", load("rx8_02"), "prescription", prescription_id="D8")
+    show_pause(pause, out)
+    out("      같은 ID로 처방 대화가 되었다 (앞의 상담 기록이 이어진다)")
+    return pause is not None and pause.hitl_point == "rx_approval" and pause.payload["order"]["prescription_id"] == "D8"
 
 
 def s7_text_for_an_open_prescription(api: AgentApi, out: Out) -> bool:
@@ -167,9 +181,10 @@ SCENARIOS: list[tuple[str, Callable[[AgentApi, Out], bool]]] = [
     ("처방전 사진 + 질문 → 처방 흐름 다음에 상담 (정해진 순서)", s2_prescription_with_question),
     ("계획을 못 만들면 승인 대기로 돌아와 고치기", s3_edit_after_a_plan_that_cannot_be_made),
     ("사진 종류가 애매하면 되묻기 (type_select)", s4_unclear_photo_kind),
-    ("트레이 사진 + 글 → 글은 메모로만", s5_tray_photo_with_text),
-    ("글만 → 복용 약 등록 · 상담 자리", s6_text_alone),
+    ("승인 뒤 같은 대화에 트레이 사진 + 글 → 글은 메모, 조제지시서 · 계획은 그대로", s5_tray_photo_with_text),
+    ("처방 없는 대화에 글만 → 상담", s6_text_alone),
     ("열린 처방에 글만 → 승인 카드의 제안", s7_text_for_an_open_prescription),
+    ("상담 대화에 처방전 사진 → 같은 ID로 처방 대화", s8_consultation_becomes_a_prescription),
 ]
 
 

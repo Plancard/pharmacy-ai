@@ -61,9 +61,27 @@ def fix_ocr_digits(name: str | None) -> str:
     return _OCR_ZERO_RUN.sub(lambda m: m.group(1).replace("o", "0").replace("O", "0"), text)
 
 
+# OCR(EasyOCR)이 약 이름의 한글을 헷갈려 읽은 것 (CV 처방전 5장에서 실제로 나온 것만, 11/12).
+#   캡슐 -> 캠술 · 램술 (rx_002 · 003 · 004), 트리스펜 -> 트리스편 (rx_003)
+# 비교 열쇠에서만 같은 글자로 맞춘다. 사전 · API 이름도 같은 열쇠를 쓰므로 양쪽에 똑같이 적용된다 (한쪽만 바뀌지 않는다).
+# 화면에 보이는 이름(DrugLine.name)은 바꾸지 않는다. 여기 없는 오인식(알모란정 등)은 그대로 후보로만 보인다.
+_OCR_LETTERS = (
+    (re.compile(r"[캡캠램랩]\s*[슐술숄]"), "캡슐"),
+    (re.compile(r"편"), "펜"),
+)
+
+
+def fix_ocr_letters(name: str | None) -> str:
+    """이름 비교용: OCR이 자주 헷갈리는 한글을 한 가지로 맞춘다. '프론크논캠술' -> '프론크논캡슐', '트리스편' -> '트리스펜'"""
+    text = unicodedata.normalize("NFKC", name or "")
+    for pattern, fixed in _OCR_LETTERS:
+        text = pattern.sub(fixed, text)
+    return text
+
+
 def match_key(name: str | None) -> str:
-    """약품 매칭에서 이름을 견줄 때 쓰는 열쇠: OCR 숫자 보정 + 표기 정규화."""
-    return normalize_name(fix_ocr_digits(name))
+    """약품 매칭에서 이름을 견줄 때 쓰는 열쇠: OCR 숫자 보정 + OCR 한글 보정 + 표기 정규화."""
+    return normalize_name(fix_ocr_letters(fix_ocr_digits(name)))
 
 
 # 의약품 API 검색에 쓰는 말 만들기. API의 item_name 검색은 이름의 일부로 찾는다. 그래서 함량·'/'·괄호를 뺀 이름 앞부분으로

@@ -22,7 +22,7 @@ def fake_fetch(url, params):
         code = params["itemSeq"]
         partners = {
             "201110120": [taboo_row("199900001", "가상메토트렉세이트정", "메토트렉세이트")],
-            "200201239": [taboo_row("199900001", "가상메토트렉세이트정", "메토트렉세이트")],
+            "200201239": [taboo_row("199900002", "가상케토롤락정", "케토롤락트로메타민")],
             "300000001": [taboo_row("300000009", "가상심바스타틴정", "심바스타틴")],
             "300000002": [taboo_row("300000008", "가상이소소르비드정", "이소소르비드질산염")],
         }.get(code, [])
@@ -67,13 +67,14 @@ def test_missing_fields_are_named(monkeypatch):
 def test_the_cases_are_checked_end_to_end(monkeypatch):
     code, text = run(["--cases"], monkeypatch)
     assert "[T1] 트리스펜연질캡슐 (이부프로펜, 대상 8종) + 메토트렉세이트: 검출" in text
-    assert "[T4] 비아그라정 (실데나필) + 이소소르비드: 검출" in text
-    assert "병용금기 시험 조합 5건 중 5건 검출" in text and code == 0
+    assert "[T2] 아르펜정 (이부프로펜, 대상 8종) + 케토롤락: 검출" in text
+    assert "병용금기 시험 조합 2건 중 2건 검출" in text and code == 0
 
 
 def test_a_case_that_is_not_in_the_dur_list_fails(monkeypatch):
-    cases = json.loads(show_dur.CASES.read_text(encoding="utf-8"))
-    assert len(cases["cases"]) == 5
+    cases = json.loads(show_dur.CASES.read_text(encoding="utf-8"))["cases"]
+    assert [(c["drug"], c["partner_ingredient"]) for c in cases] == [            # REQ-AG-05 (11/11 팀 결정)
+        ("201110120", "메토트렉세이트"), ("200201239", "케토롤락")]
 
     def no_taboo(url, params):
         if url.endswith(dur_api.TABOO_OPERATION):
@@ -81,7 +82,20 @@ def test_a_case_that_is_not_in_the_dur_list_fails(monkeypatch):
         return fake_fetch(url, params)
 
     code, text = run(["--cases"], monkeypatch, no_taboo)
-    assert code == 1 and "병용금기 목록에 '메토트렉세이트'가 없습니다" in text and "5건 중 0건 검출" in text
+    assert code == 1 and "병용금기 목록에 '메토트렉세이트'가 없습니다" in text and "2건 중 0건 검출" in text
+    assert "      이 약은 병용금기 상대가 없습니다" in text
+
+
+def test_a_missing_partner_shows_which_ingredients_the_list_has(monkeypatch):
+    def other_partners(url, params):
+        if url.endswith(dur_api.TABOO_OPERATION) and params["itemSeq"] == "200201239":     # 아르펜
+            return response([taboo_row("300000011", "가상메토트렉세이트정", "메토트렉세이트"),
+                             taboo_row("300000012", "가상다른정", "다른성분"),
+                             taboo_row("300000013", "가상메토트렉세이트주", "메토트렉세이트")])
+        return fake_fetch(url, params)
+
+    _, text = run(["--cases"], monkeypatch, other_partners)
+    assert "케토롤락'가 없습니다\n      이 약의 병용금기 상대 성분 2종: 메토트렉세이트, 다른성분" in text
 
 
 def test_without_a_key_it_says_so(monkeypatch):

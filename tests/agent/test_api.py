@@ -90,7 +90,7 @@ def test_nothing_is_pending_for_an_unknown_prescription(backend):
 def test_the_same_prescription_cannot_be_started_twice(backend):
     api = make_api()
     api.start("P0001", load("rx8_a1", "rx8_01"))
-    with pytest.raises(ValueError, match="이미 시작한 처방"):
+    with pytest.raises(ValueError, match="이미 시작한 대화"):
         api.start("P0001", load("rx8_a1", "rx8_02"))
     assert api.pending("P0001").payload["order"]["items"][0]["name"] == "타이레놀정 500mg"   # 첫 처방은 그대로 멈춰 있다
 
@@ -105,8 +105,16 @@ def test_a_structure_failure_is_an_error_with_the_a7_code(backend):
 
 def test_a_photo_that_is_not_a_prescription_does_not_stop_at_the_approval(backend):
     api = make_api()
-    assert api.start("P0001", None, "tray") is None
+    assert api.start("P0001", None, "tray", prescription_id="P0001") is None
     assert api.stage("P0001") == "not_ready"
+
+
+def test_a_tray_photo_that_starts_a_conversation_without_a_prescription_is_not_run(backend):
+    api = make_api()
+    assert api.start("C0001", None, "tray") is None
+    result = api.result("C0001")
+    assert (result["status"], result["route"], result["prescription_id"]) == ("noted", [], None)
+    assert "처방 대화에서 올려 주세요" in result["notice"]
 
 
 # ------------------------------------------------------------ resume: 승인
@@ -261,20 +269,66 @@ def test_an_unclear_photo_stops_at_type_select_and_goes_on_after_the_choice(back
     assert api.resume("P0001", "rx_approval", approve_reply(again)) is None and api.stage("P0001") == "await_tray"
 
 
-def test_text_alone_starts_a_conversation_without_a_photo(backend):
+def test_text_alone_starts_a_consultation_without_a_prescription(backend):
+    # 11/12 결정: 처방 없는 대화의 글은 상담 (대조 없이 근거 기반 답변. 답변은 16단계)
     api = make_api()
-    assert api.start("P0001", None, None, "게보린 먹고 있는데 괜찮나요?") is None
-    result = api.result("P0001")
-    assert (result["route"], result["status"]) == (["register_meds", "consult"], "not_ready")
-    assert [p["kind"] for p in result["proposals"]] == ["patient_info"]
+    assert api.start("C0001", None, None, "게보린 먹고 있는데 괜찮나요?", message_id="m1") is None
+    result = api.result("C0001")
+    assert (result["route"], result["status"], result["proposals"]) == (["consult"], "not_ready", [])
+    assert (result["conversation_id"], result["prescription_id"], result["message_id"]) == ("C0001", None, "m1")
+    assert result["intents"] == ["patient_info", "question"]
 
 
-def test_text_alone_that_cannot_be_read_asks_its_meaning(backend):
+def test_text_that_cannot_be_read_in_a_prescription_conversation_asks_its_meaning(backend):
     api = make_api()
-    pause = api.start("P0001", None, None, "오후 3시")
+    pause = api.start("P0001", load("rx8_a1", "rx8_01"))
+    api.resume("P0001", "rx_approval", approve_reply(pause))
+    pause = api.send("P0001", None, None, "오후 3시")
     assert (pause.hitl_point, pause.payload["choices"]) == ("type_select", ["patient_info", "question", "note"])
     assert api.resume("P0001", "type_select", {"choice": "note"}) is None
-    assert api.result("P0001")["status"] == "noted" and api.result("P0001")["memo"] == "오후 3시"
+    assert api.result("P0001")["memo"] == "오후 3시" and api.result("P0001")["plan"] is not None
+
+
+# ------------------------------------------------------------ send: 같은 대화의 다음 메시지 (11/12 요청서)
+
+
+def test_the_next_message_keeps_the_approved_order_and_the_plan(backend):
+    api = make_api()
+    pause = api.start("P0001", load("rx8_a1", "rx8_01"))
+    api.resume("P0001", "rx_approval", approve_reply(pause))
+    before = api.result("P0001")
+    assert api.send("P0001", None, "tray", message_id="m2", image_id="tray-1") is None
+    after = api.result("P0001")
+    assert (after["order"], after["plan"]) == (before["order"], before["plan"])
+    assert (after["route"], after["message_id"], api.stage("P0001")) == (["tray"], "m2", "await_tray")
+
+
+def test_send_also_starts_a_new_conversation(backend):
+    api = make_api()
+    assert api.send("P0001", load("rx8_a1", "rx8_01"), "prescription", prescription_id="P0001").hitl_point == "rx_approval"
+
+
+def test_send_is_refused_while_the_conversation_waits_for_the_pharmacist(backend):
+    api = make_api()
+    api.start("P0001", load("rx8_a1", "rx8_01"))
+    with pytest.raises(ValueError, match="약사 응답을 기다리는 대화"):
+        api.send("P0001", None, "tray")
+    assert api.pending("P0001").hitl_point == "rx_approval"
+
+
+def test_a_consultation_becomes_a_prescription_conversation(backend):
+    api = make_api()
+    api.start("C0001", None, None, "같이 먹어도 되나요?")
+    pause = api.send("C0001", load("rx8_a1", "rx8_02"), "prescription", prescription_id="C0001")
+    assert pause.hitl_point == "rx_approval" and pause.payload["order"]["prescription_id"] == "C0001"
+    assert api.result("C0001")["prescription_id"] == "C0001"
+
+
+def test_text_for_a_consultation_is_not_handled_as_an_open_prescription(backend):
+    api = make_api()
+    api.start("C0001", None, None, "같이 먹어도 되나요?")
+    with pytest.raises(ValueError, match="처방이 없는 대화"):
+        api.handle_text("C0001", "게보린 빼 주세요")
 
 
 # ------------------------------------------------------------ 열린 처방에 글만 (handle_text)

@@ -94,11 +94,28 @@ def supervisor_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
 
     실행할 흐름이 없으면(글을 메모로만 남김) noted로 끝난다.
     """
-    plan = plan_message(state.get("photo_kind"), state.get("ocr"), state.get("text"), deps.dictionary)
+    plan = plan_message(state.get("photo_kind"), state.get("ocr"), state.get("text"), deps.dictionary,
+                        has_prescription=has_prescription(state))
     update = plan.as_update()
+    update.update(_open_prescription(state, plan.route))
     if not plan.route:
         update["status"] = "noted"
     return update
+
+
+def has_prescription(state: dict[str, Any]) -> bool:
+    """이 대화에 처방이 있는가 (처방 대화). 상담 대화는 prescription_id가 None이다."""
+    return state.get("prescription_id") is not None
+
+
+def _open_prescription(state: dict[str, Any], route) -> dict[str, Any]:
+    """처방 흐름을 도는데 처방 ID가 없으면 대화 ID로 연다 (상담 대화 → 처방 대화, 11/12 결정: 같은 ID).
+
+    웹이 처방을 만들며 prescription_id를 넣어 주는 것이 원칙이고, 빠졌을 때만 여기서 채운다.
+    """
+    if "prescription" in route and not has_prescription(state):
+        return {"prescription_id": state["conversation_id"]}
+    return {}
 
 
 def type_question(state: dict[str, Any]) -> dict[str, Any]:
@@ -133,8 +150,10 @@ def ask_type_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     """
     question = type_question(state)
     choice = read_choice(_ask_pharmacist(deps, question), question["about"])
-    plan = plan_after_choice(question["about"], choice, state.get("text"), deps.dictionary)
+    plan = plan_after_choice(question["about"], choice, state.get("text"), deps.dictionary,
+                             has_prescription=has_prescription(state))
     update = plan.as_update()
+    update.update(_open_prescription(state, plan.route))
     update["notice"] = plan.notice
     if question["about"] == "photo":
         update["photo_kind"] = choice

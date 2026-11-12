@@ -37,6 +37,7 @@ USED_FIELDS = {
     dur_api.EFFICACY_OPERATION: (dur_api.EFFICACY_GROUP, dur_api.EFFICACY_SERIES),
 }
 SHOWN_PARTNERS = 3
+SHOWN_INGREDIENTS = 15     # 조합이 없을 때 보여 줄 상대 성분 수
 
 
 def mask(text: str, secret: str) -> str:
@@ -107,9 +108,16 @@ def check_cases(key: str, fetch: Fetch, out: Callable[[str], None]) -> int:
                 missed += 1
                 continue
             code, name = found
-            partners = [p for p in lookup.taboo(code).partners if case["partner_ingredient"] in p.ingredient + p.name]
+            taboo = lookup.taboo(code)
+            partners = [p for p in taboo.partners if case["partner_ingredient"] in p.ingredient + p.name]
             if not partners:
                 out(f"{label}: {name}({code})의 병용금기 목록에 '{case['partner_ingredient']}'가 없습니다")
+                kinds = list(dict.fromkeys(p.ingredient for p in taboo.partners if p.ingredient))
+                if kinds:
+                    shown = ", ".join(kinds[:SHOWN_INGREDIENTS]) + (" …" if len(kinds) > SHOWN_INGREDIENTS else "")
+                    out(f"      이 약의 병용금기 상대 성분 {len(kinds)}종: {shown}")
+                else:
+                    out("      이 약은 병용금기 상대가 없습니다")
                 missed += 1
                 continue
             partner = partners[0]

@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent.drug_names import match_key, normalize_name
+from agent.drug_names import fix_ocr_digits, normalize_name
 from agent.schema import DispensingOrder, DrugLine
 
 TARGET_RATE = 0.9   # 칸 정확도 목표 (일정표 19단계: 가상 처방전의 정확도 90% 이상)
@@ -115,8 +115,15 @@ def lines_all_correct(checks: list[Check], line_count: int) -> int:
 
 
 def name_misread_lines(expected: dict[str, Any]) -> int:
-    """OCR이 약품명을 틀리게 읽은 줄의 수 (함량의 o/O -> 0 보정 뒤에도 진짜 이름과 다른 줄)."""
-    return sum(1 for d in expected["items"] if match_key(d["name"]) != match_key(d["true_name"]))
+    """OCR이 약품명을 틀리게 읽은 줄의 수 (함량의 o/O -> 0 보정 뒤에도 진짜 이름과 다른 줄).
+
+    OCR이 얼마나 틀렸는지 보는 숫자라서 한글 보정(캠술 -> 캡슐 등, drug_names.fix_ocr_letters)은 하지 않고 센다.
+    매칭이 그 오인식을 얼마나 견뎠는지는 약품 매칭 결과(정답 코드 · 후보)로 본다.
+    """
+    def key(name: str) -> str:
+        return normalize_name(fix_ocr_digits(name))
+
+    return sum(1 for d in expected["items"] if key(d["name"]) != key(d["true_name"]))
 
 
 # ------------------------------------------------------------------ 약품 매칭

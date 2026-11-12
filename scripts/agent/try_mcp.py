@@ -65,7 +65,7 @@ def _seen(state: dict[str, Any]) -> dict[str, Any]:
 
 def run_once(graph, rx_id: str, ocr: dict[str, Any]) -> list[dict[str, Any]]:
     """처방전 하나: 승인 대기까지, 그리고 그대로 승인한 뒤."""
-    state = run_message(graph, rx_id, ocr)
+    state = run_message(graph, rx_id, None, ocr, prescription_id=rx_id)
     steps = [_seen(state)]
     pause = _pause(state)
     if pause is not None and pause.get("hitl_point") == HITL_APPROVAL:

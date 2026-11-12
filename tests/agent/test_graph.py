@@ -46,7 +46,8 @@ from agent.nodes import NO_API_WARNING
 from agent.pipeline import structure_prescription
 from agent.risk import UNCHECKED_TAIL
 from agent.schema import DispensingOrder, DrugLine, Plan
-from agent.state import FLOWS, GraphState, initial_state
+from agent.state import FLOWS, GraphState
+from graph_calls import first_state, send
 
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES = RESOURCES_DIR / "samples"
@@ -330,7 +331,7 @@ def approve(compiled, prescription_id, state):
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
 def test_a_sample_prescription_stops_at_the_approval(backend, calls, sample_id):
     compiled = make()
-    state = run_message(compiled, f"P-{sample_id}", load("cv_a1", sample_id))
+    state = send(compiled, f"P-{sample_id}", load("cv_a1", sample_id))
     assert calls == ["supervisor", "structure", "match", "risk", "approve"]
     shown = paused(state)
     assert shown["hitl_point"] == "rx_approval"
@@ -349,7 +350,7 @@ def test_a_sample_prescription_stops_at_the_approval(backend, calls, sample_id):
 
 
 def test_the_state_while_stopped_has_every_field(backend):
-    state = run_message(make(), "P0001", load("cv_a1", "rx_001"))
+    state = send(make(), "P0001", load("cv_a1", "rx_001"))
     assert set(state) - {"__interrupt__"} == STATE_KEYS
 
 
@@ -358,14 +359,14 @@ def test_the_order_shown_for_approval_is_the_order_of_the_steps_by_hand(backend)
     from agent.risk import check_order
 
     ocr = load("cv_a1", "rx_004")
-    shown = paused(run_message(make(), "P0001", ocr))
+    shown = paused(send(make(), "P0001", ocr))
     by_hand = match_order(real_structure("P0001", ocr), DICT, api=None)
     by_hand.warnings = [*by_hand.warnings, NO_API_WARNING] if not by_hand.all_matched else by_hand.warnings
     assert DispensingOrder.model_validate(shown["order"]) == check_order(by_hand, DICT)
 
 
 def test_without_an_api_the_order_says_which_drugs_the_dictionary_could_not_find(backend):
-    shown = paused(run_message(make(api=None), "P0001", load("cv_a1", "rx_005")))
+    shown = paused(send(make(api=None), "P0001", load("cv_a1", "rx_005")))
     assert NO_API_WARNING in shown["order"]["warnings"]
 
 
@@ -376,7 +377,7 @@ def test_the_api_is_used_when_one_is_given(backend):
         asked.append(term)
         return [ApiDrug(item_code="199900001", name="전혀다른약정", company="가상제약")]
 
-    shown = paused(run_message(make(api=api), "P0001", load("cv_a1", "rx_005")))
+    shown = paused(send(make(api=api), "P0001", load("cv_a1", "rx_005")))
     assert asked and NO_API_WARNING not in shown["order"]["warnings"]
 
 
@@ -385,13 +386,13 @@ def test_a_structure_failure_ends_the_run_before_matching(backend, calls, code):
     def fails(prescription_id, ocr):
         raise StructureError("자동 구조화에 실패했습니다.", code=code)
 
-    final = run_message(make(structure=fails), "P0001", EMPTY_OCR)
+    final = send(make(structure=fails), "P0001", EMPTY_OCR)
     assert calls == ["supervisor", "structure"] and paused(final) is None
     assert (final["status"], final["order"], final["error_code"], final["notice"]) == ("failed", None, code, "자동 구조화에 실패했습니다.")
     assert final["errors"] == [f"[structure] {code} 자동 구조화에 실패했습니다."]
 
 
-@pytest.mark.parametrize("builder, run", [(build_graph, run_message), (build_prescription_graph, run_prescription)], ids=["top", "subgraph"])
+@pytest.mark.parametrize("builder, run", [(build_graph, send), (build_prescription_graph, run_prescription)], ids=["top", "subgraph"])
 def test_the_dictionary_that_is_given_is_the_one_used(backend, builder, run):
     only_gevorin = dictionary_from_data({"drugs": [{"item_code": "197900277", "name": "게보린정", "ingredients": ["아세트아미노펜"]}]})
     compiled = builder(dictionary=only_gevorin, structure=real_structure, api=None, checkpointer=memory_checkpointer())
@@ -401,7 +402,7 @@ def test_the_dictionary_that_is_given_is_the_one_used(backend, builder, run):
 
 
 def test_an_ocr_without_text_fails_with_the_empty_ocr_code(backend, calls):
-    final = run_message(make(), "P0001", EMPTY_OCR)
+    final = send(make(), "P0001", EMPTY_OCR)
     assert calls == ["supervisor", "structure"]
     assert final["status"] == "failed" and final["error_code"] == E_OCR_EMPTY and final["flow"] == "prescription"
 
@@ -411,14 +412,14 @@ def test_a_config_problem_comes_out_of_the_graph_as_it_is(backend):
         raise ConfigError("OPENAI_API_KEY가 없습니다.")
 
     with pytest.raises(ConfigError):
-        run_message(make(structure=broken), "P0001", load("cv_a1", "rx_001"))
+        send(make(structure=broken), "P0001", load("cv_a1", "rx_001"))
 
 
 # ------------------------------------------------------------ 위험 신호 대조 (시연 조합 A · B)
 
 
 def test_demo_combination_a_stops_at_the_approval_with_the_ingredient_duplicate(backend):
-    shown = paused(run_message(make(), "P0001", load("cv_a1", "rx_004")))   # rx_004: 타이레놀 · 게보린 · 프론크논 · 알모란
+    shown = paused(send(make(), "P0001", load("cv_a1", "rx_004")))   # rx_004: 타이레놀 · 게보린 · 프론크논 · 알모란
     risk = DispensingOrder.model_validate(shown["order"]).risk_check
     [finding] = risk.findings
     assert (risk.scope, risk.level) == ("rx_only", "warning")
@@ -428,7 +429,7 @@ def test_demo_combination_a_stops_at_the_approval_with_the_ingredient_duplicate(
 
 
 def test_demo_combination_b_stops_at_the_approval_with_the_ingredient_duplicate(backend):
-    shown = paused(run_message(make(structure=structure_of("트리스펜연질캡슐", "아르펜정")), "P0001", load("cv_a1", "rx_001")))
+    shown = paused(send(make(structure=structure_of("트리스펜연질캡슐", "아르펜정")), "P0001", load("cv_a1", "rx_001")))
     risk = DispensingOrder.model_validate(shown["order"]).risk_check
     [finding] = risk.findings
     assert (risk.level, finding.item_codes) == ("warning", ["201110120", "200201239"])
@@ -436,14 +437,14 @@ def test_demo_combination_b_stops_at_the_approval_with_the_ingredient_duplicate(
 
 
 def test_a_prescription_without_a_shared_ingredient_says_none(backend):
-    shown = paused(run_message(make(structure=structure_of("프론크논캡슐", "뮤코다인캡슐200mg")), "P0001", load("cv_a1", "rx_001")))
+    shown = paused(send(make(structure=structure_of("프론크논캡슐", "뮤코다인캡슐200mg")), "P0001", load("cv_a1", "rx_001")))
     risk = DispensingOrder.model_validate(shown["order"]).risk_check
     assert (risk.scope, risk.level, risk.findings) == ("rx_only", "none", [])
     assert shown["notice"] == "약사 승인을 기다립니다. 확인이 필요한 약품이 2줄 있습니다."
 
 
 def test_a_drug_that_could_not_be_checked_is_told_to_the_pharmacist(backend):
-    shown = paused(run_message(make(), "P0001", load("cv_a1", "rx_001")))   # rx_001: 타이레놀 · 알모란(대상 아님)
+    shown = paused(send(make(), "P0001", load("cv_a1", "rx_001")))   # rx_001: 타이레놀 · 알모란(대상 아님)
     assert f"알모란정: 품목기준코드를 정하지 못해 {UNCHECKED_TAIL}" in shown["order"]["warnings"]
 
 
@@ -452,7 +453,7 @@ def test_a_drug_that_could_not_be_checked_is_told_to_the_pharmacist(backend):
 
 def test_approving_goes_on_to_the_plan(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    state = run_message(compiled, "P0001", load("cv_a1", "rx_001"))
+    state = send(compiled, "P0001", load("cv_a1", "rx_001"))
     calls.clear()
     final = approve(compiled, "P0001", state)
     assert calls == ["approve", "make_plan"]                            # 구조화 · 매칭 · 대조는 다시 돌지 않는다
@@ -471,13 +472,13 @@ def test_the_plan_is_the_plan_of_the_approved_order(backend):
     from agent.plan import build_plan
 
     compiled = make(structure=structure_of("트리스펜연질캡슐", "아르펜정"))
-    final = approve(compiled, "P0001", run_message(compiled, "P0001", load("cv_a1", "rx_001")))
+    final = approve(compiled, "P0001", send(compiled, "P0001", load("cv_a1", "rx_001")))
     assert final["plan"] == build_plan(DispensingOrder.model_validate(final["order"])).model_dump(mode="json")
 
 
 def test_editing_runs_matching_and_checking_again_and_stops_again(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    shown = paused(run_message(compiled, "P0001", load("cv_a1", "rx_001")))
+    shown = paused(send(compiled, "P0001", load("cv_a1", "rx_001")))
     order = json.loads(json.dumps(shown["order"]))
     order["items"] = order["items"][:1]                                # 게보린을 지운다
     calls.clear()
@@ -493,7 +494,7 @@ def test_editing_runs_matching_and_checking_again_and_stops_again(backend, calls
 
 def test_a_plan_that_cannot_be_made_goes_back_to_the_approval_with_the_reason(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정", "뮤코다인캡슐200mg"))   # 아침 칸에 3알
-    state = run_message(compiled, "P0001", load("cv_a1", "rx_001"))
+    state = send(compiled, "P0001", load("cv_a1", "rx_001"))
     calls.clear()
     state = approve(compiled, "P0001", state)
     assert calls == ["approve", "make_plan", "approve"]
@@ -510,7 +511,7 @@ def test_a_plan_that_cannot_be_made_goes_back_to_the_approval_with_the_reason(ba
 
 def test_a_plan_beyond_the_tray_days_goes_back_to_the_approval(backend):
     compiled = make(structure=structure_of("타이레놀정500mg", days=5))
-    state = approve(compiled, "P0001", run_message(compiled, "P0001", load("cv_a1", "rx_001")))
+    state = approve(compiled, "P0001", send(compiled, "P0001", load("cv_a1", "rx_001")))
     assert "투약 일수가 트레이(3일)를 넘습니다" in paused(state)["notice"]
 
 
@@ -518,7 +519,7 @@ def test_a_new_graph_with_the_same_checkpointer_resumes_where_it_stopped(backend
     """프로세스를 다시 켠 것처럼 그래프를 새로 만들어도, 같은 체크포인터면 같은 곳에서 이어 간다."""
     saver = memory_checkpointer()
     first = make(structure=structure_of("타이레놀정500mg", "게보린정"), checkpointer=saver)
-    shown = paused(run_message(first, "P0001", load("cv_a1", "rx_001")))
+    shown = paused(send(first, "P0001", load("cv_a1", "rx_001")))
     second = make(structure=lambda pid, ocr: pytest.fail("이어 갈 때 구조화를 다시 부르면 안 됩니다"), checkpointer=saver)
     assert [i.value for i in second.get_state(thread_config("P0001")).interrupts] == [shown]
     final = resume_run(second, "P0001", {"action": "approve", "order": shown["order"]})
@@ -527,15 +528,15 @@ def test_a_new_graph_with_the_same_checkpointer_resumes_where_it_stopped(backend
 
 def test_prescriptions_are_kept_apart_by_their_id(backend):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    a = paused(run_message(compiled, "P-A", load("cv_a1", "rx_001")))
-    paused(run_message(compiled, "P-B", load("cv_a1", "rx_001")))
+    a = paused(send(compiled, "P-A", load("cv_a1", "rx_001")))
+    paused(send(compiled, "P-B", load("cv_a1", "rx_001")))
     final = resume_run(compiled, "P-A", {"action": "approve", "order": a["order"]})
     assert final["prescription_id"] == "P-A" and final["status"] == "planned"
     assert compiled.get_state(thread_config("P-B")).interrupts                   # B는 그대로 멈춰 있다
 
 
 def test_without_approval_the_plan_node_is_never_called(backend, calls):
-    run_message(make(structure=structure_of("타이레놀정500mg", "게보린정")), "P0001", load("cv_a1", "rx_001"))
+    send(make(structure=structure_of("타이레놀정500mg", "게보린정")), "P0001", load("cv_a1", "rx_001"))
     assert "make_plan" not in calls
 
 
@@ -545,7 +546,7 @@ def test_without_approval_the_plan_node_is_never_called(backend, calls):
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
 def test_the_subgraph_alone_shows_the_same_approval_as_the_top_graph(backend, sample_id):
     ocr = load("cv_a1", sample_id)
-    top = paused(run_message(make(), f"P-{sample_id}", ocr))
+    top = paused(send(make(), f"P-{sample_id}", ocr))
     alone = paused(run_prescription(make_sub(), f"P-{sample_id}", ocr))
     assert alone == top
 
@@ -553,7 +554,7 @@ def test_the_subgraph_alone_shows_the_same_approval_as_the_top_graph(backend, sa
 @pytest.mark.parametrize("names", [("타이레놀정500mg", "게보린정"), ("트리스펜연질캡슐", "아르펜정")], ids=["A", "B"])
 def test_the_subgraph_alone_gives_the_same_plan_as_the_top_graph(backend, names):
     results = []
-    for build, run in ((make, run_message), (make_sub, run_prescription)):
+    for build, run in ((make, send), (make_sub, run_prescription)):
         compiled = build(structure=structure_of(*names))
         final = approve(compiled, "P0001", run(compiled, "P0001", load("cv_a1", "rx_001")))
         results.append({k: final[k] for k in ("order", "plan", "status", "notice", "error_code", "errors")})
@@ -576,12 +577,12 @@ def test_the_subgraph_alone_stops_at_a_structure_failure_too(backend, calls):
 
 
 def test_a_failure_is_not_written_twice_when_the_subgraph_runs_inside_the_top_graph(backend):
-    final = run_message(make(), "P0001", EMPTY_OCR)
+    final = send(make(), "P0001", EMPTY_OCR)
     assert len(final["errors"]) == 1                                    # 서브그래프의 기록이 상위의 합치기 규칙에 두 번 쌓이지 않는다
 
 
 def test_errors_that_were_already_in_the_state_are_kept_and_not_repeated(backend):
-    start = {**initial_state("P0001", EMPTY_OCR), "errors": ["먼저 쌓인 기록"]}
+    start = {**first_state("P0001", EMPTY_OCR), "errors": ["먼저 쌓인 기록"]}
     final = make().invoke(start, thread_config("P0001"))
     assert final["errors"][0] == "먼저 쌓인 기록" and len(final["errors"]) == 2
     assert final["errors"][1].startswith("[structure] ")
@@ -602,7 +603,7 @@ ASKED = [
 
 @pytest.mark.parametrize("photo_kind, ocr, path, flow, status", ROUTES)
 def test_the_supervisor_sends_each_kind_of_photo_to_its_flow(backend, calls, photo_kind, ocr, path, flow, status):
-    final = run_message(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
+    final = send(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
     assert calls == path
     assert (final["flow"], final["status"], final["route"]) == (flow, status, [flow])
     assert final["order"] is None and final["errors"] == [] and paused(final) is None
@@ -610,7 +611,7 @@ def test_the_supervisor_sends_each_kind_of_photo_to_its_flow(backend, calls, pho
 
 @pytest.mark.parametrize("photo_kind, ocr, reason", ASKED)
 def test_an_unclear_photo_stops_to_ask_its_kind(backend, calls, photo_kind, ocr, reason):
-    state = run_message(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
+    state = send(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
     assert calls == ["supervisor", "ask_type"]
     shown = paused(state)
     assert (shown["hitl_point"], shown["about"], shown["choices"]) == ("type_select", "photo", ["prescription", "tray", "med_bag", "package"])
@@ -619,7 +620,7 @@ def test_an_unclear_photo_stops_to_ask_its_kind(backend, calls, photo_kind, ocr,
 
 def test_after_choosing_the_kind_the_flow_runs(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    run_message(compiled, "P0001", load("cv_a1", "rx_001"), "med_bag")      # 처방전 OCR인데 약봉투이라고 했다 -> 되묻는다
+    send(compiled, "P0001", load("cv_a1", "rx_001"), "med_bag")      # 처방전 OCR인데 약봉투이라고 했다 -> 되묻는다
     calls.clear()
     state = resume_run(compiled, "P0001", {"choice": "prescription"})
     assert calls == ["ask_type", "structure", "match", "risk", "approve"]
@@ -630,7 +631,7 @@ def test_after_choosing_the_kind_the_flow_runs(backend, calls):
 
 def test_choosing_the_tray_goes_to_the_tray(backend, calls):
     compiled = make()
-    run_message(compiled, "P0001")
+    send(compiled, "P0001")
     calls.clear()
     final = resume_run(compiled, "P0001", {"choice": "tray"})
     assert calls == ["ask_type", "tray"] and final["status"] == "not_ready" and paused(final) is None
@@ -638,10 +639,10 @@ def test_choosing_the_tray_goes_to_the_tray(backend, calls):
 
 def test_a_photo_kind_that_is_given_wins_over_nothing_but_not_over_a_disagreeing_ocr(backend, calls):
     ocr = load("cv_a1", "rx_001")                                       # 이 OCR은 doc_type이 처방전이다
-    agree = run_message(make(), "P0001", ocr, "prescription")
+    agree = send(make(), "P0001", ocr, "prescription")
     assert paused(agree)["hitl_point"] == "rx_approval"
     calls.clear()
-    clash = run_message(make(), "P0002", ocr, "med_bag")
+    clash = send(make(), "P0002", ocr, "med_bag")
     assert calls == ["supervisor", "ask_type"] and paused(clash)["hitl_point"] == "type_select"
     assert "지정한 종류(약봉투)와 OCR이 읽은 종류(처방전)가 다릅니다." in paused(clash)["notice"]
 
@@ -651,7 +652,7 @@ def test_a_photo_kind_that_is_given_wins_over_nothing_but_not_over_a_disagreeing
 
 def test_a_prescription_photo_with_an_edit_request_shows_it_only_as_a_proposal(backend):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    state = run_message(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "게보린 빼 주세요")
+    state = send(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "게보린 빼 주세요")
     shown = paused(state)
     assert [d["name"] for d in shown["order"]["items"]] == ["타이레놀정500mg", "게보린정"]     # 지시서는 그대로다
     proposal = {"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": [{"item_code": "197900277", "name": "게보린정"}]}
@@ -663,7 +664,7 @@ def test_a_prescription_photo_with_an_edit_request_shows_it_only_as_a_proposal(b
 
 def test_a_question_with_the_prescription_photo_is_answered_after_the_plan(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    state = run_message(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "같이 먹어도 되나요?")
+    state = send(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "같이 먹어도 되나요?")
     assert state["route"] == ["prescription", "consult"] and "consult" not in calls   # 상담은 처방 흐름이 끝난 뒤
     final = approve(compiled, "P0001", state)
     assert calls[-2:] == ["make_plan", "consult"]
@@ -671,7 +672,7 @@ def test_a_question_with_the_prescription_photo_is_answered_after_the_plan(backe
 
 
 def test_a_tray_photo_with_text_keeps_the_text_only_as_a_memo(backend, calls):
-    final = run_message(make(), "P0001", None, "tray", "게보린 빼 주세요")
+    final = send(make(), "P0001", None, "tray", "게보린 빼 주세요")
     assert calls == ["supervisor", "tray"]
     assert (final["route"], final["memo"], final["proposals"]) == (["tray"], "게보린 빼 주세요", [])
 
@@ -683,14 +684,14 @@ def test_a_tray_photo_with_text_keeps_the_text_only_as_a_memo(backend, calls):
     ("게보린 빼 주세요", [], "noted"),                                  # 고칠 처방이 없다
 ])
 def test_text_alone_goes_to_its_flow(backend, calls, text, route, status):
-    final = run_message(make(structure=lambda pid, o: pytest.fail("구조화가 불리면 안 됩니다")), "P0001", None, None, text)
+    final = send(make(structure=lambda pid, o: pytest.fail("구조화가 불리면 안 됩니다")), "P0001", None, None, text)
     assert calls == ["supervisor", *route]
     assert (final["route"], final["status"]) == (route, status) and paused(final) is None
 
 
 def test_text_alone_that_cannot_be_read_stops_to_ask_its_meaning(backend):
     compiled = make()
-    shown = paused(run_message(compiled, "P0001", None, None, "오후 3시"))
+    shown = paused(send(compiled, "P0001", None, None, "오후 3시"))
     assert (shown["about"], shown["choices"]) == ("text", ["patient_info", "question", "note"])
     final = resume_run(compiled, "P0001", {"choice": "question"})
     assert (final["route"], final["status"]) == (["consult"], "not_ready")
@@ -698,27 +699,27 @@ def test_text_alone_that_cannot_be_read_stops_to_ask_its_meaning(backend):
 
 def test_the_supervisor_runs_once_even_with_text_and_a_question(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg"))
-    approve(compiled, "P0001", run_message(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "먹고 있는 약: 게보린. 괜찮나요?"))
+    approve(compiled, "P0001", send(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "먹고 있는 약: 게보린. 괜찮나요?"))
     assert calls.count("supervisor") == 1
 
 
 @pytest.mark.parametrize("photo_kind, ocr", [("prescription", load("cv_a1", "rx_001")), ("med_bag", None), ("tray", None), (None, None)])
 def test_the_supervisor_runs_once_per_message(backend, calls, photo_kind, ocr):
-    run_message(make(), "P0001", ocr, photo_kind)
+    send(make(), "P0001", ocr, photo_kind)
     assert calls.count("supervisor") == 1 and calls[0] == "supervisor"
 
 
 def test_the_supervisor_does_not_run_again_when_the_approval_resumes(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    state = run_message(compiled, "P0001", load("cv_a1", "rx_001"))
+    state = send(compiled, "P0001", load("cv_a1", "rx_001"))
     approve(compiled, "P0001", state)
     assert calls.count("supervisor") == 1
 
 
 def test_run_message_is_the_same_as_invoking_with_the_first_state_and_the_thread(backend):
     ocr = load("cv_a1", "rx_003")
-    by_helper = run_message(make(), "P0001", ocr)
-    by_hand = make().invoke(initial_state("P0001", ocr), thread_config("P0001"))
+    by_helper = send(make(), "P0001", ocr)
+    by_hand = make().invoke(first_state("P0001", ocr), thread_config("P0001"))
     assert paused(by_helper) == paused(by_hand)
     assert {k: v for k, v in by_helper.items() if k != "__interrupt__"} == {k: v for k, v in by_hand.items() if k != "__interrupt__"}
 
@@ -784,7 +785,7 @@ def test_the_real_structure_is_used_when_none_is_given(monkeypatch):
     seen = []
     monkeypatch.setattr(graph, "default_structure", lambda pid, ocr: seen.append((pid, ocr)) or real_structure(pid, ocr))
     ocr = load("cv_a1", "rx_001")
-    run_message(build_graph(dictionary=DICT, api=None, checkpointer=memory_checkpointer()), "P0009", ocr)
+    send(build_graph(dictionary=DICT, api=None, checkpointer=memory_checkpointer()), "P0009", ocr)
     assert seen == [("P0009", ocr)]
     seen.clear()
     run_prescription(build_prescription_graph(dictionary=DICT, api=None, checkpointer=memory_checkpointer()), "P0010", ocr)
@@ -806,7 +807,7 @@ def test_the_default_structure_uses_the_openai_path_as_its_fallback(monkeypatch)
 @pytest.mark.parametrize("builder", [build_graph, build_prescription_graph], ids=["top", "subgraph"])
 def test_the_api_comes_from_the_settings_unless_one_is_given(monkeypatch, builder):
     fake_langgraph.install(monkeypatch)
-    run = run_message if builder is build_graph else run_prescription
+    run = send if builder is build_graph else run_prescription
     asked = []
 
     def from_settings(term):
@@ -859,7 +860,7 @@ def test_the_subgraph_inside_the_top_graph_shares_its_dictionary(monkeypatch):
     fake_langgraph.install(monkeypatch)
     only_gevorin = dictionary_from_data({"drugs": [{"item_code": "197900277", "name": "게보린정"}]})
     monkeypatch.setattr(graph, "load_dictionary", lambda: only_gevorin)
-    state = run_message(build_graph(structure=real_structure, api=None, checkpointer=memory_checkpointer()), "P0001", load("cv_a1", "rx_004"))
+    state = send(build_graph(structure=real_structure, api=None, checkpointer=memory_checkpointer()), "P0001", load("cv_a1", "rx_004"))
     assert [d["item_code"] for d in paused(state)["order"]["items"]] == [None, "197900277", None, None]
 
 
@@ -939,13 +940,13 @@ def test_notes_from_the_prescription_subgraph_are_not_doubled(monkeypatch):
     """승인 노드가 남긴 진행 사유(notes)가 상위 그래프에 한 번만 쌓인다."""
     import fake_langgraph
     from agent.checkpoint import memory_checkpointer
-    from agent.graph import build_graph, resume_run, run_message
+    from agent.graph import build_graph, resume_run
     from agent.state import initial_state
 
     fake_langgraph.install(monkeypatch)
     graph = build_graph(dictionary=DICT, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=None), api=None,
                         checkpointer=memory_checkpointer())
-    shown = run_message(graph, "P1", load("rx8_a1", "rx8_01"), text="메모: 오후 수령")["__interrupt__"][0].value
+    shown = send(graph, "P1", load("rx8_a1", "rx8_01"), text="메모: 오후 수령")["__interrupt__"][0].value
     final = resume_run(graph, "P1", {"action": "manual", "order": shown["order"], "reason": "확인함"})
     assert final["notes"].count("위험 신호 확인 후 진행 사유: 확인함") == 1
     assert final["status"] == "planned"
@@ -960,3 +961,47 @@ def test_the_subgraph_step_returns_only_the_new_notes_and_errors():
 
     state = {"notes": ["예전 안내"], "errors": ["예전 오류"], "status": "checked"}
     assert _subgraph_step(Sub())(state) == {"notes": ["새 안내"], "errors": ["새 오류"], "status": "approved"}
+
+
+# ------------------------------------------------------------ 같은 대화의 다음 메시지 · 상담 대화 (11/12 요청서)
+
+
+def test_the_next_message_in_the_same_conversation_keeps_the_approved_order_and_the_plan(backend):
+    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
+    planned = approve(compiled, "P0001", send(compiled, "P0001", load("cv_a1", "rx_001")))
+    assert planned["status"] == "planned" and planned["plan"] is not None
+    tray = run_message(compiled, "P0001", {"message_id": "m2", "kind": "tray", "image_id": "img2"})
+    assert (tray["order"], tray["plan"], tray["status"]) == (planned["order"], planned["plan"], "planned")
+    assert (tray["route"], tray["message_id"], tray["image_id"], tray["prescription_id"]) == (["tray"], "m2", "img2", "P0001")
+    assert compiled.get_state(thread_config("P0001")).values["order"] == planned["order"]
+
+
+def test_the_first_message_in_a_conversation_starts_from_the_first_state(backend):
+    state = run_message(make(), "C0001", {"message_id": "m1", "text": "타이레놀 하루 몇 번 먹어요?"})
+    assert (state["conversation_id"], state["prescription_id"], state["message_id"]) == ("C0001", None, "m1")
+    assert (state["route"], state["flow"], state["intents"]) == (["consult"], "consult", ["question"])
+    assert state["order"] is None and state["status"] == "not_ready"         # 상담 답변은 16단계
+
+
+def test_a_consultation_becomes_a_prescription_conversation_with_the_same_id(backend):
+    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
+    run_message(compiled, "C0001", {"text": "타이레놀 같이 먹어도 돼요?"})
+    state = run_message(compiled, "C0001", {"kind": "prescription"}, load("cv_a1", "rx_001"), prescription_id="C0001")
+    shown = paused(state)
+    assert shown["hitl_point"] == "rx_approval" and shown["order"]["prescription_id"] == "C0001"
+    assert compiled.get_state(thread_config("C0001")).values["prescription_id"] == "C0001"
+
+
+def test_a_prescription_photo_opens_the_prescription_even_when_the_web_did_not_give_its_id(backend):
+    compiled = make(structure=structure_of("타이레놀정500mg"))
+    state = run_message(compiled, "C0002", {"kind": "prescription"}, load("cv_a1", "rx_001"))
+    assert paused(state)["order"]["prescription_id"] == "C0002"
+
+
+@pytest.mark.parametrize("kind", ["tray", "med_bag", "package"])
+def test_other_photos_in_a_consultation_are_not_run(backend, calls, kind):
+    compiled = make()
+    state = run_message(compiled, "C0003", {"kind": kind})
+    assert (state["route"], state["status"], state["prescription_id"]) == ([], "noted", None)
+    assert "처방 대화에서 올려 주세요" in state["notice"]
+    assert calls == ["supervisor"]

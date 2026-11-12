@@ -7,6 +7,7 @@ from agent.supervisor import (
     ASK_TEXT_NOTICE,
     EDIT_WITHOUT_ORDER_NOTICE,
     FLOW_ORDER,
+    NO_RX_PHOTO_NOTICE,
     MessagePlan,
     TEXT_CHOICES,
     choice_labels,
@@ -154,5 +155,47 @@ def test_the_text_choices_and_their_labels():
 def test_a_plan_becomes_the_fields_of_the_state():
     got = MessagePlan(route=("prescription", "consult"), flow="prescription", proposals=({"kind": "edit_request", "text": "t", "drugs": []},), memo="m")
     assert got.as_update() == {"route": ["prescription", "consult"], "flow": "prescription",
-                               "proposals": [{"kind": "edit_request", "text": "t", "drugs": []}], "memo": "m"}
+                               "proposals": [{"kind": "edit_request", "text": "t", "drugs": []}], "memo": "m", "intents": []}
     assert MessagePlan(route=(), notice="n").as_update()["notice"] == "n"
+
+
+# ------------------------------------------------------------ 처방이 없는 대화 (상담 대화, 11/12 결정)
+
+
+def chat(photo_kind=None, ocr=None, text=None):
+    return plan_message(photo_kind, ocr, text, DICT, has_prescription=False)
+
+
+@pytest.mark.parametrize("text", ["타이레놀이랑 게보린 같이 먹어도 되나요?", "게보린 먹고 있어요", "게보린 빼 주세요", "오후 3시"])
+def test_text_alone_without_a_prescription_is_a_consultation(text):
+    # 고칠 처방도 대조할 처방약도 없으므로 의도와 상관없이 상담으로 간다. 제안 · 메모는 만들지 않는다
+    got = chat(text=text)
+    assert (got.route, got.flow, got.proposals, got.memo, got.ask_about) == (("consult",), "consult", (), None, None)
+
+
+def test_the_intents_are_still_recorded_in_a_consultation():
+    assert chat(text="게보린 먹고 있는데 괜찮나요?").intents == ("patient_info", "question")
+
+
+@pytest.mark.parametrize("photo_kind, ocr", [("prescription", None), (None, RX)])
+def test_a_prescription_photo_without_a_prescription_starts_the_prescription_flow(photo_kind, ocr):
+    got = chat(photo_kind, ocr, "같이 먹어도 되나요?")
+    assert (got.route, got.flow) == (("prescription", "consult"), "prescription")
+
+
+@pytest.mark.parametrize("photo_kind, label", [("tray", "트레이"), ("med_bag", "약봉투"), ("package", "포장")])
+def test_other_photos_without_a_prescription_are_not_run_and_the_pharmacist_is_told(photo_kind, label):
+    got = chat(photo_kind, None, "메모입니다")
+    assert (got.route, got.flow, got.memo) == ((), None, "메모입니다")
+    assert got.notice == NO_RX_PHOTO_NOTICE.format(kind=label) and "처방 대화에서 올려 주세요" in got.notice
+
+
+def test_an_unclear_photo_without_a_prescription_is_still_asked_and_the_choice_follows_the_same_rule():
+    assert chat().route == ("ask_type",)
+    assert plan_after_choice("photo", "prescription", None, DICT, has_prescription=False).route == ("prescription",)
+    assert plan_after_choice("photo", "tray", None, DICT, has_prescription=False).route == ()
+
+
+def test_with_a_prescription_nothing_changes():
+    assert plan(text="게보린 먹고 있는데 괜찮나요?").route == ("register_meds", "consult")
+    assert plan("tray").route == ("tray",)

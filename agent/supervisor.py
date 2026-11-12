@@ -17,6 +17,10 @@
 - 수정 요청 → 고칠 처방이 없으므로 메모로 남기고 그렇게 알린다.
 - 의도를 못 가르면 되묻는다 (ask_type, 글의 의도를 고른다).
 이미 열린 처방에 글만 들어오면 그래프를 다시 돌리지 않는다. api.py의 handle_text가 같은 규칙으로 답한다.
+규칙 (처방이 없는 대화 = 상담 대화, 11/12 결정)
+- 글만 → 상담 (대조 없이 근거 기반 답변). 의도는 기록만 한다.
+- 처방전 사진 → 처방 흐름. 대화가 처방 대화로 바뀐다 (prescription_id = conversation_id).
+- 약봉투 · 포장 · 트레이 사진 → 1차 미지원. 흐름을 돌리지 않고 "처방 대화에서 올려 주세요"라고 알린다.
 
 복용 약 등록 · 재대조 · 트레이 검수 · 상담은 아직 자리만 있다 (15 · 14 · 16단계). 그래프 층이다.
 """
@@ -43,6 +47,7 @@ PHOTO_CHOICES: tuple[str, ...] = PHOTO_KINDS
 TEXT_CHOICES: tuple[str, ...] = (PATIENT_INFO, QUESTION, NOTE)
 ASK_TEXT_NOTICE = "글의 뜻을 정하지 못했습니다. 복용 약 정보 · 질문 · 메모 중에서 골라 주세요."
 EDIT_WITHOUT_ORDER_NOTICE = "고칠 처방이 없어 글을 메모로 남겼습니다."
+NO_RX_PHOTO_NOTICE = "처방이 없는 대화입니다. {kind} 사진은 처방 대화에서 올려 주세요."      # 상담 대화에 온 약봉투 · 포장 · 트레이 사진
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,7 @@ class MessagePlan:
     def as_update(self) -> dict[str, Any]:
         update: dict[str, Any] = {
             "route": list(self.route), "flow": self.flow, "proposals": [dict(p) for p in self.proposals], "memo": self.memo,
+            "intents": list(self.intents),
         }
         if self.notice is not None:
             update["notice"] = self.notice
@@ -134,15 +140,39 @@ def has_photo(photo_kind: Any, ocr: Any, text: Any) -> bool:
     return photo_kind is not None or ocr is not None or not (text or "").strip()
 
 
-def plan_message(photo_kind: Any, ocr: Any, text: str | None, dictionary: DrugDictionary) -> MessagePlan:
-    """메시지 하나(사진 · 글)를 어떤 흐름으로 어떤 순서로 실행할지 정한다."""
+def _consult_only(text: str | None, intents: list[str]) -> MessagePlan:
+    """처방이 없는 대화에 글만 왔을 때: 상담. 고칠 처방도 대조할 처방약도 없으므로 제안 · 메모를 만들지 않는다."""
+    return MessagePlan(route=("consult",), flow="consult", intents=tuple(intents))
+
+
+def _photo_without_prescription(kind: str, text: str | None, intents: list[str]) -> MessagePlan:
+    """처방이 없는 대화에 처방전이 아닌 사진(약봉투 · 포장 · 트레이)이 왔을 때. 1차는 돌리지 않고 알린다. 글은 메모로 남긴다."""
+    memo = text.strip() if (text or "").strip() else None
+    return MessagePlan(route=(), notice=NO_RX_PHOTO_NOTICE.format(kind=KIND_LABELS[kind]), memo=memo, intents=tuple(intents))
+
+
+def _plan_photo(kind: str, text: str | None, intents: list[str], dictionary: DrugDictionary,
+                has_prescription: bool) -> MessagePlan:
+    flow = KIND_FLOW[kind]
+    if not has_prescription and flow != "prescription":
+        return _photo_without_prescription(kind, text, intents)
+    return _with_text(flow, text, intents, dictionary)
+
+
+def plan_message(photo_kind: Any, ocr: Any, text: str | None, dictionary: DrugDictionary,
+                 has_prescription: bool = True) -> MessagePlan:
+    """메시지 하나(사진 · 글)를 어떤 흐름으로 어떤 순서로 실행할지 정한다.
+
+    has_prescription은 이 대화에 처방이 있는가다 (state의 prescription_id). 없으면 상담 대화의 규칙을 따른다.
+    """
     intents = classify(text)
     if not has_photo(photo_kind, ocr, text):
-        return _text_only(text, intents, dictionary)
+        return _text_only(text, intents, dictionary) if has_prescription else _consult_only(text, intents)
     flow, notice = decide_flow(photo_kind, ocr)
     if flow == "ask_type":
         return MessagePlan(route=("ask_type",), flow="ask_type", notice=notice, ask_about="photo", intents=tuple(intents))
-    return _with_text(flow, text, intents, dictionary)
+    kind = photo_kind or ocr.get("doc_type")
+    return _plan_photo(kind, text, intents, dictionary, has_prescription)
 
 
 def ask_choices(about: str) -> tuple[str, ...]:
@@ -153,10 +183,11 @@ def choice_labels(about: str) -> dict[str, str]:
     return dict(KIND_LABELS) if about == "photo" else {c: INTENT_LABELS[c] for c in TEXT_CHOICES}
 
 
-def plan_after_choice(about: str, choice: str, text: str | None, dictionary: DrugDictionary) -> MessagePlan:
+def plan_after_choice(about: str, choice: str, text: str | None, dictionary: DrugDictionary,
+                      has_prescription: bool = True) -> MessagePlan:
     """되묻기에서 약사가 고른 뒤의 계획. 약사가 고른 것을 따른다 (OCR의 doc_type과 달라도 다시 묻지 않는다)."""
     if choice not in ask_choices(about):
         raise ValueError(f"고를 수 있는 값이 아닙니다: {choice!r} (가능: {', '.join(ask_choices(about))})")
     if about == "photo":
-        return _with_text(KIND_FLOW[choice], text, classify(text), dictionary)
+        return _plan_photo(choice, text, classify(text), dictionary, has_prescription)
     return _text_only(text or "", [choice], dictionary)

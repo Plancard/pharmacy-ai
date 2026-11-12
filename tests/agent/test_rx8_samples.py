@@ -14,11 +14,12 @@ from agent.drug_dictionary import load_dictionary
 from agent.drug_match import match_order
 from agent.errors import E_PLAN_RANGE
 from agent.checkpoint import memory_checkpointer
-from agent.graph import build_graph, resume_run, run_message
+from agent.graph import build_graph, resume_run
 from agent.pipeline import structure_prescription
 from agent.plan import MAX_PER_CELL, PlanError, build_plan
 from agent.risk import NO_DUR_WARNING, UNCHECKED_TAIL, check_order
 from agent.schema import TRAY_DAYS, OcrResult
+from graph_calls import first_state, send
 
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES = RESOURCES_DIR / "samples"
@@ -125,7 +126,7 @@ def test_each_prescription_stops_for_approval_and_then_plans(monkeypatch, rx_id)
     fake_langgraph.install(monkeypatch)
     graph = build_graph(dictionary=DICT, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=no_llm), api=None,
                         checkpointer=memory_checkpointer())
-    shown = run_message(graph, f"P-{rx_id}", load("rx8_a1", rx_id))["__interrupt__"][0].value
+    shown = send(graph, f"P-{rx_id}", load("rx8_a1", rx_id))["__interrupt__"][0].value
     flagged = load("rx8_expected", rx_id)["flagged"]
     assert shown["notice"].startswith("약사 승인을 기다립니다.")
     assert ("확인이 필요한 약품" in shown["notice"]) is bool(flagged)

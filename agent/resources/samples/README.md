@@ -11,7 +11,7 @@
 | `a5_order/` | A.5 조제지시서 (+ `risk_check`) | Agent → 웹 | A.1과 같은 이름. **A.1을 읽은 최종 정답** (약품 매칭·위험 신호 대조까지 끝난 모습) |
 | `a4_plan/` | A.4 조제 계획 | Agent → CV | `s01_combo_a` (a5의 같은 이름에서 나온 계획) |
 | `a3_inspection/` | A.3 검수 결과 | CV → Agent·웹 | `i01_ok` (12칸 모두 ok) · `i02_mismatch` (불일치 1칸 + 확인 필요 1칸) |
-| `a6_consult/` | A.6 상담 결과 | Agent → 웹 | `c01_combo_a_rx_only` · `c02_no_risk_with_current_meds` |
+| `a6_consult/` | A.6 상담 결과 | Agent → 웹 | `c01_combo_a_rx_only` · `c02_no_risk_with_current_meds` · `c03_general_no_prescription`(처방 없는 대화, risk_scope none) |
 | `cv_a1/` | A.1 (CV가 보낸 실제 형식) | CV → Agent | `rx_001` ~ `rx_005`. `cv/fixtures/a1`을 그대로 복사해 동결한 것 |
 | `cv_expected/` | 위 5장의 정답 | | OCR이 읽은 글자 기준 정답. 환자 이름·주민번호는 없다 |
 | `rx8_a1/` | A.1 (시연용) | CV → Agent | `rx8_01` ~ `rx8_20`. **실제 대상 8종으로 만든 가상 처방전 20장** (REQ-AG-02 · 03 테스트셋). `scripts/agent/make_prescriptions.py`가 만든다 |

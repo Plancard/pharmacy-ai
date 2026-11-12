@@ -131,6 +131,8 @@ def main(argv: list[str] | None = None, *, graph=None, out: Callable[[str], None
     parser.add_argument("--approve", action="store_true", help="승인 대기에서 화면의 조제지시서를 그대로 승인해 이어 간다")
     parser.add_argument("--db", action="store_true", help="멈춘 곳을 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)")
     parser.add_argument("--text", help="사진과 함께(또는 --no-ocr로 글만) 보낼 글")
+    parser.add_argument("--chat", action="store_true",
+                        help="처방이 없는 상담 대화로 보낸다 (글만 → 상담, 처방전 사진 → 처방 대화로 바뀜, 그 밖의 사진 → 안내)")
     parser.add_argument("--mcp", action="store_true", help="약품 매칭을 MCP 도구(match_drug)로 부른다. 서버를 하위 프로세스로 띄운다")
     parser.add_argument("--choose", help="되묻는 곳(type_select)에서 고를 값 (사진: prescription · tray · med_bag · package, 글: patient_info · question · note)")
     args = parser.parse_args(argv)
@@ -185,7 +187,8 @@ def _run(args: argparse.Namespace, ids: list[str], graph, tools, out: Callable[[
             if args.subgraph:
                 state = run_prescription(graph, rx_id, ocr)
             else:
-                state = run_message(graph, rx_id, ocr, args.kind, args.text)
+                message = {"kind": args.kind, "text": args.text}
+                state = run_message(graph, rx_id, message, ocr, prescription_id=None if args.chat else rx_id)
             show(sample_id, state, out)
             if args.choose and paused_value(state) is not None and paused_value(state)["hitl_point"] == HITL_TYPE:
                 out(f"    -> 약사가 '{args.choose}'을(를) 고릅니다")

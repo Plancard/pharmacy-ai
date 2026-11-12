@@ -4,13 +4,17 @@
 AGENT_BACKEND=langgraph로 같은 화면이 돈다.
 
     start(rx_id, ocr, photo_kind, text) 메시지 하나(사진 · 글)로 대화를 시작한다. 승인 대기 · 되묻기에서 멈추면 Pause를 돌려준다
+    send(conv_id, ocr, photo_kind, text) 메시지 하나를 보낸다. 새 대화면 시작하고, 있는 대화면 이번 메시지 칸만 넣어 이어 간다
     pending(rx_id)                     지금 멈춰 있는 지점과 화면에 보일 내용 (없으면 None)
     resume(rx_id, hitl_point, reply)   약사 응답으로 이어 간다. 다시 멈추면 Pause, 끝나면 None
     stage(rx_id)                       멈춘 곳이 아닐 때 지금 단계 (조제 계획까지 끝났으면 'await_tray')
     result(rx_id)                      지금 상태의 조제지시서 · 조제 계획 · 안내 · 제안 · 메모
     handle_text(rx_id, text)           이미 열린 처방에 글만 들어왔을 때: 그래프를 돌리지 않고 제안 · 재검토 표시 · 상담 여부를 돌려준다
 
-thread_id는 처방 ID다. 멈춘 곳은 체크포인터(checkpoint.py)에 저장되므로 프로세스를 꺼도 같은 곳에서 이어 간다.
+thread_id는 대화 ID다 (11/12 결정: 대화 1개 = thread 1개). 처방 대화에서는 대화 ID = 처방 ID라서 아래의 rx_id는 둘 다를 뜻한다.
+처방 없이 글로 시작한 상담 대화는 prescription_id가 None이고, 처방전 사진이 오면 같은 ID로 처방 대화가 된다.
+메서드의 message_id · image_id · prescription_id는 웹이 아는 값을 넘긴다 (없으면 None).
+멈춘 곳은 체크포인터(checkpoint.py)에 저장되므로 프로세스를 꺼도 같은 곳에서 이어 간다.
 HITL ①(rx_approval)의 응답은 {"action": "approve" | "edit" | "manual", "order": 조제지시서, "reason": 사유}다.
   manual: 위험(danger) 항목이 있을 때 사유를 적고 진행한다 (기능분석서 F-WEB-07 ③). 위험이 있으면 approve는 거절된다.
   approve: 약품 줄이 그대로면 조제 계획을 만들고 끝난다 → None, stage는 await_tray.
@@ -84,15 +88,31 @@ class AgentApi:
         return self.graph.get_state(thread_config(rx_id))
 
     def start(self, rx_id: str, ocr: dict[str, Any] | None, photo_kind: str | None = "prescription",
-              text: str | None = None) -> Pause | None:
+              text: str | None = None, *, message_id: str | None = None, image_id: str | None = None,
+              prescription_id: str | None = None) -> Pause | None:
         """메시지 하나(사진 · 글)로 대화를 시작한다. 같은 ID로 두 번 시작하면 ValueError (새 처방전은 새 대화로 연다).
 
-        글만 보낼 때는 ocr=None, photo_kind=None, text=글.
+        글만 보낼 때는 ocr=None, photo_kind=None, text=글. 처방이 없는 대화의 글은 상담으로 간다.
         """
         if self._snapshot(rx_id).values:
-            raise ValueError(f"이미 시작한 처방입니다: {rx_id}")
-        run_message(self.graph, rx_id, ocr, photo_kind, text)
-        return self._after_run(rx_id)
+            raise ValueError(f"이미 시작한 대화입니다: {rx_id} (같은 대화의 다음 메시지는 send로 보내세요)")
+        return self.send(rx_id, ocr, photo_kind, text, message_id=message_id, image_id=image_id,
+                         prescription_id=prescription_id)
+
+    def send(self, conv_id: str, ocr: dict[str, Any] | None = None, photo_kind: str | None = None,
+             text: str | None = None, *, message_id: str | None = None, image_id: str | None = None,
+             prescription_id: str | None = None) -> Pause | None:
+        """메시지 하나를 보낸다. 새 대화면 시작하고, 있는 대화면 이번 메시지 칸만 넣어 이어 간다 (승인된 조제지시서는 그대로).
+
+        멈춰 있는 대화(승인 대기 · 되묻기)에는 보내지 않는다: ValueError. 약사 응답은 resume, 승인 대기 중의 글은 handle_text로.
+        상담 대화가 처방 대화로 바뀌는 메시지(처방전 사진)면 웹이 prescription_id(= conv_id)를 넣어 준다.
+        """
+        pause = self.pending(conv_id) if self._snapshot(conv_id).values else None
+        if pause is not None:
+            raise ValueError(f"약사 응답을 기다리는 대화입니다: {conv_id} ({pause.hitl_point}). resume 또는 handle_text를 쓰세요")
+        message = {"message_id": message_id, "text": text, "image_id": image_id, "kind": photo_kind}
+        run_message(self.graph, conv_id, message, ocr, prescription_id)
+        return self._after_run(conv_id)
 
     def pending(self, rx_id: str) -> Pause | None:
         interrupts = self._snapshot(rx_id).interrupts
@@ -126,7 +146,8 @@ class AgentApi:
     def result(self, rx_id: str) -> dict[str, Any]:
         """지금 저장된 상태에서 웹이 쓰는 칸만. 멈춰 있는 동안의 조제지시서는 pending의 payload에 있다."""
         values = self._snapshot(rx_id).values
-        keys = ("status", "flow", "route", "order", "plan", "notice", "error_code", "proposals", "memo", "notes")
+        keys = ("conversation_id", "prescription_id", "message_id", "status", "flow", "route", "intents", "order", "plan",
+                "notice", "error_code", "proposals", "memo", "notes")
         return {key: values.get(key) for key in keys}
 
     def handle_text(self, rx_id: str, text: str) -> dict[str, Any]:
@@ -141,6 +162,8 @@ class AgentApi:
         stage = self.stage(rx_id)
         if stage is None:
             raise ValueError(f"열린 처방이 없습니다: {rx_id} (새 대화는 start로 시작하세요)")
+        if self._snapshot(rx_id).values.get("prescription_id") is None:
+            raise ValueError(f"처방이 없는 대화입니다: {rx_id} (상담 대화의 글은 send로 보내세요)")
         intents = classify(text)
         waiting = stage == HITL_APPROVAL
         usable = [EDIT_REQUEST, PATIENT_INFO] if waiting else [PATIENT_INFO]

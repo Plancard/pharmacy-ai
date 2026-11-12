@@ -42,7 +42,8 @@ from agent.nodes import (
 from agent.pipeline import structure_prescription
 from agent.risk import NO_DUR_WARNING, UNCHECKED_TAIL
 from agent.schema import DispensingOrder, DrugLine, Plan, RiskCheck, RiskFinding
-from agent.state import GraphState, initial_state
+from agent.state import GraphState
+from graph_calls import first_state, send
 
 SAMPLES = RESOURCES_DIR / "samples"
 DICT = load_dictionary(RESOURCES_DIR / "drug_dictionary.json")
@@ -106,7 +107,7 @@ def order_of(*lines):
 
 
 def state_with(order=None, **extra):
-    return {**initial_state("P0001"), "order": order, **extra}
+    return {**first_state("P0001"), "order": order, **extra}
 
 
 # ------------------------------------------------------------ 슈퍼바이저: 사진 종류로 흐름 정하기
@@ -148,12 +149,14 @@ def test_an_unclear_photo_kind_is_asked_about_not_guessed(photo_kind, ocr, reaso
 
 
 def test_supervisor_sets_the_route_when_the_kind_is_clear():
-    state = initial_state("P0001", load("cv_a1", "rx_001"))
-    assert supervisor_node(state, deps()) == {"route": ["prescription"], "flow": "prescription", "proposals": [], "memo": None}
+    state = first_state("P0001", load("cv_a1", "rx_001"))
+    assert supervisor_node(state, deps()) == {
+        "route": ["prescription"], "flow": "prescription", "proposals": [], "memo": None, "intents": [],
+    }
 
 
 def test_supervisor_also_leaves_the_question_when_it_asks():
-    update = supervisor_node(initial_state("P0001"), deps())
+    update = supervisor_node(first_state("P0001"), deps())
     assert (update["route"], update["flow"]) == (["ask_type"], "ask_type")
     assert update["notice"].startswith("사진 종류를 정하지 못했습니다.")
 
@@ -164,14 +167,14 @@ def test_supervisor_reads_the_kind_from_the_ocr_of_a_state_without_photo_kind():
 
 
 def test_supervisor_puts_the_text_of_a_prescription_photo_into_proposals():
-    state = initial_state("P0001", load("rx8_a1", "rx8_01"), "prescription", "게보린 빼 주세요")
+    state = first_state("P0001", load("rx8_a1", "rx8_01"), "prescription", "게보린 빼 주세요")
     update = supervisor_node(state, deps())
     assert update["route"] == ["prescription"]
     assert update["proposals"] == [{"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": [{"item_code": GEVORIN, "name": "게보린정"}]}]
 
 
 def test_supervisor_ends_with_noted_when_the_text_is_only_a_memo():
-    update = supervisor_node(initial_state("P0001", None, None, "메모: 오후 수령"), deps())
+    update = supervisor_node(first_state("P0001", None, None, "메모: 오후 수령"), deps())
     assert (update["route"], update["status"], update["memo"]) == ([], "noted", "메모: 오후 수령")
 
 
@@ -179,7 +182,7 @@ def test_supervisor_ends_with_noted_when_the_text_is_only_a_memo():
 
 
 def test_structure_makes_the_order_from_a_sample():
-    state = initial_state("P0001", load("cv_a1", "rx_001"))
+    state = first_state("P0001", load("cv_a1", "rx_001"))
     update = structure_node(state, deps())
     assert set(update) == {"order", "status", "notice"}
     assert update["status"] == "structured" and update["notice"] is None
@@ -196,7 +199,7 @@ def test_structure_hands_the_id_and_the_ocr_to_the_structure_function():
         return DispensingOrder.model_validate(order_of(line("게보린정")))
 
     ocr = load("cv_a1", "rx_002")
-    structure_node(initial_state("P0007", ocr), deps(structure=spy))
+    structure_node(first_state("P0007", ocr), deps(structure=spy))
     assert seen == [("P0007", ocr)]
 
 
@@ -205,7 +208,7 @@ def test_a_structure_failure_is_recorded_in_the_state(code):
     def fails(prescription_id, ocr):
         raise StructureError("자동 구조화에 실패했습니다.", code=code)
 
-    update = structure_node(initial_state("P0001", {}), deps(structure=fails))
+    update = structure_node(first_state("P0001", {}), deps(structure=fails))
     assert update == {
         "order": None, "status": "failed", "notice": "자동 구조화에 실패했습니다.", "error_code": code,
         "errors": [f"[structure] {code or '-'} 자동 구조화에 실패했습니다."],
@@ -213,7 +216,7 @@ def test_a_structure_failure_is_recorded_in_the_state(code):
 
 
 def test_a_state_without_ocr_fails_with_the_empty_ocr_code():
-    update = structure_node(initial_state("P0001", None), deps())
+    update = structure_node(first_state("P0001", None), deps())
     assert update["status"] == "failed" and update["error_code"] == E_OCR_EMPTY and update["order"] is None
 
 
@@ -222,14 +225,14 @@ def test_a_config_problem_is_not_turned_into_a_failure_of_one_prescription():
         raise ConfigError("OPENAI_API_KEY가 없습니다.")
 
     with pytest.raises(ConfigError):
-        structure_node(initial_state("P0001", {}), deps(structure=broken))
+        structure_node(first_state("P0001", {}), deps(structure=broken))
 
 
 # ------------------------------------------------------------ 약품 매칭
 
 
 def structured(sample_id):
-    return merged(initial_state("P0001", load("cv_a1", sample_id)), structure_node(initial_state("P0001", load("cv_a1", sample_id)), deps()))
+    return merged(first_state("P0001", load("cv_a1", sample_id)), structure_node(first_state("P0001", load("cv_a1", sample_id)), deps()))
 
 
 def matched(sample_id):
@@ -716,7 +719,7 @@ def choose(value):
 
 
 def test_ask_type_shows_the_question_the_supervisor_left_and_the_photo_kinds():
-    state = merged(initial_state("P0001"), supervisor_node(initial_state("P0001"), deps()))
+    state = merged(first_state("P0001"), supervisor_node(first_state("P0001"), deps()))
     pharmacist = choose("tray")
     ask_type_node(state, deps(ask=pharmacist))
     [shown] = pharmacist.seen
@@ -729,23 +732,23 @@ def test_ask_type_shows_the_question_the_supervisor_left_and_the_photo_kinds():
 
 def test_ask_type_has_a_question_of_its_own_when_none_was_left():
     pharmacist = choose("tray")
-    ask_type_node(initial_state("P0001"), deps(ask=pharmacist))
+    ask_type_node(first_state("P0001"), deps(ask=pharmacist))
     assert pharmacist.seen[0]["notice"] == ASK_TYPE_NOTICE
 
 
 @pytest.mark.parametrize("kind, route", [("prescription", ["prescription"]), ("med_bag", ["recheck"]), ("tray", ["tray"])])
 def test_the_photo_kind_the_pharmacist_chose_decides_the_route(kind, route):
-    update = ask_type_node(initial_state("P0001"), deps(ask=choose(kind)))
+    update = ask_type_node(first_state("P0001"), deps(ask=choose(kind)))
     assert (update["route"], update["flow"], update["photo_kind"], update["notice"]) == (route, route[0], kind, None)
 
 
 def test_the_chosen_kind_wins_over_a_disagreeing_ocr():
-    state = initial_state("P0001", {"doc_type": "med_bag", "lines": []}, "prescription")
+    state = first_state("P0001", {"doc_type": "med_bag", "lines": []}, "prescription")
     assert ask_type_node(state, deps(ask=choose("prescription")))["route"] == ["prescription"]
 
 
 def test_ask_type_asks_about_the_text_when_only_text_came():
-    state = initial_state("P0001", None, None, "오후 수령 예정")
+    state = first_state("P0001", None, None, "오후 수령 예정")
     pharmacist = choose("question")
     update = ask_type_node(state, deps(ask=pharmacist))
     assert pharmacist.seen[0]["about"] == "text" and pharmacist.seen[0]["choices"] == ["patient_info", "question", "note"]
@@ -753,26 +756,26 @@ def test_ask_type_asks_about_the_text_when_only_text_came():
 
 
 def test_choosing_memo_for_the_text_ends_with_noted():
-    update = ask_type_node(initial_state("P0001", None, None, "오후 수령 예정"), deps(ask=choose("note")))
+    update = ask_type_node(first_state("P0001", None, None, "오후 수령 예정"), deps(ask=choose("note")))
     assert (update["route"], update["status"], update["memo"]) == ([], "noted", "오후 수령 예정")
 
 
 @pytest.mark.parametrize("reply", [None, {}, {"choice": "receipt"}, {"choice": "question"}, "tray"])
 def test_a_choice_that_cannot_be_chosen_is_refused(reply):
     with pytest.raises(ValueError, match="고를 수 있는 값이 아닙니다"):
-        ask_type_node(initial_state("P0001"), deps(ask=lambda payload: reply))
+        ask_type_node(first_state("P0001"), deps(ask=lambda payload: reply))
 
 
 def test_the_flows_that_are_not_built_yet_say_so():
     for node, flow in ((register_meds_node, "register_meds"), (recheck_node, "recheck"), (tray_node, "tray"), (consult_node, "consult")):
-        assert node(initial_state("P0001"), deps()) == {
+        assert node(first_state("P0001"), deps()) == {
             "notes": [NOT_READY_NOTICES[flow]], "status": "not_ready", "notice": NOT_READY_NOTICES[flow],
         }
     assert len(set(NOT_READY_NOTICES.values())) == 4
 
 
 def test_a_flow_that_is_not_built_yet_does_not_hide_what_the_prescription_did():
-    state = {**initial_state("P0001"), "status": "planned", "notice": "조제 계획을 만들었습니다."}
+    state = {**first_state("P0001"), "status": "planned", "notice": "조제 계획을 만들었습니다."}
     assert consult_node(state, deps()) == {"notes": [NOT_READY_NOTICES["consult"]]}
 
 
@@ -804,7 +807,7 @@ def test_the_tools_cannot_be_swapped_while_the_graph_runs():
 
 
 def test_a_sample_goes_through_the_nodes_in_order_to_the_plan():
-    state = initial_state("P0001", load("rx8_a1", "rx8_01"))
+    state = first_state("P0001", load("rx8_a1", "rx8_01"))
     for node in (supervisor_node, structure_node, match_node, risk_node, approve_node):
         state = merged(state, node(state, deps()))
     assert (state["flow"], state["status"], state["error_code"], state["errors"]) == ("prescription", "approved", None, [])

@@ -1,7 +1,7 @@
 import pytest
 
 from agent.drug_names import (
-    extract_strengths, fix_ocr_digits, jamo, match_key, normalize_name, product_key, search_term, similarity,
+    extract_strengths, fix_ocr_digits, fix_ocr_letters, jamo, match_key, normalize_name, product_key, search_term, similarity,
 )
 
 # 눈으로 구별하기 어려운 글자는 코드 값으로 적는다
@@ -187,8 +187,23 @@ def test_match_key_makes_a_misread_name_equal_to_the_dictionary_spelling():
     assert match_key("타이레놀정 5oOmg") == match_key("타이레놀정/500mg") == "타이레놀정500mg"
 
 
+@pytest.mark.parametrize("read, fixed", [
+    ("프론크논캠술", "프론크논캡슐"), ("프론크논램술", "프론크논캡슐"), ("뮤코다인캡술200mg", "뮤코다인캡슐200mg"),
+    ("트리스편연질캠술", "트리스펜연질캡슐"), ("아르편정", "아르펜정"), ("프론크논캡슐", "프론크논캡슐"),
+])
+def test_match_key_fixes_the_hangul_misreadings_seen_in_real_ocr(read, fixed):
+    # CV 처방전 5장에서 실제로 나온 오인식(캡슐 -> 캠술 · 램술, 펜 -> 편)만 맞춘다 (11/12)
+    assert match_key(read) == fixed
+
+
+def test_fix_ocr_letters_leaves_the_shown_name_alone_and_other_letters_as_they_are():
+    assert fix_ocr_letters("프론크논캠술") == "프론크논캡슐"
+    assert fix_ocr_letters("알모란정") == "알모란정"          # 목록에 없는 오인식은 그대로 (유사도로 후보가 된다)
+    assert fix_ocr_letters(None) == ""
+
+
 def test_match_key_keeps_other_misreadings_so_they_are_visible_to_similarity():
-    assert match_key("프론크논램술") == "프론크논램술"
+    assert match_key("프룬그논캡슐") == "프룬그논캡슐"
     assert match_key(None) == ""
 
 

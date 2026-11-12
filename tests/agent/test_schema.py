@@ -55,7 +55,7 @@ def test_sample_set_is_complete():
     assert names("a1_ocr") == names("a5_order") == sorted(RX_NAMES)   # OCR 하나마다 정답 하나
     assert names("a4_plan") == ["s01_combo_a"]
     assert names("a3_inspection") == ["i01_ok", "i02_mismatch"]
-    assert names("a6_consult") == ["c01_combo_a_rx_only", "c02_no_risk_with_current_meds"]
+    assert names("a6_consult") == ["c01_combo_a_rx_only", "c02_no_risk_with_current_meds", "c03_general_no_prescription"]
 
 
 def test_round_trip_keeps_values():
@@ -157,6 +157,8 @@ def test_consult_risk_level_is_not_lower_than_the_order():
     """A.6 risk_level = A.5 risk_check와 재대조 중 높은 쪽."""
     for name in names("a6_consult"):
         c = ConsultResult.model_validate(load("a6_consult", name))
+        if c.prescription_id is None:          # 처방 없는 일반 상담: 견줄 조제지시서가 없다
+            continue
         orders = {DispensingOrder.model_validate(load("a5_order", n)).prescription_id: n for n in RX_NAMES}
         order = DispensingOrder.model_validate(load("a5_order", orders[c.prescription_id]))
         assert risk_rank(c.risk_level) >= risk_rank(order.risk_check.level)
@@ -541,7 +543,7 @@ def test_inspection_allows_every_reason():
 # ------------------------------------------------------------------ A.6
 
 def consult(**kw) -> dict:
-    base = {"prescription_id": "P0001", "risk_scope": "rx_only", "new_findings": [], "recheck_after_dispense": False,
+    base = {"conversation_id": "P0001", "prescription_id": "P0001", "risk_scope": "rx_only", "new_findings": [], "recheck_after_dispense": False,
             "risk_level": "none", "answer": "예시 답변", "evidence": []}
     return {**base, **kw}
 
@@ -559,10 +561,26 @@ def test_consult_minimal_is_valid():
     consult(answer=""),
     consult(recheck_after_dispense="maybe"),
     consult(evidence=[{"title": "제목", "source": "출처"}]),                         # excerpt 없음
+    {k: v for k, v in consult().items() if k != "conversation_id"},                 # 대화 ID 없음
+    consult(conversation_id=""),
+    consult(prescription_id=None),                                                  # 처방 없는 대화인데 대조 범위가 rx_only
+    consult(risk_scope="none", new_findings=[finding()], risk_level="warning"),     # 대조 없이 한 상담에 새 항목
+    consult(risk_scope="none", risk_level="caution"),
+    consult(risk_scope="none", recheck_after_dispense=True),
 ])
 def test_consult_rejects(c):
     with pytest.raises(ValidationError):
         ConsultResult.model_validate(c)
+
+
+def test_a_general_consult_without_a_prescription_is_valid():
+    # 처방 없는 대화의 상담 (11/12 결정): prescription_id None, risk_scope none, 새 항목 · 위험 단계 없음
+    c = ConsultResult.model_validate(consult(conversation_id="C0001", prescription_id=None, risk_scope="none"))
+    assert (c.conversation_id, c.prescription_id, c.risk_scope, c.risk_level) == ("C0001", None, "none", "none")
+
+
+def test_a_consult_in_a_prescription_conversation_may_skip_the_check():
+    assert ConsultResult.model_validate(consult(risk_scope="none")).prescription_id == "P0001"
 
 
 def test_consult_risk_level_may_exceed_new_findings():

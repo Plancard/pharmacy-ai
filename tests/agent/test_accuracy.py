@@ -226,10 +226,10 @@ def test_a_confirmed_line_is_confirmed_even_when_other_candidates_exist():
 
 def test_the_rule_path_confirms_only_what_the_names_support():
     # 인쇄 코드(9000000xx)는 사전의 품목기준코드가 아니라서 모두 이름 단계다.
-    # 이름이 맞게 읽힌 타이레놀·게보린은 정하고, OCR이 이름을 틀리게 읽은 대상 약(프론크논·트리스펜)은 후보로만 보인다.
-    # 대상이 아닌 약(알모탄정, rx_005)은 정하지 않는다.
+    # 이름이 맞게 읽힌 타이레놀·게보린도, OCR이 캠술·편으로 읽은 대상 약(프론크논·트리스펜)도 OCR 한글 보정으로 이름이 같아져 정한다
+    # (보정 전 11/10에는 정함 4 · 후보 3이었다). 대상이 아닌 약(알모탄정, rx_005)은 정하지 않는다.
     outcomes = [m.outcome for sample_id in SAMPLE_IDS for m in match_checks(rule_order(sample_id), load("cv_expected", sample_id))]
-    assert outcomes.count(CONFIRMED) == 4 and outcomes.count(CANDIDATE) == 3 and outcomes.count(NOT_TARGET) == 8
+    assert outcomes.count(CONFIRMED) == 7 and outcomes.count(CANDIDATE) == 0 and outcomes.count(NOT_TARGET) == 8
     assert WRONG not in outcomes and NOT_FOUND not in outcomes and MISSING not in outcomes
 
 
@@ -243,7 +243,7 @@ def test_a_wrongly_chosen_drug_is_found():
 def test_a_missing_line_is_counted_per_line():
     order = order_from_answer("rx_002")
     order = order.model_copy(update={"items": order.items[:2]})
-    assert [m.outcome for m in match_checks(order, load("cv_expected", "rx_002"))] == [CONFIRMED, CANDIDATE, MISSING]
+    assert [m.outcome for m in match_checks(order, load("cv_expected", "rx_002"))] == [CONFIRMED, CONFIRMED, MISSING]
 
 
 def test_without_an_order_every_line_is_missing_and_keeps_the_answer_name():
@@ -272,7 +272,7 @@ def test_score_and_summarize():
     assert (s.field_correct["name"], s.field_total["name"]) == (3, 5)
     assert (s.field_correct["issue_no"], s.field_total["issue_no"]) == (1, 2)
     assert s.field_rate("days") == 3 / 5 and s.field_rate("없는칸") == 0.0
-    assert s.matches == {CONFIRMED: 1, CANDIDATE: 1, NOT_TARGET: 1, NOT_FOUND: 0, WRONG: 0, MISSING: 2}
+    assert s.matches == {CONFIRMED: 2, CANDIDATE: 0, NOT_TARGET: 1, NOT_FOUND: 0, WRONG: 0, MISSING: 2}
     assert s.wrong_matches == 0
 
 

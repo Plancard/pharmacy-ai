@@ -114,7 +114,7 @@ def test_the_demo_prescriptions_are_matched_by_their_printed_code(graph):
 def test_the_times_and_days_of_every_line_are_shown(graph):
     _, text = run(["rx_002"], graph)
     assert "1. [확인] 게보린정 | 코드 900000021 -> 품목 197900277 (name) | 1개 x 2회 x 2일 | morning, evening" in text
-    assert "2. [확인] 프론크논캠술 | 코드 900000051 -> 품목 - (none) | 1개 x 3회 x 2일 | morning, noon, evening" in text
+    assert "2. [확인] 프론크논캠술 | 코드 900000051 -> 품목 200200099 (name) | 1개 x 3회 x 2일 | morning, noon, evening" in text
 
 
 def test_a_sample_can_be_chosen(graph):
