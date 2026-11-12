@@ -1,7 +1,0 @@
-{
-  "_note": "코드가 '-'이고 용법이 '취침 전'이라 bedtime 하나가 배정된다. 투약 일수가 5일이라 3일 트레이 한 장에는 다 담기지 않는다(조제 계획 단계에서 다룬다).",
-  "issue_no": "2026110400003",
-  "drugs": [
-    {"name": "가나다정", "printed_code": null, "dose_per_time": 1, "times_per_day": 1, "days": 5, "time_slots": ["bedtime"]}
-  ]
-}

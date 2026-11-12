@@ -1,9 +1,0 @@
-# 아래 셋은 설치해서 테스트까지 돌려 확인한 버전입니다.
-pydantic==2.13.5
-python-dotenv==1.2.3
-pytest==9.1.1
-
-# 아래 둘은 만든 환경에서 설치하지 못해 버전을 고정하지 못했습니다.
-# 처음 설치한 뒤 `pip freeze | grep -i -E "langgraph|langchain-openai"` 결과로 ==를 붙여 고정하세요.
-langgraph
-langchain-openai
