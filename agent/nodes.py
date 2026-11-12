@@ -12,10 +12,14 @@
                    deps.tools(MCP)가 있으면 DUR 도구 check_interaction · check_duplicate로 부른다 (13단계)
     approve        약사 승인 대기 (HITL ①). interrupt로 멈추고, 약사 응답(승인 · 고치기)을 받아 이어 간다.
                    글로 받은 제안과 메모를 승인 화면에 함께 보인다
-    make_plan      승인된 조제지시서로 칸별 조제 계획(A.4)을 만든다. 승인 전에는 오지 않는다
+    make_plan      승인된 조제지시서로 칸별 조제 계획(A.4)을 만든다. 승인 전에는 오지 않는다.
+                   deps.tools(MCP)가 있으면 조제 도구 build_plan으로 부른다 (14단계)
     register_meds  복용 약 등록 (자리. 15단계)
     recheck        복용 약 재대조 (자리. 15단계)
-    tray           트레이 검수 (자리. 14단계)
+    tray           트레이 검수: CV(deps.inspect)로 트레이 사진을 조제 계획과 대조한 A.3을 받아 확인한다 (14단계).
+                   전 칸 일치면 inspected로 끝나고, 아니면 inspecting으로 tray_review에 넘긴다
+    tray_review    검수 확인 대기 (HITL ② inspection). 약사가 확인 완료(confirm)하면 inspected, 재조제(redo)면 planned로 돌아간다.
+                   CV는 tray에서 한 번만 부른다 (interrupt에서 이어 갈 때 노드가 처음부터 다시 돌기 때문)
     consult        상담 답변 (자리. 16단계)
 """
 from __future__ import annotations
@@ -25,12 +29,23 @@ from typing import Any, Callable
 
 from agent.drug_dictionary import DrugDictionary
 from agent.drug_match import ApiSearch, match_order
-from agent.errors import StructureError
+from agent.errors import E_CV_INFER, StructureError
+from agent.inspection import (
+    CONFIRM,
+    HITL_INSPECTION,
+    InspectionError,
+    cell_lines,
+    inspection_notice,
+    inspection_payload,
+    needs_pharmacist,
+    read_inspection,
+    read_inspection_reply,
+)
 from agent.mcp_client import DrugTools, McpToolError
 from agent.plan import PlanError, build_plan
 from agent.dur import DurLookup, find_all
 from agent.risk import LEVEL_LABELS, apply_report, requires_confirmation
-from agent.schema import DispensingOrder
+from agent.schema import DispensingOrder, Inspection, Plan
 from agent.supervisor import (  # noqa: F401  decide_flow · KIND_FLOW 등은 7단계부터 이 파일에서도 불러 썼다
     DOC_KINDS,
     KIND_FLOW,
@@ -45,6 +60,9 @@ from agent.supervisor import (  # noqa: F401  decide_flow · KIND_FLOW 등은 7�
 
 StructureFn = Callable[[str, dict[str, Any] | None], DispensingOrder]   # OCR가 없으면(None) 구조화는 E_OCR_EMPTY로 실패한다
 AskFn = Callable[[dict[str, Any]], Any]     # 멈추고 약사에게 묻는다: 보여 줄 내용 -> 약사 응답 (실제로는 LangGraph의 interrupt)
+# 트레이 검수 (CV, 기능분석서 F-CV-05): (사진 ID, 조제 계획 A.4) -> 검수 결과 A.3. 실패하면 예외 (.code에 A.7 코드가 있으면 그것을 쓴다).
+# 사진 ID로 파일을 찾는 것은 부르는 쪽(웹 · 스크립트)이 정한다 (agent/cv_adapter.py).
+InspectFn = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 # HITL ① (명세서 2.2절). 이름은 웹의 agent_gateway.HITL_POINTS와 같다
 HITL_APPROVAL = "rx_approval"
@@ -63,7 +81,6 @@ NO_API_WARNING = "의약품 API를 쓰지 않아 약품 사전(대상 8종)에�
 NOT_READY_NOTICES = {
     "register_meds": "복용 약 등록은 아직 준비 중입니다.",
     "recheck": "복용 약 재대조 흐름은 아직 준비 중입니다.",
-    "tray": "트레이 검수 흐름은 아직 준비 중입니다.",
     "consult": "상담 답변은 아직 준비 중입니다.",
 }
 ASK_TYPE_NOTICE = "사진 종류를 정하지 못했습니다. 처방전 · 트레이 · 약봉투 · 포장 중에서 골라 주세요."
@@ -80,6 +97,7 @@ class Deps:
     ask: AskFn | None = None              # 약사에게 묻기. None이면 LangGraph의 interrupt (그래프 안에서만 쓸 수 있다)
     tools: DrugTools | None = None        # MCP 약품 도구 (agent.mcp_client). 있으면 매칭 · 대조를 MCP로 부른다 (API는 서버 쪽 것을 쓴다)
     dur: DurLookup | None = None          # DUR 조회 (agent.dur_api.DurApi). None이면 병용금기 · 효능군 중복은 대조하지 않는다
+    inspect: InspectFn | None = None      # 트레이 검수 (CV). None이면 트레이 사진을 검수하지 못했다고 알린다 (가짜 '전 칸 일치'를 만들지 않는다)
 
 
 def _order_dict(order: DispensingOrder) -> dict[str, Any]:
@@ -191,6 +209,7 @@ def _keep_pharmacist_choice(line, matched):
 
 MCP_FAILED_WARNING = "MCP 약품 도구를 쓰지 못해 Agent가 직접 약품을 찾았습니다"
 MCP_DUR_FAILED_WARNING = "MCP DUR 도구를 쓰지 못해 Agent가 직접 위험 신호를 대조했습니다"
+MCP_PLAN_FAILED_WARNING = "MCP 조제 도구를 쓰지 못해 Agent가 직접 조제 계획을 만들었습니다"
 
 
 def match_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
@@ -357,15 +376,98 @@ def plan_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     if state.get("status") != "approved":
         raise ValueError(f"승인되지 않은 조제지시서로는 조제 계획을 만들지 않습니다 (status={state.get('status')})")
     order = DispensingOrder.model_validate(state["order"])
+    mcp_failure = None
     try:
-        plan = build_plan(order)
+        plan = None
+        if deps.tools is not None:
+            try:
+                plan = deps.tools.build_plan(order)        # 같은 build_plan을 MCP 서버가 부른다
+            except McpToolError as e:                       # 서버가 죽어도 멈추지 않고 직접 만든다
+                mcp_failure = e
+        if plan is None:
+            plan = build_plan(order)
     except PlanError as e:
         return {
             "plan": None, "status": "failed", "notice": str(e), "error_code": e.code,
             "errors": [f"[plan] {e.code or '-'} {e}"],
         }
-    notice = f"조제 계획을 만들었습니다 ({plan.days}일, 약이 든 칸 {len(plan.plan)}개)."
-    return {"plan": plan.model_dump(mode="json"), "status": "planned", "notice": notice}
+    update: dict[str, Any] = {
+        "plan": plan.model_dump(mode="json"), "status": "planned",
+        "notice": f"조제 계획을 만들었습니다 ({plan.days}일, 약이 든 칸 {len(plan.plan)}개).",
+    }
+    if mcp_failure is not None:
+        update["notes"] = [f"{MCP_PLAN_FAILED_WARNING}: {mcp_failure}"]
+    return update
+
+
+# ------------------------------------------------------------ 트레이 검수 (HITL ②)
+
+TRAY_READY = ("planned", "inspected")          # 트레이 사진을 검수할 수 있는 상태: 조제 계획이 있다 (다시 찍은 사진도 받는다)
+NO_PLAN_NOTICE = "조제 계획이 아직 없습니다. 조제지시서를 승인한 뒤에 트레이 사진을 올려 주세요."
+NO_IMAGE_NOTICE = "트레이 사진(image_id)이 없어 검수하지 못했습니다. 사진을 다시 올려 주세요."
+NO_CV_NOTICE = "트레이 검수(CV)가 연결되지 않아 검수하지 못했습니다."
+CONFIRMED_NOTICE = "약사가 검수 결과를 확인했습니다."
+REDO_NOTICE = "재조제: 트레이를 다시 채워 사진을 올려 주세요."
+
+
+def _names(state: dict[str, Any]) -> dict[str, str]:
+    """화면에 보일 약 이름: 조제지시서의 품목기준코드 -> 이름."""
+    items = (state.get("order") or {}).get("items") or []
+    return {i["item_code"]: i["name"] for i in items if isinstance(i, dict) and i.get("item_code")}
+
+
+def _tray_failed(notice: str, code: str | None, detail: str) -> dict[str, Any]:
+    """검수하지 못함. 상태(planned)는 그대로 두어 웹이 다시 찍은 사진을 기다린다 (waiting_tray). 이유와 코드만 남긴다."""
+    return {"notice": notice, "error_code": code, "errors": [f"[tray] {code or '-'} {detail}"]}
+
+
+def tray_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
+    """트레이 사진을 지금 조제 계획과 대조한다 (CV deps.inspect, REQ-CV-04 · 05). 판정은 CV가 하고 Agent는 바꾸지 않는다.
+
+    - 조제 계획이 없으면(승인 전) 안내만 남긴다.
+    - CV가 실패하거나(트레이 못 찾음 등) 결과가 지금 계획과 맞지 않으면 실패 코드와 이유를 남기고 planned에 머문다.
+    - 전 칸 일치면 inspected. ok가 아닌 칸이 있으면 inspecting → tray_review에서 약사 확인 (HITL ②).
+    """
+    if state.get("status") not in TRAY_READY or not state.get("plan"):
+        update: dict[str, Any] = {"notice": NO_PLAN_NOTICE, "notes": [NO_PLAN_NOTICE]}
+        if state.get("status") == "received":           # 이 메시지로 아무것도 하지 않았다: 안내만 남기고 끝남
+            update["status"] = "noted"
+        return update
+    image_id = state.get("image_id")
+    if not image_id:
+        return _tray_failed(NO_IMAGE_NOTICE, E_CV_INFER, "image_id 없음")
+    if deps.inspect is None:
+        return _tray_failed(NO_CV_NOTICE, E_CV_INFER, "deps.inspect 없음")
+    plan = Plan.model_validate(state["plan"])
+    try:
+        found = deps.inspect(image_id, plan.model_dump(mode="json"))
+    except Exception as e:                       # CV 오류(E_TRAY_NOT_FOUND 등)도 모델 오류도 조제를 멈추지 않는다 (REQ-NF-06)
+        code = getattr(e, "code", None)
+        code = code if isinstance(code, str) and code.startswith("E_") else E_CV_INFER
+        return _tray_failed(f"트레이 검수에 실패했습니다: {e}", code, f"{type(e).__name__}: {e}")
+    try:
+        inspection = read_inspection(found, plan)
+    except InspectionError as e:
+        return _tray_failed(str(e), e.code, str(e))
+    update: dict[str, Any] = {"inspection": inspection.model_dump(mode="json"), "error_code": None,
+                              "notice": inspection_notice(inspection)}
+    update["status"] = "inspecting" if needs_pharmacist(inspection) else "inspected"
+    return update
+
+
+def tray_review_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
+    """검수 확인 대기 (HITL ② inspection). 여기서 멈추고, 약사가 확인 완료하면 inspected, 재조제면 planned로 돌아간다.
+
+    확인한 칸(불일치 · 확인 필요)은 notes에 남긴다 (조제 기록의 승인 이력에 쓴다).
+    """
+    inspection = Inspection.model_validate(state["inspection"])
+    plan = Plan.model_validate(state["plan"])
+    names = _names(state)
+    action = read_inspection_reply(_ask_pharmacist(deps, inspection_payload(inspection, plan, names)))
+    if action == CONFIRM:
+        checked = "; ".join(cell_lines(inspection, names))
+        return {"status": "inspected", "notice": CONFIRMED_NOTICE, "notes": [f"검수 확인(약사): {checked}"]}
+    return {"status": "planned", "notice": REDO_NOTICE, "notes": ["재조제 요청(약사): 트레이를 다시 채웁니다"]}
 
 
 # ------------------------------------------------------------ 다른 흐름의 자리
@@ -387,11 +489,6 @@ def register_meds_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
 def recheck_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     """복용 약 재대조 (자리). 15단계에서 채운다."""
     return _not_ready("recheck", state)
-
-
-def tray_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """트레이 검수 (자리). 14단계에서 채운다."""
-    return _not_ready("tray", state)
 
 
 def consult_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:

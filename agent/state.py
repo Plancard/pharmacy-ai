@@ -15,7 +15,7 @@ State에는 JSON으로 바꿀 수 있는 값(dict · list · str · None)만 담
     prescription   처방 서브그래프: 구조화 → 약품 매칭 → 위험 신호 대조 → 승인 대기(멈춤) → 조제 계획
     register_meds  복용 약 등록 (자리만 있다. 15단계)
     recheck        복용 약 재대조 (자리만 있다. 15단계)
-    tray           트레이 검수 (자리만 있다. 14단계)
+    tray           트레이 검수: CV 검수 결과(A.3)를 받아, ok가 아닌 칸이 있으면 약사 확인(HITL ② inspection)에서 멈춘다 (14단계)
     consult        상담 답변 (자리만 있다. 16단계)
 """
 from __future__ import annotations
@@ -30,9 +30,12 @@ PhotoKind = Literal["prescription", "tray", "med_bag", "package"]
 Flow = Literal["prescription", "recheck", "tray", "ask_type", "register_meds", "consult"]
 # 진행 단계. 멈춘 것(승인 대기 · 되묻기)은 상태 값이 아니라 그래프가 멈춘 것으로 안다 (checkpointer의 interrupts. api.py).
 # approved는 약사가 승인한 상태, edited는 약사가 고쳐 매칭 · 대조를 다시 하는 상태, planned는 조제 계획을 만든 상태다.
-# not_ready는 아직 만들지 않은 흐름(복용 약 · 트레이 · 상담)만 돈 것이고, noted는 글을 메모로만 남기고 끝난 것이다.
+# not_ready는 아직 만들지 않은 흐름(복용 약 · 상담)만 돈 것이고, noted는 글을 메모로만 남기고 끝난 것이다.
+# inspecting은 트레이 검수 결과에 약사 확인이 필요해 HITL ②에서 멈춘 것, inspected는 검수가 끝난 것이다(전 칸 일치 또는 약사 확인).
+# 트레이 검수가 실패하거나 재조제(redo)면 planned로 남는다 (웹: waiting_tray, 다시 찍은 사진을 기다린다).
 Status = Literal[
-    "received", "structured", "matched", "checked", "approved", "edited", "planned", "not_ready", "noted", "failed",
+    "received", "structured", "matched", "checked", "approved", "edited", "planned", "inspecting", "inspected",
+    "not_ready", "noted", "failed",
 ]
 
 PHOTO_KINDS: tuple[str, ...] = get_args(PhotoKind)
@@ -57,6 +60,7 @@ class GraphState(TypedDict, total=False):
     memo: str | None                          # 메모로만 남긴 글
     order: dict[str, Any] | None              # 조제지시서 (DispensingOrder.model_dump(mode="json"))
     plan: dict[str, Any] | None               # 조제 계획 A.4 (Plan.model_dump(mode="json")). 승인 뒤에만 생긴다
+    inspection: dict[str, Any] | None         # 마지막 트레이 검수 결과 A.3 (CV가 준 것을 확인한 것). 트레이 사진을 검수한 뒤에만 생긴다
     status: Status                            # 지금 어느 단계인지
     notice: str | None                        # 화면에 보여 줄 안내 (실패 원인, 승인 대기 안내, 되묻는 말)
     error_code: str | None                    # 실패했을 때 명세서 A.7 오류 코드 (E_OCR_EMPTY, E_LLM …)
@@ -88,7 +92,7 @@ def message_input(
 ) -> dict[str, Any]:
     """같은 대화의 두 번째 이후 메시지로 그래프에 넣을 입력: 이번 메시지 칸만.
 
-    order · plan · status는 넣지 않는다. 넣으면 앞서 승인된 조제지시서와 조제 계획이 지워진다 (체크포인터가 입력을 덮어쓴다).
+    order · plan · inspection · status는 넣지 않는다. 넣으면 앞서 승인된 조제지시서와 조제 계획이 지워진다 (체크포인터가 입력을 덮어쓴다).
     상담 대화가 처방 대화로 바뀌는 메시지(처방전 사진)면 prescription_id도 넣는다.
     """
     data: dict[str, Any] = {
@@ -120,6 +124,7 @@ def initial_state(
         **message_input(message, ocr),
         "order": None,
         "plan": None,
+        "inspection": None,
         "status": "received",
         "errors": [],
         "notes": [],

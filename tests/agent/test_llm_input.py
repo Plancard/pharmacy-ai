@@ -130,10 +130,17 @@ def test_without_a_header_a_patient_number_without_parentheses_is_not_a_starting
     assert llm_input({"lines": lines}) == (None, ["900000011 타이레놀정 3회"])
 
 
-def test_without_a_header_a_code_line_with_no_value_cell_at_all_is_not_sent():
-    # 값 칸을 하나도 못 읽었으면 어디가 표인지 알 수 없다. 아무것도 보내지 않는다 (직접 입력으로 넘어간다)
-    lines = [box("900000011 타이레놀정", 300), box("900000021 게보린정", 360)]
-    assert llm_input({"lines": lines}) == (None, [])
+def test_without_a_header_or_value_cells_a_line_that_starts_with_a_code_and_a_name_is_still_sent():
+    # 11/12 촬영본 점검: 흐린 사진에서 머리글도 값 칸도 같은 행에 못 잡으면 LLM을 부르지도 못했다 (어려운 단계 5장).
+    # '(순번) 9자리 코드 + 약 이름'으로 시작하는 줄은 약품 줄이다. LLM이 값을 못 읽으면 0을 내고 검증이 거절한다 (추측으로 채우지 않는다).
+    lines = [box("김가상 000000101", 100), box("(1)900000011 타이레놀정", 300), box("900000021 게보린정", 360)]
+    assert llm_input({"lines": lines}) == (None, ["(1)900000011 타이레놀정", "900000021 게보린정"])
+
+
+@pytest.mark.parametrize("text", ["900000011", "김가상 000000101", "000000101 (김가상)", "전화 900000011 타이레놀정"])
+def test_without_a_header_a_number_that_is_not_followed_by_a_name_or_does_not_start_the_line_is_not_a_drug_line(text):
+    # 9자리 숫자만 있는 칸은 괄호가 빠진 환자 번호일 수 있다. 환자 줄은 이름으로 시작한다. 이런 줄부터는 보내지 않는다.
+    assert llm_input({"lines": [box(text, 300)]}) == (None, [])
 
 
 @pytest.mark.parametrize(
@@ -144,7 +151,7 @@ def test_without_a_header_a_code_line_with_no_value_cell_at_all_is_not_sent():
     ],
 )
 def test_without_a_header_the_value_cell_must_overlap_the_code_line_by_thirty_percent(value_box, starts):
-    lines = [box("900000011 가정", 300), box("3회", *value_box, x1=400, x2=450)]
+    lines = [box("900000011", 300), box("3회", *value_box, x1=400, x2=450)]      # 코드만 있는 칸: 값 칸이 같은 행에 있어야 약품 줄이다
     assert bool(llm_input({"lines": lines})[1]) is starts
 
 

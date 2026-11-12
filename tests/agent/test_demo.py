@@ -29,8 +29,8 @@ def run(argv=(), **kwargs):
 
 def test_every_scenario_runs_as_expected(backend):
     code, text = run()
-    assert code == 0 and text.endswith("전체 8개 중 8개가 기대대로 돌았습니다.")
-    assert text.count(": 기대대로") == 8
+    assert code == 0 and text.endswith("전체 10개 중 10개가 기대대로 돌았습니다.")
+    assert text.count(": 기대대로") == 10
 
 
 def test_the_story_shows_the_proposal_the_plan_and_the_questions(backend):
@@ -42,11 +42,14 @@ def test_the_story_shows_the_proposal_the_plan_and_the_questions(backend):
     assert "메모: 게보린 빼 주세요" in text
     assert "승인된 조제지시서 · 조제 계획: 그대로" in text                    # 같은 대화의 두 번째 메시지 (11/12)
     assert "처방 ID: None | 의도: patient_info, question" in text             # 처방 없는 대화의 글 → 상담
+    assert "검수: 트레이 검수: 전 칸 일치 (12칸)." in text                       # 트레이 검수 (14단계)
+    assert "멈춤: inspection - 트레이 검수: 불일치 1칸, 확인 필요 0칸." in text
+    assert "오류: E_TRAY_NOT_FOUND" in text and "단계: await_tray (조제 계획은 그대로" in text
 
 
 def test_quiet_shows_one_line_per_scenario(backend):
     code, text = run(["--quiet"])
-    assert code == 0 and len(text.splitlines()) == 9
+    assert code == 0 and len(text.splitlines()) == 11
 
 
 def test_a_scenario_that_goes_wrong_is_shown_in_full_and_ends_with_one(backend, monkeypatch):

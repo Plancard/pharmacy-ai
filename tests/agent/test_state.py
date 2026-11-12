@@ -22,7 +22,7 @@ def test_the_first_state_values():
     assert initial_state("C0001") == {
         "conversation_id": "C0001", "prescription_id": None,
         "message_id": None, "image_id": None, "photo_kind": None, "ocr": None, "text": None, "intents": [],
-        "route": [], "flow": None, "proposals": [], "memo": None, "order": None, "plan": None,
+        "route": [], "flow": None, "proposals": [], "memo": None, "order": None, "plan": None, "inspection": None,
         "status": "received", "notice": None, "error_code": None, "errors": [], "notes": [],
     }
 
@@ -83,7 +83,8 @@ def test_the_values_the_state_can_take():
     assert PHOTO_KINDS == ("prescription", "tray", "med_bag", "package")
     assert FLOWS == ("prescription", "recheck", "tray", "ask_type", "register_meds", "consult")
     assert STATUSES == (
-        "received", "structured", "matched", "checked", "approved", "edited", "planned", "not_ready", "noted", "failed",
+        "received", "structured", "matched", "checked", "approved", "edited", "planned", "inspecting", "inspected",
+        "not_ready", "noted", "failed",
     )
 
 

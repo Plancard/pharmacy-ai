@@ -11,6 +11,10 @@
   3. attach_cells    나머지 칸을 세로로 가장 많이 겹치는 약품 줄에 붙인다
   4. split_columns   한 약품 줄의 칸을 글자 모양('1 TAB', '3회', '3일')으로 열별로 나눈다
   5. extract_rule    위를 합쳐 처방전 하나를 읽는다
+그 전에 straighten이 기울기를 바로잡는다 (11/12, 촬영본 점검 결과): 폰으로 찍은 사진은 종이가 몇 도 기울어 있고,
+A.1의 bbox는 기울어진 글자를 감싼 수평 상자라서 1°만 기울어도 같은 행의 칸이 세로로 겹치지 않는다
+(깨끗한 20장을 1° 돌리면 규칙 경로가 20장 모두 실패했다). 글자 상자 중심들이 가장 가지런한 줄을 이루는 각도를 찾아
+그만큼 되돌린 좌표로 읽는다. 원근(사다리꼴)은 여기서 펴지 못한다. 그것은 CV의 전처리(종이 네 모서리를 찾아 펴기)가 맡는다.
 
 약품 줄을 9자리 코드로 알아보므로, 코드가 인쇄되지 않은 처방전은 규칙으로 읽지 못하고 LLM 경로로 넘어간다.
 읽을 수 없으면 추측하지 않고 StructureError로 알린다. (그러면 구조화 함수가 LLM 경로로 넘어간다)
@@ -22,6 +26,7 @@ import re
 import unicodedata
 from typing import Any
 
+from agent.drug_names import similarity
 from agent.errors import E_OCR_EMPTY, StructureError   # 다른 파일도 같은 에러를 쓰려고 errors.py로 옮겼다
 
 Line = dict[str, Any]   # A.1의 lines 한 칸: {"text": ..., "bbox": [x1, y1, x2, y2], "conf": ...}
@@ -49,6 +54,85 @@ def _nfkc(text: str) -> str:
 def _key(line: Line) -> str:
     """공백을 모두 없앤 글자. OCR이 띄어 읽기 쉬운 말('주사제 처방명세')을 찾을 때 쓴다."""
     return "".join(_nfkc(line["text"]).split())
+
+
+# ---------------------------------------------------------------- 0) 기울기 바로잡기
+
+SKEW_MAX_DEG = 15.0        # 찾는 범위 (±). 이보다 더 기운 사진은 다시 찍어야 한다
+SKEW_MIN_DEG = 0.3         # 이보다 작으면 바로잡지 않는다 (반듯한 입력은 좌표를 그대로 쓴다)
+SKEW_MIN_LINES = 20        # 칸이 이보다 적으면 각도를 믿을 수 없다 (칸 몇 개의 우연한 어긋남을 기울기로 읽는다). 처방전 한 장은 60칸이 넘는다
+SKEW_MIN_GAIN = 1.05       # 돌린 뒤의 가지런함이 0°의 이 배 이상이어야 기운 것으로 본다
+
+
+def _row_score(points: list[tuple[float, float]], deg: float, sigma: float) -> float:
+    """deg만큼 되돌렸을 때 칸 중심들이 얼마나 가지런한 줄을 이루는가.
+
+    되돌린 세로 위치가 가까운 칸 쌍마다 가까운 만큼 점수를 더한다 (exp(-(차이/sigma)²/2)). 같은 행의 칸들이 한 줄에 모일수록 크다.
+    통에 담아 세는 방식은 통의 경계에 따라 각도가 0.5°씩 흔들려서 쓰지 않는다 (0.75° 기운 사진을 놓쳤다).
+    """
+    t = math.radians(deg)
+    sin, cos = math.sin(t), math.cos(t)
+    ys = sorted(-x * sin + y * cos for x, y in points)
+    reach = 3 * sigma
+    total = 0.0
+    for i, a in enumerate(ys):
+        for b in ys[i + 1:]:
+            d = b - a
+            if d > reach:
+                break
+            total += math.exp(-0.5 * (d / sigma) ** 2)
+    return total
+
+
+def estimate_skew(lines: list[Line]) -> float:
+    """글자 칸들이 기운 각도(도). 시계 방향으로 기울었으면 양수. 칸이 너무 적거나 반듯하면 0.0.
+
+    0.5° 간격으로 훑고 그 둘레를 0.05° 간격으로 다시 본다. 점수가 같으면 0에 가까운 쪽을 고른다.
+    """
+    if len(lines) < SKEW_MIN_LINES:
+        return 0.0
+    points = [((l["bbox"][0] + l["bbox"][2]) / 2, _center_y(l)) for l in lines]
+    sizes = sorted(min(_height(l), l["bbox"][2] - l["bbox"][0]) for l in lines)
+    glyph = max(8.0, sizes[len(sizes) // 2])               # 글자 높이 (가운데 값). 긴 글자는 상자가 부풀어 있어 짧은 변을 쓴다
+
+    def best(candidates: list[float], sigma: float) -> float:
+        return max(candidates, key=lambda d: (round(_row_score(points, d, sigma), 6), -abs(d)))
+
+    steps = int(SKEW_MAX_DEG * 2)
+    coarse = best([i * 0.5 for i in range(-steps, steps + 1)], glyph * 0.5)
+    fine = best([round(coarse + i * 0.05, 2) for i in range(-10, 11)], glyph * 0.15)
+    if abs(fine) < SKEW_MIN_DEG:
+        return 0.0
+    # 반듯한 입력을 괜히 돌리지 않는다: 돌렸을 때 0°보다 뚜렷이 가지런해질 때만 기운 것으로 본다.
+    # (반듯한 샘플 30장은 이 비율이 1.00, 0.5° 이상 돌린 샘플은 모두 1.10 이상이었다)
+    level = _row_score(points, 0.0, glyph * 0.15)
+    return fine if _row_score(points, fine, glyph * 0.15) >= SKEW_MIN_GAIN * level else 0.0
+
+
+def straighten(lines: list[Line], deg: float | None = None) -> list[Line]:
+    """기울기를 되돌린 좌표의 칸들 (새 dict, 순서와 line_id · 글자 · 신뢰도는 그대로). 반듯하면 받은 목록을 그대로 돌려준다.
+
+    bbox는 기울어진 글자를 감싼 수평 상자라 가로 W = w·cos + h·sin, 세로 H = w·sin + h·cos 로 부풀어 있다.
+    이를 풀어 글자의 원래 크기(w, h)를 구하고, 되돌린 중심에 그 크기의 상자를 둔다.
+    line_id가 없던 결과는 목록 순서가 line_id이므로 순서를 바꾸지 않는다 (source_line_ids는 원본을 가리킨다).
+    """
+    deg = estimate_skew(lines) if deg is None else deg
+    if deg == 0.0:
+        return lines
+    t = math.radians(deg)
+    cos, sin = math.cos(t), abs(math.sin(t))
+    den = cos * cos - sin * sin
+    out: list[Line] = []
+    for line in lines:
+        x1, y1, x2, y2 = line["bbox"]
+        box_w, box_h = x2 - x1, y2 - y1
+        w, h = (box_w * cos - box_h * sin) / den, (box_h * cos - box_w * sin) / den
+        if w <= 0 or h <= 0:                     # 좌표 반올림 때문에 식이 음수를 낸 칸(한두 글자): 상자의 짧은 변을 크기로 쓴다
+            w = h = min(box_w, box_h)
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        nx, ny = cx * math.cos(t) + cy * math.sin(t), -cx * math.sin(t) + cy * math.cos(t)
+        out.append({**line, "bbox": [nx - w / 2, ny - h / 2, nx + w / 2, ny + h / 2]})
+    return out
 
 
 # ---------------------------------------------------------------- LLM 경로에 넘길 텍스트용: 같은 줄 묶기
@@ -95,8 +179,24 @@ HEADER_WORDS = ("처방의약품의명칭", "투약량", "횟수", "일수", "�
 MIN_HEADER_WORDS = 2
 # 머리글 낱말 칸에 낱말 말고 더 붙어 있어도 되는 글자 수. 긴 문장 속의 우연한 일치를 막는다.
 HEADER_EXTRA_CHARS = 2
+# 흐린 사진에서는 머리글 글자가 틀리게 읽힌다 ('투악량', '처방의악품의명칭'). 세 글자 이상인 낱말은 자모 단위로 이만큼 비슷하면 같은 낱말로 본다.
+# 두 글자 낱말(횟수 · 일수)은 서로 비슷해서 글자가 같을 때만 인정한다.
+HEADER_SIMILAR_MIN = 0.8
+HEADER_FUZZY_MIN_LEN = 3
 # 이 말로 시작하는 줄부터는 약품 표 밖이다.
 TABLE_END_WORD = "주사제"
+
+
+def _header_word(key: str) -> str | None:
+    """이 칸이 머리글 낱말이면 그 낱말, 아니면 None. 글자가 그대로 들어 있거나(조금 더 붙어도 됨), 긴 낱말은 비슷하게 읽혀도 인정한다."""
+    for word in HEADER_WORDS:
+        if word in key and len(key) <= len(word) + HEADER_EXTRA_CHARS:
+            return word
+    for word in HEADER_WORDS:
+        if (len(word) >= HEADER_FUZZY_MIN_LEN and abs(len(key) - len(word)) <= HEADER_EXTRA_CHARS
+                and similarity(key, word) >= HEADER_SIMILAR_MIN):
+            return word
+    return None
 
 
 def table_end(lines: list[Line]) -> float:
@@ -115,10 +215,9 @@ def find_table(lines: list[Line]) -> tuple[float, float]:
     for line in lines:
         if _center_y(line) >= bottom:
             continue
-        key = _key(line)
-        for word in HEADER_WORDS:
-            if word in key and len(key) <= len(word) + HEADER_EXTRA_CHARS:
-                found[word] = max(found.get(word, -math.inf), line["bbox"][3])
+        word = _header_word(_key(line))
+        if word is not None:
+            found[word] = max(found.get(word, -math.inf), line["bbox"][3])
     if len(found) < MIN_HEADER_WORDS:
         raise StructureError("처방 의약품 표의 머리글(횟수·일수 등)을 찾지 못했습니다.")
     return max(found.values()), bottom
@@ -339,6 +438,8 @@ def extract_rule(ocr: dict[str, Any]) -> dict[str, Any]:
     - 약품 줄인데 1회량·횟수·일수 칸이 없거나 여러 개, 정수가 아님, 약품명이 비어 있음
     """
     lines = _check_lines(ocr)
+    line_ids(lines)                      # line_id 형식은 원본으로 확인한다
+    lines = straighten(lines)            # 기운 사진이면 되돌린 좌표로 읽는다 (순서 · line_id는 그대로)
     ids = line_ids(lines)
     top, bottom = find_table(lines)
     body = [l for l in lines if top < _center_y(l) < bottom]
@@ -367,6 +468,9 @@ def extract_rule(ocr: dict[str, Any]) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- LLM 경로에 넘길 텍스트
 
+# 약품 줄의 시작: (순번) 9자리 코드 바로 뒤에 약 이름의 글자. 머리글도 값 칸도 못 찾았을 때 LLM에 보낼 범위를 정하는 데만 쓴다.
+_DRUG_LINE_START = re.compile(r"^\s*(?:\(\s*\d+\s*\)\s*)?\d{9}(?!\d)\s*[^\d\s()\[\]]")
+
 # 환자 이름 옆의 환자 번호 "김가상(000000101)". 9자리라서 약품 코드와 헷갈리지 않게 따로 가린다.
 _PATIENT_NUMBER = re.compile(r"\(\d{9}\)")
 
@@ -382,10 +486,12 @@ def llm_input(ocr: dict[str, Any]) -> tuple[str | None, list[str]]:
     - 머리글을 못 찾으면(규칙 경로가 실패한 흔한 이유) 첫 약품 줄부터 표 끝까지 보낸다.
       약품 줄은 9자리 코드가 있고, 같은 행에 값 칸(1 TAB, 3회, 3일 …)이 하나 이상 있는 줄이다.
       (OCR이 환자 번호의 괄호를 빠뜨려 '김가상 000000101'로 읽어도 그 줄부터 보내지 않게 한다.)
-      약품 줄이 하나도 없으면 보낼 줄이 없다(빈 목록).
+      그런 줄도 없으면 '(순번) 9자리 코드 + 약 이름'으로 시작하는 줄을 약품 줄로 본다 (11/12: 어려운 촬영본 5장이
+      LLM에 보낼 줄이 없어 호출조차 못 했다). 그것도 없으면 보낼 줄이 없다(빈 목록).
+      OCR 전체를 보내지는 않는다: 환자 · 의료인 정보를 LLM에 보내지 않는 원칙을 지킨다.
     OCR 형식이 올바르지 않으면 StructureError.
     """
-    lines = _check_lines(ocr)
+    lines = straighten(_check_lines(ocr))      # 기운 사진이면 되돌린 좌표로 줄을 묶는다
     try:
         top, bottom = find_table(lines)
     except StructureError:
@@ -398,6 +504,10 @@ def llm_input(ocr: dict[str, Any]) -> tuple[str | None, list[str]]:
             and not _PATIENT_NUMBER.search(_nfkc(l["text"]))
             and any(_overlap(l, v) >= MIN_OVERLAP_RATIO * min(_height(l), _height(v)) for v in values)
         ]
+        if not codes:
+            # 값 칸이 같은 행에 잡히지 않아도(흐린 사진, 덜 펴진 원근) 코드로 시작하고 바로 약 이름이 이어지는 줄은 약품 줄이다.
+            # 환자 줄은 이름으로 시작하므로('김가상 000000101') 여기에 걸리지 않는다. 9자리 숫자만 있는 칸도 받지 않는다.
+            codes = [l for l in lines if _center_y(l) < bottom and _DRUG_LINE_START.match(_nfkc(l["text"]))]
         # 첫 코드 줄에서 시작한다. 같은 행의 칸이 조금 위로 어긋나도 들어오게 그 줄 높이의 절반만큼 더 위부터.
         top = min((l["bbox"][1] - _height(l) / 2 for l in codes), default=math.inf)
     body = [l for l in lines if top < _center_y(l) < bottom and l["text"].strip()]

@@ -213,7 +213,7 @@ def test_the_subgraph_alone_cannot_be_given_a_photo_kind(sub_graph, capsys):
 
 @pytest.mark.parametrize("argv, status, flow, notice", [
     (["--kind", "med_bag", "--no-ocr"], "not_ready", "recheck", "복용 약 재대조 흐름은 아직 준비 중입니다."),
-    (["--kind", "tray", "--no-ocr"], "not_ready", "tray", "트레이 검수 흐름은 아직 준비 중입니다."),
+    (["--kind", "tray", "--no-ocr"], "noted", "tray", "조제 계획이 아직 없습니다. 조제지시서를 승인한 뒤에 트레이 사진을 올려 주세요."),
     (["--kind", "prescription"], WAITING, "prescription", "약사 승인을 기다립니다."),
     (["--no-ocr"], "멈춤(type_select)", "ask_type", "사진 종류 정보가 없습니다."),
     (["--kind", "receipt"], "멈춤(type_select)", "ask_type", "알 수 없는 사진 종류입니다."),
@@ -231,7 +231,7 @@ def test_the_photo_kind_decides_the_flow(graph, argv, status, flow, notice):
 def test_choose_answers_the_kind_question(graph):
     code, text = run(["--no-ocr", "--choose", "tray"], graph)
     assert code == 0 and "고를 수 있는 것: prescription(처방전) · tray(트레이) · med_bag(약봉투) · package(포장)" in text
-    assert "-> 약사가 'tray'을(를) 고릅니다" in text and "[rx_001] 상태: not_ready | 흐름: tray | 순서: tray" in text
+    assert "-> 약사가 'tray'을(를) 고릅니다" in text and "[rx_001] 상태: noted | 흐름: tray | 순서: tray" in text
 
 
 def test_a_choice_that_cannot_be_chosen_is_reported(graph):

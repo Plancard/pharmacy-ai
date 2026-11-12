@@ -14,6 +14,7 @@
 
 주의
 - gpt-5 계열은 temperature를 기본값(1)만 받는다. 0 등을 보내면 400 오류가 나므로 보내지 않는다.
+- 추론 강도(reasoning_effort)는 config.LLM_REASONING_EFFORT(기본 low)를 보낸다. 보내지 않으면 기본값으로 오래 생각해 시간 제한에 걸린다.
 - openai 패키지는 실제로 호출할 때만 불러온다. (키·패키지 없이도 테스트가 돈다)
 - 오류 문장에는 처방전 내용이 섞여 들어올 수 있어, 예외는 종류(이름)만 남기고 문장은 버린다.
 """
@@ -74,11 +75,15 @@ def chat_parse(
     앞으로 다른 LLM 호출(의도 분류, 답변 생성 …)도 이 함수를 거치면 시간 제한과 오류 처리가 한 곳에 모인다.
     """
     client = client or _default_client()   # 키가 없으면 ConfigError (재시도해도 소용없다)
+    options: dict[str, Any] = {}
+    if config.LLM_REASONING_EFFORT:        # 추론 강도 (기본 low). 빈 값이면 보내지 않는다
+        options["reasoning_effort"] = config.LLM_REASONING_EFFORT
     try:
         completion = client.chat.completions.parse(
             model=model or config.OPENAI_MODEL,
             messages=messages,
             response_format=response_format,
+            **options,
         )
         message = completion.choices[0].message
     except Exception as e:

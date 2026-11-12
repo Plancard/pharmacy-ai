@@ -48,8 +48,9 @@ class Counting:
         return structure_prescription(prescription_id, ocr, llm_fn=lambda *a: pytest.fail("LLM을 부르면 안 됩니다"))
 
 
-def make_api(structure=None, checkpointer=None):
-    graph = build_graph(dictionary=DICT, structure=structure or Counting(), api=None, checkpointer=checkpointer or memory_checkpointer())
+def make_api(structure=None, checkpointer=None, inspect=None):
+    graph = build_graph(dictionary=DICT, structure=structure or Counting(), api=None,
+                        checkpointer=checkpointer or memory_checkpointer(), inspect=inspect)
     return AgentApi(graph)
 
 
@@ -106,7 +107,8 @@ def test_a_structure_failure_is_an_error_with_the_a7_code(backend):
 def test_a_photo_that_is_not_a_prescription_does_not_stop_at_the_approval(backend):
     api = make_api()
     assert api.start("P0001", None, "tray", prescription_id="P0001") is None
-    assert api.stage("P0001") == "not_ready"
+    assert api.stage("P0001") == "noted"                              # 조제 계획이 없어 검수하지 않는다
+    assert "조제 계획이 아직 없습니다" in api.result("P0001")["notice"]
 
 
 def test_a_tray_photo_that_starts_a_conversation_without_a_prescription_is_not_run(backend):
@@ -293,14 +295,16 @@ def test_text_that_cannot_be_read_in_a_prescription_conversation_asks_its_meanin
 
 
 def test_the_next_message_keeps_the_approved_order_and_the_plan(backend):
-    api = make_api()
+    from agent.cv_adapter import stub_inspect
+
+    api = make_api(inspect=stub_inspect("ok"))
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     api.resume("P0001", "rx_approval", approve_reply(pause))
     before = api.result("P0001")
     assert api.send("P0001", None, "tray", message_id="m2", image_id="tray-1") is None
     after = api.result("P0001")
     assert (after["order"], after["plan"]) == (before["order"], before["plan"])
-    assert (after["route"], after["message_id"], api.stage("P0001")) == (["tray"], "m2", "await_tray")
+    assert (after["route"], after["message_id"], api.stage("P0001")) == (["tray"], "m2", "inspected")
 
 
 def test_send_also_starts_a_new_conversation(backend):

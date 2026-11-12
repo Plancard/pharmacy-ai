@@ -9,6 +9,8 @@ call()이 그 스레드에 요청을 넘긴 뒤 결과를 기다린다. 연결�
         matched, api_used = tools.match_drug(order)
 
     tools = in_process(dictionary, api=None)        # 프로세스 없이 서버 객체에 바로 붙는다 (테스트 · 측정용)
+    tools = http("http://127.0.0.1:8765/mcp")       # 따로 띄운 서버(python -m agent.mcp_server --http)에 주소로 붙는다
+    tools = from_settings()                         # .env의 AGENT_MCP_URL이 있으면 http, 없으면 stdio
 """
 from __future__ import annotations
 
@@ -23,7 +25,8 @@ from typing import TYPE_CHECKING, Any
 from agent.drug_dictionary import DrugDictionary
 from agent.drug_match import ApiSearch
 from agent.dur import DurLookup, DurReport, combine_checks, report_from_json
-from agent.schema import DispensingOrder
+from agent.plan import PlanError
+from agent.schema import DispensingOrder, Plan
 
 if TYPE_CHECKING:
     from mcp.client.stdio import StdioServerParameters
@@ -42,7 +45,7 @@ class DrugTools:
     """MCP 서버 하나에 연결을 열어 두고 도구를 부르는 동기 클라이언트."""
 
     def __init__(self, target: Any):
-        self._target = target                       # MCPServer 객체(같은 프로세스) 또는 StdioServerParameters
+        self._target = target                       # MCPServer 객체(같은 프로세스), StdioServerParameters 또는 HTTP 주소(문자열)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._queue: asyncio.Queue | None = None
         self._thread: threading.Thread | None = None
@@ -146,6 +149,14 @@ class DrugTools:
         found = self.call("match_drug", order=order.model_dump(mode="json"))
         return DispensingOrder.model_validate(found["order"]), bool(found["api_used"])
 
+    def build_plan(self, order: DispensingOrder) -> Plan:
+        """plan.build_plan과 같은 일을 서버가 한다. 계획을 만들 수 없으면 PlanError (코드 · 이유는 서버가 준 것)."""
+        made = self.call("build_plan", order=order.model_dump(mode="json"))
+        if made.get("plan") is None:
+            error = made.get("error") or {}
+            raise PlanError(error.get("message") or "조제 계획을 만들 수 없습니다.", code=error.get("code"))
+        return Plan.model_validate(made["plan"])
+
     def check_dur(self, items) -> DurReport:
         """dur.find_all과 같은 대조를 서버가 한다: 병용금기(check_interaction) + 중복(check_duplicate).
 
@@ -178,3 +189,24 @@ def in_process(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: Du
     from agent.mcp_server import build_server   # 같은 층. 쓸 때만 서버를 만든다
 
     return DrugTools(build_server(dictionary, api, dur)).open()
+
+
+def http(url: str) -> DrugTools:
+    """따로 띄운 서버(python -m agent.mcp_server --http)에 주소로 붙은 클라이언트 (열린 상태). 다 쓰면 close().
+
+    주소는 http://HOST:PORT/mcp 모양이다. 서버가 떠 있지 않으면 McpToolError.
+    """
+    if not url.startswith(("http://", "https://")):
+        raise McpToolError(f"MCP 서버 주소는 http:// 또는 https://로 시작해야 합니다: {url!r}")
+    return DrugTools(url).open()
+
+
+def from_settings(*, no_api: bool = False) -> DrugTools:
+    """설정대로 연결한다: .env에 AGENT_MCP_URL이 있으면 그 서버(http), 없으면 하위 프로세스(stdio).
+
+    no_api는 stdio로 띄울 때만 쓴다. 따로 띄운 서버의 API 사용 여부는 서버를 띄울 때 정한다.
+    """
+    from agent import config   # 바닥 층
+
+    url = config.mcp_url()
+    return http(url) if url else stdio(no_api=no_api)

@@ -4,6 +4,7 @@
     python scripts/agent/try_mcp.py --no-api      # 의약품 API 없이 (약품 사전만). 함수 쪽도 API를 쓰지 않는다
     python scripts/agent/try_mcp.py --verify      # verify_dictionary 도구까지 부른다 (의약품 API를 8번 부른다)
     python scripts/agent/try_mcp.py --in-process  # 하위 프로세스 없이 서버 객체에 바로 붙는다 (stdio 문제를 가를 때)
+    python scripts/agent/try_mcp.py --url http://127.0.0.1:8765/mcp   # 따로 띄운 서버(python -m agent.mcp_server --http)에 붙는다
 
 pytest가 아니다. 서버는 python -m agent.mcp_server 로 띄운다 (stdio). 서버 쪽 의약품 API는 .env의 DRUG_API_KEY를 따른다.
 비교는 처방전마다 그래프를 두 번 돌린다: 매칭 노드가 함수(drug_match.match_order)를 부를 때와 MCP 도구(match_drug)를 부를 때.
@@ -29,7 +30,7 @@ from agent.dur_api import default_dur_api  # noqa: E402
 from agent.drug_dictionary import load_dictionary  # noqa: E402
 from agent.errors import ConfigError, StructureError  # noqa: E402
 from agent.graph import build_graph, resume_run, run_message  # noqa: E402
-from agent.mcp_client import DrugTools, McpToolError, in_process, stdio  # noqa: E402
+from agent.mcp_client import DrugTools, McpToolError, http, in_process, stdio  # noqa: E402
 from agent.nodes import APPROVE, HITL_APPROVAL  # noqa: E402
 from agent.pipeline import structure_prescription  # noqa: E402
 
@@ -183,18 +184,33 @@ def main(argv: list[str] | None = None, *, out: Callable[[str], None] = print,
     parser.add_argument("--no-api", action="store_true", help="의약품 API를 쓰지 않는다 (서버 · 함수 둘 다)")
     parser.add_argument("--verify", action="store_true", help="verify_dictionary 도구도 부른다 (API 8번)")
     parser.add_argument("--in-process", action="store_true", help="하위 프로세스 없이 서버 객체에 바로 붙는다")
+    parser.add_argument("--url", help="따로 띄운 서버의 주소 (예: http://127.0.0.1:8765/mcp). 서버 쪽 API 사용은 서버를 띄울 때 정한다")
     args = parser.parse_args(argv)
+    if args.url and args.in_process:
+        parser.error("--url과 --in-process는 함께 쓸 수 없습니다")
 
     try:
         api = None if args.no_api else default_api()
         dur = None if args.no_api else default_dur_api()
-        tools = in_process(load_dictionary(), api, dur) if args.in_process else stdio(no_api=args.no_api)
+        if args.url:
+            tools = http(args.url)
+        elif args.in_process:
+            tools = in_process(load_dictionary(), api, dur)
+        else:
+            tools = stdio(no_api=args.no_api)
     except (McpToolError, ConfigError) as e:
         out(f"MCP 서버에 연결하지 못했습니다: {e}")
+        if args.url:
+            out("서버가 떠 있는지 보세요: 다른 터미널에서 python -m agent.mcp_server --http")
         out("mcp 패키지가 없다면 pip install -r agent/requirements.txt 로 설치해 주세요.")
         return 1
     try:
-        how = "같은 프로세스" if args.in_process else "stdio: python -m agent.mcp_server" + (" --no-api" if args.no_api else "")
+        if args.url:
+            how = f"HTTP: {args.url}"
+        elif args.in_process:
+            how = "같은 프로세스"
+        else:
+            how = "stdio: python -m agent.mcp_server" + (" --no-api" if args.no_api else "")
         out(f"서버: {how} | 의약품 API: {'사용' if api is not None else '사용 안 함'}"
             f" | DUR API: {'사용' if dur is not None else '사용 안 함'}")
         out(f"도구 {len(tools.tool_names())}개")
