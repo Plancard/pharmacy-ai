@@ -1,8 +1,0 @@
-{
-  "_note": "취침 전을 포함한 사례. 하루 4회(트레이의 네 행 전부)와 2회(저녁·취침 전)이고, 용법이 두 칸으로 나뉘어 읽힌다.",
-  "issue_no": "2026110400004",
-  "drugs": [
-    {"name": "판피린티정", "printed_code": "699000061", "dose_per_time": 1, "times_per_day": 4, "days": 2, "time_slots": ["morning", "noon", "evening", "bedtime"]},
-    {"name": "베아제정", "printed_code": "699000041", "dose_per_time": 2, "times_per_day": 2, "days": 3, "time_slots": ["evening", "bedtime"]}
-  ]
-}

@@ -1,8 +1,0 @@
-{
-  "_note": "용법에 복용 시점이 적힌 사례. 교부번호가 두 칸으로 나뉘어 읽히고, 게보린정 글자의 인식 신뢰도가 낮다.",
-  "issue_no": "2026110400002",
-  "drugs": [
-    {"name": "부루펜정", "printed_code": "699000051", "dose_per_time": 1, "times_per_day": 3, "days": 2, "time_slots": ["morning", "noon", "evening"]},
-    {"name": "게보린정", "printed_code": "699000031", "dose_per_time": 1, "times_per_day": 2, "days": 2, "time_slots": ["morning", "evening"]}
-  ]
-}
