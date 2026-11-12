@@ -11,8 +11,17 @@ RunPod 등 다른 PC에서는 이 스크립트를 다시 돌리면 된다(시드
   data/tray/photos.csv                  file,group,tilt,light,note
   data/tray/cells.csv                   group,day,time,planned,actual,error,flags
 
+그룹 배정은 한 번 정하면 고정한다 (11/12)
+  data/splits/tray_groups.csv (group,split)에 그룹별 배정을 적어 두고, 다음 실행부터는 이 파일을 그대로 따른다.
+  - 파일이 없고 예전 tray_*.txt가 있으면 그 목록에서 배정을 읽어 파일을 만든다 (11/12 이전 분할을 그대로 이어 가기)
+  - 둘 다 없으면 조건 탐색으로 새로 나누고 파일을 만든다
+  - 파일에 없는 새 그룹(추가 촬영)은 --new-split(기본 train)으로 보내고 파일 끝에 덧붙인다
+  - 분할을 처음부터 다시 하려면 --reshuffle (test가 바뀌므로 최종 평가 전에는 쓰지 않는다)
+  AI Hub 분할은 같은 rng를 먼저 쓰므로 AI Hub 장수가 바뀌면 탐색 결과도 바뀐다. 그래서 탐색 결과를 파일로 고정한다.
+
 출력 (data/splits/)
   aihub_train.txt / aihub_val.txt
+  tray_groups.csv  그룹 → train · val · test (고정 기록)
   tray_train.txt / tray_val.txt / tray_test.txt
   data_base.yaml   기준 모델: AI Hub만 (11/9)
   data.yaml        본 학습: AI Hub 학습분 + 트레이 학습분, 검증·테스트는 트레이 사진만
@@ -20,11 +29,12 @@ RunPod 등 다른 PC에서는 이 스크립트를 다시 돌리면 된다(시드
 
 사용 예
   python cv/split.py              # AI Hub만 있으면 data_base.yaml까지만 만든다
-  python cv/split.py --seed 1     # 시드를 바꿔 다른 분할
+  python cv/split.py --seed 1 --reshuffle   # 그룹 배정을 새로 탐색 (tray_groups.csv를 덮어씀)
 """
 import argparse
 import csv
 import random
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -35,6 +45,8 @@ IMG_EXTS = (".png", ".jpg", ".jpeg")
 TARGET = {"train": 50, "val": 20, "test": 30}   # 트레이 사진 장수 목표
 N_GROUPS = {"train": 10, "val": 4, "test": 6}   # 20그룹 기준
 EMPTY_VAL = 4                                   # 빈 트레이 20장 중 검증으로 보낼 장수(나머지는 학습)
+SPLITS = ("train", "val", "test")
+GROUP_OF = re.compile(r"^(g\d+)_s\d+$")         # g07_s03 → g07
 
 
 def load_classes():
@@ -160,6 +172,62 @@ def split_tray(info, rng, tries=20000):
     return best, best_s
 
 
+# ---------- 그룹 배정 고정 ----------
+
+def read_groups_csv(path):
+    with open(path, encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    bad = [r for r in rows if r.get("split") not in SPLITS]
+    if bad:
+        raise SystemExit(f"{path}: split 값이 train·val·test가 아님: {bad[0]}")
+    return {r["group"]: r["split"] for r in rows}
+
+
+def groups_from_lists(out):
+    """예전 tray_{train,val,test}.txt에서 그룹 배정을 읽는다. 한 그룹이 두 곳에 있으면 멈춘다."""
+    assign = {}
+    for s in SPLITS:
+        f = out / f"tray_{s}.txt"
+        if not f.exists():
+            return None
+        for line in f.read_text(encoding="utf-8").split():
+            m = GROUP_OF.match(Path(line).stem)
+            if not m:
+                continue                     # empty_ 등 그룹 없는 사진
+            g = m.group(1)
+            if assign.setdefault(g, s) != s:
+                raise SystemExit(f"{g}가 tray_{assign[g]}.txt와 tray_{s}.txt에 함께 있음 → 목록을 확인")
+    return assign or None
+
+
+def write_groups_csv(path, assign):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["group", "split"])
+        for g in sorted(assign):
+            w.writerow([g, assign[g]])
+
+
+def fixed_assign(out, info, new_split):
+    """고정 배정을 읽고(없으면 예전 목록에서 만들고) 새 그룹을 new_split으로 보낸다.
+    → (배정, 출처 설명, 새로 넣은 그룹) 또는 고정 배정이 없으면 None"""
+    path = out / "tray_groups.csv"
+    if path.exists():
+        assign, src = read_groups_csv(path), "tray_groups.csv"
+    else:
+        assign, src = groups_from_lists(out), "예전 tray_*.txt"
+        if assign is None:
+            return None
+    gone = sorted(set(assign) - set(info))
+    if gone:
+        print(f"  [확인] 배정에는 있는데 사진이 없는 그룹: {' '.join(gone)} (배정은 그대로 둔다)")
+    added = sorted(set(info) - set(assign))
+    for g in added:
+        assign[g] = new_split
+    write_groups_csv(path, assign)
+    return {g: s for g, s in assign.items() if g in info}, src, added
+
+
 # ---------- 출력 ----------
 
 def write_list(path, items):
@@ -180,6 +248,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--aihub-val", type=float, default=0.1, help="AI Hub 검증 비율")
     ap.add_argument("--tray-repeat", type=int, default=1, help="data.yaml에 트레이 학습 목록을 넣는 횟수")
+    ap.add_argument("--new-split", choices=SPLITS, default="train", help="고정 배정에 없는 새 그룹을 보낼 곳")
+    ap.add_argument("--reshuffle", action="store_true", help="고정 배정을 무시하고 그룹 배정을 새로 탐색")
     args = ap.parse_args()
 
     data = Path(args.data)
@@ -206,7 +276,15 @@ def main():
         print("트레이: 사용할 그룹 없음")
         return
 
-    assign, (bad, dev) = split_tray(info, rng)
+    fixed = None if args.reshuffle else fixed_assign(out, info, args.new_split)
+    if fixed is None:
+        assign, (bad, dev) = split_tray(info, rng)
+        write_groups_csv(out / "tray_groups.csv", assign)
+        origin = f"조건 탐색 (seed {args.seed}, 조건 위반 {bad}, 장수 목표 차이 {dev})"
+    else:
+        assign, src, added = fixed
+        bad = 0
+        origin = f"고정 배정 ({src})" + (f", 새 그룹 {' '.join(added)} → {args.new_split}" if added else "")
     lists = {"train": [], "val": [], "test": []}
     for g in sorted(assign):
         lists[assign[g]] += info[g]["photos"]
@@ -220,7 +298,7 @@ def main():
                ["splits/aihub_train.txt"] + ["splits/tray_train.txt"] * args.tray_repeat,
                "splits/tray_val.txt", "splits/tray_test.txt", classes)
 
-    lines = [f"seed {args.seed}, 조건 위반 {bad}, 장수 목표 차이 {dev}"]
+    lines = [origin]
     for s in ("train", "val", "test"):
         gs = sorted(g for g in assign if assign[g] == s)
         n_err = sum(info[g]["errors"] > 0 for g in gs)
@@ -233,7 +311,7 @@ def main():
     print("트레이\n  " + report.replace("\n", "\n  "))
     if bad:
         print("  [경고] 조건을 다 만족하는 분할이 없음. 오류 칸·flags가 있는 그룹이 너무 적은지 확인")
-    print(f"  → data.yaml")
+    print(f"  → data.yaml, tray_groups.csv")
 
 
 if __name__ == "__main__":
