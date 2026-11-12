@@ -89,6 +89,9 @@ def load_tray(data):
     groups = defaultdict(lambda: {"photos": [], "cells": []})
     problems = []
     for r in photos:
+        # 빈 트레이는 아래 empties로 따로 나누고, 180° 사진(rot_)은 검수 rotated 평가용이라 검출 분할에서 뺀다
+        if not r["group"] or r["file"].startswith("rot_"):
+            continue
         p = tray / "images" / r["file"]
         if not p.exists():
             problems.append(f"사진 없음: {r['file']}")
@@ -176,6 +179,7 @@ def main():
     ap.add_argument("--data", default=str(ROOT / "data"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--aihub-val", type=float, default=0.1, help="AI Hub 검증 비율")
+    ap.add_argument("--tray-repeat", type=int, default=1, help="data.yaml에 트레이 학습 목록을 넣는 횟수")
     args = ap.parse_args()
 
     data = Path(args.data)
@@ -213,7 +217,7 @@ def main():
         write_list(out / f"tray_{s}.txt", sorted(items))
 
     write_yaml(out / "data.yaml", data,
-               ["splits/aihub_train.txt", "splits/tray_train.txt"],
+               ["splits/aihub_train.txt"] + ["splits/tray_train.txt"] * args.tray_repeat,
                "splits/tray_val.txt", "splits/tray_test.txt", classes)
 
     lines = [f"seed {args.seed}, 조건 위반 {bad}, 장수 목표 차이 {dev}"]

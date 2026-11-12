@@ -16,6 +16,7 @@ from web.config import check_required, load_config
 STATUS_LABELS = {
     "processing": "처리 중",
     "waiting_approval": "승인 대기",
+    "waiting_tray": "트레이 대기",
     "done": "완료",
     "failed": "실패",
 }

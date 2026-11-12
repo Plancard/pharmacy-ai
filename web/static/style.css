@@ -31,6 +31,7 @@ button.link { background: none; color: var(--accent); padding: 0; font-size: 14p
 .rx-item small { margin-left: auto; color: var(--muted); }
 .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: var(--accent); }
 .badge.waiting_approval { background: #fffbeb; color: var(--warn); }
+.badge.waiting_tray { background: #f0f9ff; color: #0369a1; }
 .badge.done { background: #f0fdf4; color: var(--ok); }
 .badge.failed { background: #fef2f2; color: var(--bad); }
 .muted { color: var(--muted); }

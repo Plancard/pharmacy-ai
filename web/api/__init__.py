@@ -100,7 +100,6 @@ def detail(rx_id: str):
         "error_code": row["error_code"],
         "created_at": row["created_at"].isoformat(),
         "image_url": f"/api/prescriptions/{sid}/images/{img['id']}" if img else None,
-        "stage": None,
         "card": None,
     }
     if row["status"] == "failed":
@@ -112,10 +111,8 @@ def detail(rx_id: str):
             body["card"] = {**pause.payload,
                             "blockers": workflow.approval_blockers(order),
                             "needs_confirm": workflow.needs_confirm(order)}
-    elif row["status"] == "processing":
-        body["stage"] = gateway().stage(sid)
-        if body["stage"] == "await_tray":
-            body["card"] = {"order": gateway().approved_order(sid)}
+    elif row["status"] == "waiting_tray":
+        body["card"] = {"order": gateway().approved_order(sid)}
     return jsonify(body)
 
 

@@ -1,4 +1,4 @@
-"""처방 처리 흐름: 업로드 → (백그라운드) Agent → HITL에서 멈춤 → 약사 응답 → 다시 Agent.
+"""처방 처리 흐름: 업로드 → (백그라운드) Agent → HITL에서 멈춤 → 약사 응답 → 다시 Agent → 트레이 대기.
 
 라우트(web/api)는 요청을 검사하고 이 함수들을 부른다. DB 상태 바꾸기는 web/rx.py, Agent 호출은
 web/agent_gateway.py가 맡는다.
@@ -11,7 +11,7 @@ from typing import Any
 from flask import current_app
 
 from web import jobs, rx, storage
-from web.agent_gateway import Pause, gateway
+from web.agent_gateway import Pause, Wait, gateway
 
 ERROR_CODES = {"E_OCR_EMPTY", "E_TRAY_NOT_FOUND", "E_CV_INFER", "E_PLAN_RANGE",
                "E_BARCODE_FAIL", "E_LLM", "E_EXT_API", "E_DB"}
@@ -40,9 +40,13 @@ def receive(pharmacy_id: int, user_id: int, data: bytes, ext: str) -> dict:
     return row
 
 
-def _apply(rx_id: uuid.UUID, pause: Pause | None) -> None:
-    if pause is not None:
-        rx.set_waiting(rx_id, pause.hitl_point)
+def _apply(rx_id: uuid.UUID, outcome: Pause | Wait | None) -> None:
+    """Agent 실행 결과를 처방 상태에 옮긴다. None이면 아직 처리 중이라 그대로 둔다."""
+    if isinstance(outcome, Pause):
+        rx.set_waiting(rx_id, outcome.hitl_point)
+    elif isinstance(outcome, Wait):
+        if outcome.status == "waiting_tray":
+            rx.set_waiting_tray(rx_id)
 
 
 def _fail(rx_id: uuid.UUID, e: Exception) -> None:
