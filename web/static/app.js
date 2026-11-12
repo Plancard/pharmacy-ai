@@ -151,13 +151,16 @@
     return wrap;
   }
 
-  function itemsTable(order, lines) {
-    const rows = order.items.map((it) => {
+  // onSelect가 있으면 줄을 누르거나 Enter로 고를 수 있다 (F-WEB-06 원문 위치 표시)
+  function itemsTable(order, lines, onSelect) {
+    const rows = order.items.map((it, idx) => {
       const confs = (it.source_line_ids || []).map((i) => lines[String(i)]).filter(Boolean).map((l) => l.conf);
       const low = confs.length && Math.min(...confs) < LOW_CONF;
       const times = TIME_ORDER.filter((t) => it.times.includes(t)).map((t) => TIMES[t]).join(" · ");
       const flagged = it.needs_pharmacist_check || !it.item_code;
-      return h("tr", { class: flagged ? "flagged" : null },
+      const cls = [low ? "lowconf" : (flagged ? "flagged" : ""), onSelect ? "selectable" : ""].join(" ").trim();
+      const tr = h("tr", { class: cls || null, tabindex: onSelect ? "0" : null,
+        title: onSelect ? "누르면 원본에서 위치를 표시합니다" : null },
         h("td", {}, h("div", {}, it.name),
           h("div", { class: "muted mono" }, it.item_code || "품목 없음"),
           ...(it.check_reasons || []).map((r) => h("div", { class: "reason" }, r))),
@@ -165,6 +168,11 @@
         h("td", {}, times),
         h("td", { class: "num" }, `${it.days}일`),
         h("td", {}, low ? h("span", { class: "chip low" }, "인식 신뢰도 낮음") : h("span", { class: "muted" }, "-")));
+      if (onSelect) {
+        tr.addEventListener("click", () => onSelect(idx, tr));
+        tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(idx, tr); } });
+      }
+      return tr;
     });
     return h("div", { class: "table-wrap" }, h("table", { class: "items" },
       h("thead", {}, h("tr", {}, h("th", {}, "약품"), h("th", {}, "1회"), h("th", {}, "복용 시점"),
@@ -185,7 +193,7 @@
   }
 
   function approvalCard(rx) {
-    const { order, ocr_lines: lines, blockers, needs_confirm: needsConfirm } = rx.card;
+    const { order, ocr_lines: lines, ocr_size: size, blockers, needs_confirm: needsConfirm } = rx.card;
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const confirm = needsConfirm
       ? h("label", { class: "confirm" }, h("input", { type: "checkbox", id: "confirm-risk" }),
@@ -209,15 +217,36 @@
         btn.disabled = false;
       }
     });
+    // F-WEB-06 처방 결과: 왼쪽 원본, 오른쪽 추출 항목. 항목을 누르면 그 줄의 OCR 위치(bbox)를 원본 위에 표시
+    const boxes = h("div", { class: "ocr-boxes", "aria-hidden": "true" });
+    const canLocate = !!(size && size.width && size.height);
+    function select(idx, tr) {
+      for (const r of tr.parentNode.children) r.classList.toggle("selected", r === tr);
+      boxes.replaceChildren();
+      for (const id of order.items[idx].source_line_ids || []) {
+        const l = lines[String(id)];
+        if (!l || !l.bbox) continue;
+        const [x1, y1, x2, y2] = l.bbox;
+        const b = h("div", { class: `ocr-box${l.conf < LOW_CONF ? " low" : ""}` });
+        b.style.left = `${(x1 / size.width) * 100}%`;
+        b.style.top = `${(y1 / size.height) * 100}%`;
+        b.style.width = `${((x2 - x1) / size.width) * 100}%`;
+        b.style.height = `${((y2 - y1) / size.height) * 100}%`;
+        boxes.append(b);
+      }
+      if (boxes.firstChild) boxes.firstChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
     return h("div", { class: "approval" },
       h("div", { class: "approval-grid" },
         rx.image_url ? h("figure", { class: "rx-image" },
-          h("a", { href: rx.image_url, target: "_blank", rel: "noopener" },
-            h("img", { src: rx.image_url, alt: `처방 ${rx.display_no} 원본 사진` })),
+          h("a", { href: rx.image_url, target: "_blank", rel: "noopener", class: "img-wrap" },
+            h("img", { src: rx.image_url, alt: `처방 ${rx.display_no} 원본 사진` }), boxes),
           h("figcaption", { class: "muted" }, "원본 (누르면 크게 보기)")) : null,
         h("div", { class: "approval-body" },
-          h("p", { class: "muted" }, "원본과 대조한 뒤 승인하세요. 항목 수정은 다음 단계에서 붙습니다."),
-          itemsTable(order, lines),
+          h("p", { class: "muted" }, canLocate
+            ? "항목을 누르면 원본에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."
+            : "원본과 대조한 뒤 승인하세요."),
+          itemsTable(order, lines, canLocate && rx.image_url ? select : null),
           riskPanel(order.risk_check || {}))),
       blockers.map((b) => h("p", { class: "form-error" }, b)),
       h("div", { class: "actions" }, confirm, btn),

@@ -133,6 +133,9 @@ def test_upload_then_waiting_approval(client, fake_rx, tmp_path):
     assert [it["name"] for it in order["items"]] == ["타이레놀정500mg", "게보린정", "프론크논캡슐"]
     assert order["risk_check"] == {"scope": "rx_only", "level": "warning", "findings": order["risk_check"]["findings"]}
     assert d["card"]["ocr_lines"]["58"]["text"].startswith("(1)900000011")   # 원문 줄이 함께 온다
+    # F-WEB-06: 줄마다 원본 위치(bbox)와 원본 크기가 와서 항목을 누르면 위치를 표시할 수 있다
+    assert d["card"]["ocr_lines"]["58"]["bbox"] == [229, 1246, 799, 1309]
+    assert d["card"]["ocr_size"] == {"width": 2480, "height": 3507}
     assert d["card"]["blockers"] == [] and d["card"]["needs_confirm"] is True   # 프론크논 확인 필요 표시
     # 원본 이미지는 같은 약국 사용자만 받는다
     img = client.get(d["image_url"])

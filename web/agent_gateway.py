@@ -43,7 +43,8 @@ class AgentError(Exception):
 @dataclass(frozen=True)
 class Pause:
     hitl_point: str
-    payload: dict[str, Any]     # rx_approval: {"order": A.5, "ocr_lines": {line_id: {text, conf}}}
+    payload: dict[str, Any]     # rx_approval: {"order": A.5, "ocr_lines": {line_id: {text, conf, bbox}},
+                                #               "ocr_size": {width, height} | None}  (F-WEB-06 원문 위치 표시)
 
 
 WAIT_STATUSES = ("waiting_tray",)
@@ -135,9 +136,10 @@ class FakeGateway:
         a1 = stub.ocr(Path(image_path).with_name("rx_004.jpg"))   # 업로드 파일 이름과 무관하게 rx_004 샘플
         order = self._order(rx_id)
         used = {i for it in order["items"] for i in it["source_line_ids"]}
-        lines = {str(l["line_id"]): {"text": l["text"], "conf": l["conf"]}
+        lines = {str(l["line_id"]): {"text": l["text"], "conf": l["conf"], "bbox": l.get("bbox")}
                  for l in a1["lines"] if l["line_id"] in used}
-        pause = Pause("rx_approval", {"order": order, "ocr_lines": lines})
+        size = {"width": a1["width"], "height": a1["height"]} if a1.get("width") and a1.get("height") else None
+        pause = Pause("rx_approval", {"order": order, "ocr_lines": lines, "ocr_size": size})
         self._save(rx_id, {"pause": {"hitl_point": pause.hitl_point, "payload": pause.payload},
                            "approved_order": None})
         return pause

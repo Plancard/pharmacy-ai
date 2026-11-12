@@ -65,6 +65,14 @@ table.items th { white-space: nowrap; }
 table.items td { vertical-align: top; }
 table.items .num { text-align: right; font-variant-numeric: tabular-nums; }
 table.items tr.flagged { background: #fffbeb; }
+table.items tr.lowconf { background: #fef9c3; }
+table.items tr.selectable { cursor: pointer; }
+table.items tr.selectable:hover { background: #eff6ff; }
+table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+.img-wrap { position: relative; display: block; }
+.ocr-boxes { position: absolute; inset: 0; pointer-events: none; }
+.ocr-box { position: absolute; border: 2px solid var(--accent); background: rgba(37, 99, 235, .15); border-radius: 2px; }
+.ocr-box.low { border-color: var(--warn); background: rgba(180, 83, 9, .18); }
 .reason { color: var(--warn); font-size: 12px; margin-top: 2px; }
 .chip { display: inline-block; white-space: nowrap; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: #f3f4f6; }
 .chip.low, .chip.warning { background: #fffbeb; color: var(--warn); }
