@@ -1,7 +1,7 @@
 -- 피지컬 AI 약국 조제 보조 서비스 — DB 스키마 (PostgreSQL 16)
 --
 -- 규칙
---   ID     : 모듈·JSON·파일 경로에 나가는 ID(처방, 이미지)는 UUID, 테이블 안에서만 쓰는 ID는 BIGINT IDENTITY
+--   ID     : 모듈·JSON·파일 경로에 나가는 ID(대화, 처방, 이미지, 메시지)는 UUID, 테이블 안에서만 쓰는 ID는 BIGINT IDENTITY
 --   시각   : 모두 TIMESTAMPTZ (UTC로 저장, 화면에서 KST로 표시)
 --   JSON   : 모듈 간 데이터(A.3~A.6)는 JSONB 원문 그대로, 필터에 쓰는 값만 컬럼으로 뽑는다
 --   이력   : approvals, inspections, messages는 추가만 한다 (UPDATE 금지 트리거)
@@ -9,7 +9,7 @@
 --            처방이 있는 대화는 prescriptions.id = conversations.id (같은 ID를 쓴다).
 --            처방 없이 글로 시작한 상담 대화는 conversations 행만 있다.
 --   체크포인트: LangGraph PostgresSaver.setup()이 같은 DB에 checkpoint* 테이블을 직접 만든다.
---             thread_id = prescriptions.id(UUID 문자열), FK 없이 값으로만 이어진다.
+--             thread_id = conversations.id(UUID 문자열), FK 없이 값으로만 이어진다.
 --
 -- 앱 첫 실행 때 한 번 실행한다 (여러 번 실행해도 안전).
 
