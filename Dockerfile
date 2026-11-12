@@ -14,5 +14,5 @@ RUN pip install -r web/requirements.txt
 COPY . .
 
 EXPOSE 5000
-# 스키마 적용(이미 있으면 건너뜀) → gunicorn 워커 1개 + 스레드 4개
-CMD ["sh", "-c", "flask --app wsgi init-db && exec gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 --access-logfile - wsgi:app"]
+# 스키마 적용(이미 있으면 건너뜀) → 재시작으로 끊긴 '처리 중' 처방 정리 → gunicorn 워커 1개 + 스레드 4개
+CMD ["sh", "-c", "flask --app wsgi init-db && flask --app wsgi fail-stale && exec gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 --access-logfile - wsgi:app"]

@@ -33,11 +33,12 @@ def create_app(test_config: dict | None = None) -> Flask:
         from werkzeug.middleware.proxy_fix import ProxyFix
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-    from web import agent_gateway, db, jobs, security
+    from web import agent_gateway, db, jobs, security, workflow
     db.init_app(app)
     security.init_app(app)
     jobs.init_app(app)
     agent_gateway.init_app(app)
+    workflow.init_app(app)
 
     from web.api import bp as api_bp
     from web.auth import bp as auth_bp

@@ -281,3 +281,35 @@ def test_waiting_state_survives_restart(monkeypatch, tmp_path, fake_rx):
 def test_main_page_has_upload_form(client):
     html = client.get("/").get_data(as_text=True)
     assert 'id="upload-form"' in html and "app.js" in html and 'data-id="x"' in html
+
+
+def test_error_codes_match_schema():
+    """schema.sql의 실패 코드 목록과 화면 안내(workflow.ERROR_CODES)가 어긋나지 않는다."""
+    import re
+    from pathlib import Path
+    from web import workflow
+    sql = (Path(__file__).resolve().parents[2] / "web" / "schema.sql").read_text(encoding="utf-8")
+    m = re.search(r"prescriptions_error_code_check\s+CHECK \(error_code IN \(([^)]*)\)\)", sql)
+    assert m, "schema.sql에서 prescriptions_error_code_check를 찾지 못함"
+    assert set(re.findall(r"'(\w+)'", m.group(1))) == workflow.ERROR_CODES
+    assert "E_INTERRUPTED" in workflow.ERROR_MESSAGES
+
+
+def test_fail_stale_command(monkeypatch, tmp_path):
+    """서버 시작 때 '처리 중'에 남은 처방을 정리하는 CLI (Dockerfile CMD에서 부른다)."""
+    from web import workflow
+    calls = []
+    monkeypatch.setattr(rx, "fail_stale", lambda minutes: calls.append(minutes) or ["P0003", "P0004"])
+    app = create_app({"SECRET_KEY": "test", "DATABASE_URL": "x", "VAR_DIR": tmp_path, "TESTING": True})
+    out = app.test_cli_runner().invoke(args=["fail-stale"])
+    assert out.exit_code == 0 and "2건" in out.output and "P0003, P0004" in out.output
+    assert calls == [workflow.STALE_MINUTES]
+    out = app.test_cli_runner().invoke(args=["fail-stale", "--minutes", "0"])
+    assert calls[-1] == 0
+
+
+def test_interrupted_shows_message(client, fake_rx):
+    rx_id = upload(client).get_json()["id"]
+    fake_rx.rows[uuid.UUID(rx_id)].update(status="failed", hitl_point=None, error_code="E_INTERRUPTED")
+    d = client.get(f"/api/prescriptions/{rx_id}").get_json()
+    assert d["status"] == "failed" and "서버가 다시 시작" in d["error_message"]

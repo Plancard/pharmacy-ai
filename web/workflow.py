@@ -8,13 +8,15 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from flask import current_app
+import click
+from flask import Flask, current_app
+from flask.cli import with_appcontext
 
 from web import jobs, rx, storage
 from web.agent_gateway import Pause, Wait, gateway
 
 ERROR_CODES = {"E_OCR_EMPTY", "E_TRAY_NOT_FOUND", "E_CV_INFER", "E_PLAN_RANGE",
-               "E_BARCODE_FAIL", "E_LLM", "E_EXT_API", "E_DB"}
+               "E_BARCODE_FAIL", "E_LLM", "E_EXT_API", "E_DB", "E_INTERRUPTED"}
 
 # 화면 안내 문구 (기능분석서 6장과 맞춘다)
 ERROR_MESSAGES = {
@@ -23,8 +25,25 @@ ERROR_MESSAGES = {
     "E_LLM": "AI 응답을 받지 못했습니다. 잠시 뒤 다시 올려 주세요.",
     "E_EXT_API": "의약품 정보 조회에 실패했습니다. 잠시 뒤 다시 올려 주세요.",
     "E_DB": "저장 중 오류가 났습니다. 잠시 뒤 다시 시도해 주세요.",
+    "E_INTERRUPTED": "처리 중에 서버가 다시 시작되어 중단되었습니다. 처방전을 다시 올려 주세요.",
 }
 UNKNOWN_ERROR = "처리 중 알 수 없는 오류가 났습니다. 다시 올려 주세요."
+
+
+STALE_MINUTES = 10   # 처방 1장 처리 목표는 1분(REQ-NF-01). 이보다 오래 '처리 중'이면 끊긴 것으로 본다
+
+
+def init_app(app: Flask) -> None:
+    app.cli.add_command(fail_stale_command)
+
+
+@click.command("fail-stale")
+@with_appcontext
+@click.option("--minutes", default=STALE_MINUTES, show_default=True, help="이 시간(분)보다 오래 처리 중인 처방만")
+def fail_stale_command(minutes: int) -> None:
+    """서버 재시작으로 끊겨 '처리 중'에 남은 처방을 실패(E_INTERRUPTED)로 정리한다."""
+    done = rx.fail_stale(minutes)
+    click.echo(f"끊긴 처방 {len(done)}건 정리" + (f": {', '.join(done)}" if done else ""))
 
 
 def receive(pharmacy_id: int, user_id: int, data: bytes, ext: str) -> dict:

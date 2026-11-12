@@ -53,8 +53,7 @@ CREATE TABLE IF NOT EXISTS prescriptions (
     user_id     BIGINT      NOT NULL REFERENCES users(id),
     status      TEXT        NOT NULL DEFAULT 'processing',          -- 값 목록은 아래 prescriptions_status_check
     hitl_point  TEXT        CHECK (hitl_point IN ('type_select', 'rx_approval', 'inspection', 'risk')),
-    error_code  TEXT        CHECK (error_code IN ('E_OCR_EMPTY', 'E_TRAY_NOT_FOUND', 'E_CV_INFER', 'E_PLAN_RANGE',
-                                                  'E_BARCODE_FAIL', 'E_LLM', 'E_EXT_API', 'E_DB')),
+    error_code  TEXT,                                                -- 값 목록은 아래 prescriptions_error_code_check
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (pharmacy_id, display_no),
@@ -73,6 +72,12 @@ CREATE INDEX IF NOT EXISTS idx_prescriptions_created ON prescriptions(pharmacy_i
 ALTER TABLE prescriptions DROP CONSTRAINT IF EXISTS prescriptions_status_check;
 ALTER TABLE prescriptions ADD CONSTRAINT prescriptions_status_check
     CHECK (status IN ('processing', 'waiting_approval', 'waiting_tray', 'done', 'failed'));
+
+-- 실패 코드 (명세서 A.7, 기능분석서 6장). E_INTERRUPTED는 처리 중에 서버가 다시 시작되어 끊긴 처방 (11/12 추가, 웹 전용)
+ALTER TABLE prescriptions DROP CONSTRAINT IF EXISTS prescriptions_error_code_check;
+ALTER TABLE prescriptions ADD CONSTRAINT prescriptions_error_code_check
+    CHECK (error_code IN ('E_OCR_EMPTY', 'E_TRAY_NOT_FOUND', 'E_CV_INFER', 'E_PLAN_RANGE',
+                          'E_BARCODE_FAIL', 'E_LLM', 'E_EXT_API', 'E_DB', 'E_INTERRUPTED'));
 
 -- 처방은 같은 ID의 대화에 속한다. conversations보다 먼저 만든 처방(11/12 이전 DB)은 대화를 채워 넣는다.
 INSERT INTO conversations (id, pharmacy_id, user_id, created_at, updated_at)

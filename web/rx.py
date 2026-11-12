@@ -107,6 +107,21 @@ def set_failed(rx_id: uuid.UUID, error_code: str | None) -> bool:
     return row is not None
 
 
+def fail_stale(min_age_minutes: int) -> list[str]:
+    """처리 중인 채로 min_age_minutes분 넘게 바뀌지 않은 처방을 실패(E_INTERRUPTED)로 바꾼다. → 바꾼 display_no 목록.
+
+    처리는 웹 프로세스 안의 백그라운드 스레드(web/jobs.py)라서 서버가 다시 시작되면 하던 일이 사라지고 처방만
+    '처리 중'으로 남는다. 서버 시작 때(Dockerfile CMD) 이것을 불러 정리한다.
+    """
+    rows = db.query_all(
+        "UPDATE prescriptions SET status = 'failed', hitl_point = NULL, error_code = 'E_INTERRUPTED' "
+        "WHERE status = 'processing' AND updated_at < now() - make_interval(mins => %s) "
+        "RETURNING display_no",
+        (min_age_minutes,),
+    )
+    return [r["display_no"] for r in rows]
+
+
 def respond(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, hitl_point: str, action: str,
             before: Any, after: Any, reason: str | None = None) -> bool:
     """HITL 응답: 승인 대기 → 처리 중으로 되돌리고 approvals에 이력을 남긴다 (한 트랜잭션).
