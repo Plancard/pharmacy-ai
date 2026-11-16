@@ -91,15 +91,16 @@ def find_anchor(lines, drug):
 
 def read_numbers(lines, anchor):
     """기준 줄과 같은 행의 줄들에서 (1회량, 횟수, 일수) — 못 읽으면 None"""
-    row = [l for l in lines if _same_row(anchor, l)]
+    # 줄 높이 여유 때문에 바로 위·아래 약의 숫자도 후보에 들어올 수 있다 → 항목마다 세로 중심이 가장 가까운 줄을 고른다
+    row = sorted((l for l in lines if _same_row(anchor, l)), key=lambda l: (abs(_yc(l) - _yc(anchor)), l["bbox"][0]))
     dose = times = days = None
-    for l in sorted(row, key=lambda l: l["bbox"][0]):
+    for l in row:
         t = l["text"]
-        if times is None and (m := TIMES_RE.search(t)):
-            times = int(m.group(1))
+        if (m := TIMES_RE.search(t)):
+            times = int(m.group(1)) if times is None else times
             continue
-        if days is None and (m := DAYS_RE.search(t)):
-            days = int(m.group(1))
+        if (m := DAYS_RE.search(t)):
+            days = int(m.group(1)) if days is None else days
             continue
         if dose is None and (m := DOSE_RE.match(t)):
             dose = float(m.group(1).replace(",", "."))

@@ -115,3 +115,15 @@ def test_eval_row_shift_breaks_numbers():
 def test_gt_lookup_by_stem():
     assert ocr_eval.gt_for(GT, "data/rx_photo/rx8p_03.jpg") is GT["rx8_03.png"]
     assert ocr_eval.gt_for(GT, "x/rx8_05.json") is GT["rx8_05.png"]
+
+
+def test_eval_picks_nearest_row_when_rows_crowd():
+    """다음 약의 숫자 줄이 같은 행 범위 안에 들어와도 세로로 가장 가까운 줄을 쓴다 (11/16 clean 오판 사례)"""
+    a1 = copy.deepcopy(load("rx8_01"))
+    texts = {"3회": "2회", "3일": "5일", "1 TAB": "2 TAB"}
+    for l in a1["lines"]:
+        if l["bbox"][0] > 1200 and 1340 < l["bbox"][1] < 1420 and l["text"] in texts:
+            l["text"] = texts[l["text"]]                                  # 게보린 행을 다른 값으로
+            l["bbox"] = [l["bbox"][0] - 10, l["bbox"][1] - 50, l["bbox"][2] - 10, l["bbox"][3] - 50]   # 타이레놀 행 쪽으로, 조금 왼쪽에
+    rows = ocr_eval.score_image(a1, GT["rx8_01.png"]["drugs"])
+    assert rows[0]["all_ok"], rows[0]["read"]
