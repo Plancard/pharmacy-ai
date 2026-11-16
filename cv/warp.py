@@ -1,7 +1,7 @@
 """트레이 원근 보정: 꼭짓점 4점 → 960×1280 정면 이미지 (라벨링 기준 문서 '작업 절차 2')
 
-꼭짓점은 사진 기준 좌상·우상·우하·좌하 순서이고, 칸 영역 바깥선이 만나는 안쪽 모서리에 찍는다
-(트레이 바깥 모서리는 둥글어 위치가 흔들린다). 보정본은 가로 3칸 × 세로 4칸, 칸 하나 320×320.
+꼭짓점은 사진 기준 좌상·우상·우하·좌하 순서이고, 트레이 윗면 테두리의 바깥 모서리에 찍는다
+(기울인 사진에서도 바닥 쪽 선이 아니다). 보정본은 가로 3칸 × 세로 4칸, 칸 하나 320×320.
 
 입력
   --src  원본 사진 폴더 (g07_s03.jpg, empty_s01.jpg, rot_s01.jpg ...)
@@ -22,7 +22,8 @@
 사용
   python cv/warp.py --src data/tray/raw --kpt data/tray/raw_kpt --out data/tray/images
 
-서비스에서는 warp()와 check_corners()를 가져다 쓰고, 꼭짓점만 pose 모델 예측으로 바꾼다.
+서비스에서는 cv/tray.py의 rectify()가 seg 모델(YOLO26n-seg)이 구한 꼭짓점으로 이 파일의 warp()와
+check_corners()를 부른다. 이 스크립트는 Roboflow 꼭짓점 라벨로 학습용 보정본을 만들 때만 쓴다.
 """
 import argparse
 import csv
