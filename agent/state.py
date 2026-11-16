@@ -13,21 +13,22 @@ State에는 JSON으로 바꿀 수 있는 값(dict · list · str · None)만 담
     photo_kind(들어온 사진 종류) + ocr.doc_type(OCR이 읽은 문서 종류) + text(글의 의도)  →  route
     ask_type       사진 종류나 글의 뜻을 되묻는다 (HITL type_select에서 멈춘다)
     prescription   처방 서브그래프: 구조화 → 약품 매칭 → 위험 신호 대조 → 승인 대기(멈춤) → 조제 계획
-    register_meds  복용 약 등록 (자리만 있다. 15단계)
-    recheck        복용 약 재대조 (자리만 있다. 15단계)
+    register_meds  복용 약 등록: 웹이 확정한 복용 약(meds_input)을 current_meds에 더한다 (15단계)
+    recheck        복용 약 재대조: 처방약 + 복용 약 대조, 새 항목만. 위험이 있으면 약사 확인(HITL ③ risk)에서 멈춘다 (15단계)
     tray           트레이 검수: CV 검수 결과(A.3)를 받아, ok가 아닌 칸이 있으면 약사 확인(HITL ② inspection)에서 멈춘다 (14단계)
-    consult        상담 답변 (자리만 있다. 16단계)
 """
 from __future__ import annotations
 
 import operator
 from typing import Annotated, Any, Literal, TypedDict, get_args
 
+from agent.structure import agent_view
+
 # 들어온 사진의 종류 (기능분석서 v0.3 F-WEB-05의 버튼 순서: 처방전 · 트레이 · 약봉투 · 포장).
 # 처방전 · 약봉투는 A.1의 doc_type 값과 같다. 트레이는 OCR을 거치지 않고, 포장은 바코드(F-CV-07)로 읽는다.
 PhotoKind = Literal["prescription", "tray", "med_bag", "package"]
 # 흐름. 흐름마다 상위 그래프의 노드가 하나씩 있다. 실행 순서는 supervisor.FLOW_ORDER가 정한다.
-Flow = Literal["prescription", "recheck", "tray", "ask_type", "register_meds", "consult"]
+Flow = Literal["prescription", "recheck", "tray", "ask_type", "register_meds"]
 # 진행 단계. 멈춘 것(승인 대기 · 되묻기)은 상태 값이 아니라 그래프가 멈춘 것으로 안다 (checkpointer의 interrupts. api.py).
 # approved는 약사가 승인한 상태, edited는 약사가 고쳐 매칭 · 대조를 다시 하는 상태, planned는 조제 계획을 만든 상태다.
 # not_ready는 아직 만들지 않은 흐름(복용 약 · 상담)만 돈 것이고, noted는 글을 메모로만 남기고 끝난 것이다.
@@ -52,6 +53,7 @@ class GraphState(TypedDict, total=False):
     photo_kind: PhotoKind | None              # 들어온 사진 종류. 모르면 None (OCR의 doc_type으로 가린다)
     ocr: dict[str, Any] | None                # CV가 보낸 A.1 형식 OCR 결과. 트레이 사진 · 글만 온 메시지에는 없다
     text: str | None                          # 메시지의 글. 없으면 None
+    meds_input: list[dict[str, str]]          # 이번 메시지로 등록할 복용 약 [{item_code, name}] (웹의 복용 약 입력 F-WEB-10). 없으면 빈 목록
     intents: list[str]                        # 글의 의도 (intent.py: patient_info · edit_request · question · note). 슈퍼바이저가 채운다
     # --- 흐름과 결과
     route: list[str]                          # 슈퍼바이저가 정한 실행할 흐름 (실행 순서). 지나기 전에는 빈 목록
@@ -60,6 +62,9 @@ class GraphState(TypedDict, total=False):
     memo: str | None                          # 메모로만 남긴 글
     order: dict[str, Any] | None              # 조제지시서 (DispensingOrder.model_dump(mode="json"))
     plan: dict[str, Any] | None               # 조제 계획 A.4 (Plan.model_dump(mode="json")). 승인 뒤에만 생긴다
+    current_meds: list[dict[str, str]]        # 등록된 복용 약 [{item_code, name}] (대화 동안 쌓인다. 같은 약은 한 번만)
+    recheck_needs_ack: bool                   # 이번 재대조의 새 항목에 위험(danger)이 있어 약사 확인(HITL ③)이 필요한가
+    consult_result: dict[str, Any] | None     # 마지막 복용 약 재대조 결과 A.6 (ConsultResult). 상담 질문 답변은 없다 (11/16 제외)
     inspection: dict[str, Any] | None         # 마지막 트레이 검수 결과 A.3 (CV가 준 것을 확인한 것). 트레이 사진을 검수한 뒤에만 생긴다
     status: Status                            # 지금 어느 단계인지
     notice: str | None                        # 화면에 보여 줄 안내 (실패 원인, 승인 대기 안내, 되묻는 말)
@@ -97,7 +102,9 @@ def message_input(
     """
     data: dict[str, Any] = {
         **read_message(message),
-        "ocr": ocr,
+        "ocr": agent_view(ocr) if ocr is not None else None,    # 표 밖 칸(환자 · 의료인 정보)의 글자는 비운다 (체크포인트에 남지 않게)
+        "meds_input": [],
+        "recheck_needs_ack": False,
         "intents": [],
         "route": [],
         "flow": None,
@@ -125,6 +132,8 @@ def initial_state(
         "order": None,
         "plan": None,
         "inspection": None,
+        "current_meds": [],
+        "consult_result": None,
         "status": "received",
         "errors": [],
         "notes": [],

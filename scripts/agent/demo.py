@@ -1,11 +1,12 @@
 """뼈대 그래프 동작 확인 (11단계, 팀 체크포인트 '뼈대 그래프' 11/13) — 손으로 돌려 보는 스크립트.
 
-    python scripts/agent/demo.py            # 시나리오 10개를 차례로 돌리고 기대와 같은지 보여 준다
+    python scripts/agent/demo.py            # 시나리오 11개를 차례로 돌리고 기대와 같은지 보여 준다
     python scripts/agent/demo.py --quiet    # 시나리오마다 결과 한 줄만
 
 pytest가 아니다. 웹이 부르는 입구(agent/api.py)를 그대로 써서, 웹 화면에서 일어날 일을 글로 보여 준다.
 시연용 가상 처방전(agent/resources/samples/rx8_a1)을 쓰고, 멈춘 곳은 메모리에 저장한다. 의약품 API와 LLM은 부르지 않는다
-(시연용 처방전은 규칙 경로로 읽힌다). 복용 약 등록 · 재대조 · 상담은 아직 자리만 있어 '준비 중'으로 나온다.
+(시연용 처방전은 규칙 경로로 읽힌다). 복약 상담 질문에는 답하지 않는다 (11/16 결정): 질문은 메모로 남기고 안내로 알린다.
+복용 약 재대조는 DUR API 없이 돌므로 사전으로 찾는 성분 중복만 보인다. 병용금기 2쌍은 show_dur.py --flow가 실제 API로 본다.
 트레이 검수는 CV 가짜 모듈(cv/stub.py)로 한다. 사진 ID 끝이 결과를 정한다: tray-ok(전 칸 일치) · tray-mismatch(1칸 불일치) ·
 tray-no_tray(트레이 못 찾음) 등 (cv.stub.SCENARIOS).
 기대와 다른 시나리오가 있으면 1로 끝난다. langgraph가 설치되어 있어야 한다 (pip install -r agent/requirements.txt).
@@ -31,6 +32,7 @@ from agent.graph import build_graph  # noqa: E402
 from agent.pipeline import structure_prescription  # noqa: E402
 from agent.plan import plan_lines  # noqa: E402
 from agent.proposal import PROPOSAL_LABELS  # noqa: E402
+from agent.rag import load_index  # noqa: E402
 from agent.schema import Plan  # noqa: E402
 
 RX8 = config.RESOURCES_DIR / "samples" / "rx8_a1"
@@ -55,7 +57,8 @@ def stub_tray(image_id: str, plan: dict[str, Any]) -> dict[str, Any]:
 def make_api() -> AgentApi:
     dictionary = load_dictionary()
     graph = build_graph(dictionary=dictionary, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=no_llm),
-                        api=None, checkpointer=memory_checkpointer(), inspect=stub_tray)
+                        api=None, checkpointer=memory_checkpointer(), inspect=stub_tray,
+                        rag=load_index(config.RAG_DIR), embed=None)
     return AgentApi(graph, dictionary)
 
 
@@ -92,7 +95,7 @@ def show_result(api: AgentApi, rx_id: str, out: Out) -> dict[str, Any]:
         for line in plan_lines(Plan.model_validate(result["plan"]), names):
             out(f"      계획 {line}")
     for note in result["notes"]:
-        out(f"      자리: {note}")
+        out(f"      기록: {note}")
     if result["memo"]:
         out(f"      메모: {result['memo']}")
     return result
@@ -116,10 +119,11 @@ def s2_prescription_with_question(api: AgentApi, out: Out) -> bool:
     out("   약사: 처방전 사진(rx8_02 트리스펜 · 아르펜) + 글 '같이 먹어도 되나요?'")
     pause = api.start("D2", load("rx8_02"), "prescription", "같이 먹어도 되나요?")
     show_pause(pause, out)
-    out("   약사: 승인 → 조제 계획 다음에 상담이 이어진다")
+    out("   약사: 승인 → 조제 계획. 질문에는 답하지 않고 메모로 남는다 (위험 신호는 승인 화면에 규칙으로 보인다)")
     api.resume("D2", "rx_approval", approve(pause))
     result = show_result(api, "D2", out)
-    return result["route"] == ["prescription", "consult"] and result["status"] == "planned" and len(result["notes"]) == 1
+    return (pause is not None and pause.payload["memo"] == "같이 먹어도 되나요?" and result["route"] == ["prescription"]
+            and result["status"] == "planned" and result["consult_result"] is None)
 
 
 def s3_edit_after_a_plan_that_cannot_be_made(api: AgentApi, out: Out) -> bool:
@@ -163,6 +167,18 @@ def s5_tray_photo_with_text(api: AgentApi, out: Out) -> bool:
             and result["status"] == "inspected" and result["inspection"]["summary"]["ok"] == 12)
 
 
+def s11_current_meds_recheck(api: AgentApi, out: Out) -> bool:
+    out("   약사: 처방전(rx8_16 아르펜 · 뮤코다인)을 승인한 뒤, 환자가 트리스펜(이부프로펜)을 먹고 있다고 검색해 등록")
+    api.resume("D11", "rx_approval", approve(api.start("D11", load("rx8_16"))))
+    stop = api.register_meds("D11", [{"item_code": "201110120", "name": "트리스펜연질캡슐"}])
+    consult = api.result("D11")["consult_result"]
+    for line in consult["answer"].splitlines():
+        out(f"      {line}")
+    out(f"      위험 단계: {consult['risk_level']} | 대조 범위: {consult['risk_scope']} | 재검토 필요: {consult['recheck_after_dispense']}")
+    return (stop is None and consult["risk_level"] == "warning" and consult["recheck_after_dispense"]
+            and any("이부프로펜" in f["message"] for f in consult["new_findings"]))
+
+
 def s9_tray_mismatch_redo_then_ok(api: AgentApi, out: Out) -> bool:
     out("   약사: 처방전(rx8_02)을 승인한 뒤 트레이 사진: 1칸에 1알이 빠짐")
     api.resume("D9", "rx_approval", approve(api.start("D9", load("rx8_02"))))
@@ -199,20 +215,22 @@ def s10_tray_not_found_then_confirm(api: AgentApi, out: Out) -> bool:
 
 
 def s6_text_alone(api: AgentApi, out: Out) -> bool:
-    out("   약사: 처방 없이 새 대화에 글만 '타이레놀 먹고 있는데 괜찮나요?' (상담 대화)")
+    out("   약사: 처방 없이 새 대화에 글만 '타이레놀 먹고 있는데 괜찮나요?'")
     pause = api.start("D6", None, None, "타이레놀 먹고 있는데 괜찮나요?")
     show_pause(pause, out)
     result = show_result(api, "D6", out)
     out(f"      처방 ID: {result['prescription_id']} | 의도: {', '.join(result['intents'])}")
-    return result["route"] == ["consult"] and result["prescription_id"] is None and result["proposals"] == []
+    out(f"      안내: {result['notice']}")
+    return (result["route"] == [] and result["status"] == "noted" and result["prescription_id"] is None
+            and result["proposals"] == [] and result["memo"] == "타이레놀 먹고 있는데 괜찮나요?")
 
 
-def s8_consultation_becomes_a_prescription(api: AgentApi, out: Out) -> bool:
-    out("   약사: 상담 대화(D8)에서 글로 묻다가, 같은 대화에 처방전 사진(rx8_02)을 올린다")
+def s8_text_then_a_prescription(api: AgentApi, out: Out) -> bool:
+    out("   약사: 새 대화(D8)에 글을 먼저 남기고, 같은 대화에 처방전 사진(rx8_02)을 올린다")
     api.start("D8", None, None, "이부프로펜 하루에 몇 번 먹어요?")
     pause = api.send("D8", load("rx8_02"), "prescription", prescription_id="D8")
     show_pause(pause, out)
-    out("      같은 ID로 처방 대화가 되었다 (앞의 상담 기록이 이어진다)")
+    out("      같은 ID로 처방 대화가 되었다 (앞의 메모가 이어진다)")
     return pause is not None and pause.hitl_point == "rx_approval" and pause.payload["order"]["prescription_id"] == "D8"
 
 
@@ -228,20 +246,21 @@ def s7_text_for_an_open_prescription(api: AgentApi, out: Out) -> bool:
 
 SCENARIOS: list[tuple[str, Callable[[AgentApi, Out], bool]]] = [
     ("처방전 사진 + 수정 요청 글 → 제안으로만, 승인 → 조제 계획", s1_prescription_with_edit_request),
-    ("처방전 사진 + 질문 → 처방 흐름 다음에 상담 (정해진 순서)", s2_prescription_with_question),
+    ("처방전 사진 + 질문 → 처방 흐름만, 질문은 메모 (상담 답변 없음)", s2_prescription_with_question),
     ("계획을 못 만들면 승인 대기로 돌아와 고치기", s3_edit_after_a_plan_that_cannot_be_made),
     ("사진 종류가 애매하면 되묻기 (type_select)", s4_unclear_photo_kind),
     ("승인 뒤 같은 대화에 트레이 사진 + 글 → 전 칸 일치, 글은 메모, 조제지시서 · 계획은 그대로", s5_tray_photo_with_text),
-    ("처방 없는 대화에 글만 → 상담", s6_text_alone),
+    ("처방 없는 대화에 글만 → 메모 + 처방전 사진 안내", s6_text_alone),
     ("열린 처방에 글만 → 승인 카드의 제안", s7_text_for_an_open_prescription),
-    ("상담 대화에 처방전 사진 → 같은 ID로 처방 대화", s8_consultation_becomes_a_prescription),
+    ("글만 있던 대화에 처방전 사진 → 같은 ID로 처방 대화", s8_text_then_a_prescription),
     ("트레이 불일치 → 검수 확인(HITL ②)에서 재조제 → 다시 찍어 전 칸 일치", s9_tray_mismatch_redo_then_ok),
     ("트레이를 못 찾음 → 오류 코드, 계획은 그대로 → 다시 찍어 확인 완료", s10_tray_not_found_then_confirm),
+    ("조제 뒤 복용 약 등록 → 처방약과 다시 대조, 새 항목(성분 중복)과 재검토 필요", s11_current_meds_recheck),
 ]
 
 
 def main(argv: list[str] | None = None, *, out: Out = print, api_factory: Callable[[], AgentApi] = make_api) -> int:
-    parser = argparse.ArgumentParser(description="뼈대 그래프 동작 확인 (시나리오 10개)")
+    parser = argparse.ArgumentParser(description="뼈대 그래프 동작 확인 (시나리오 11개)")
     parser.add_argument("--quiet", action="store_true", help="시나리오마다 결과 한 줄만")
     args = parser.parse_args(argv)
     try:

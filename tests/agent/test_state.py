@@ -23,6 +23,7 @@ def test_the_first_state_values():
         "conversation_id": "C0001", "prescription_id": None,
         "message_id": None, "image_id": None, "photo_kind": None, "ocr": None, "text": None, "intents": [],
         "route": [], "flow": None, "proposals": [], "memo": None, "order": None, "plan": None, "inspection": None,
+        "current_meds": [], "consult_result": None, "meds_input": [], "recheck_needs_ack": False,
         "status": "received", "notice": None, "error_code": None, "errors": [], "notes": [],
     }
 
@@ -81,7 +82,7 @@ def test_errors_and_notes_are_added_up_and_other_fields_are_overwritten():
 
 def test_the_values_the_state_can_take():
     assert PHOTO_KINDS == ("prescription", "tray", "med_bag", "package")
-    assert FLOWS == ("prescription", "recheck", "tray", "ask_type", "register_meds", "consult")
+    assert FLOWS == ("prescription", "recheck", "tray", "ask_type", "register_meds")
     assert STATUSES == (
         "received", "structured", "matched", "checked", "approved", "edited", "planned", "inspecting", "inspected",
         "not_ready", "noted", "failed",

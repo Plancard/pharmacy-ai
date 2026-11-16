@@ -2,7 +2,7 @@
 
 상위 그래프: 슈퍼바이저가 메시지 하나(사진 · 글)의 흐름과 순서(route)를 정하고, 흐름을 정해진 순서로 하나씩 실행한다.
 
-    START -> supervisor -> [ask_type] -> [prescription] -> [register_meds] -> [recheck] -> [tray (-> tray_review)] -> [consult] -> END
+    START -> supervisor -> [ask_type] -> [prescription] -> [register_meds] -> [recheck] -> [tray (-> tray_review)] -> END   (상담 답변 단계는 11/16에 뺐다)
     (대괄호 = route에 있을 때만 들른다. 각 노드는 route에서 자기보다 뒤에 있는 첫 흐름으로 가고, 없으면 끝난다)
     tray_review는 트레이 검수에 약사 확인이 필요할 때(status=inspecting)만 들른다 (HITL ② inspection에서 멈춤)
 
@@ -32,7 +32,7 @@
   처음 상태를 다시 넣으면 체크포인터가 앞서 승인된 조제지시서(order)와 조제 계획(plan)을 None으로 덮어쓴다.
 - ask_type도 interrupt로 멈춘다 (HITL type_select). 응답은 {"choice": 값}이다.
 - 조제 계획(make_plan)은 승인된 조제지시서로만 만든다 (정할 것 10).
-- 복용 약 재대조(recheck)는 자리만 있다. 15단계에서 채운다.
+- 복용 약 등록 · 재대조도 두 노드다: recheck가 대조(DUR API)를 한 번 하고, 새 항목에 위험이 있으면 recheck_review가 멈춘다 (HITL ③).
 - 트레이 검수는 두 노드다: tray가 CV를 한 번 부르고, tray_review가 멈춘다. interrupt에서 이어 갈 때 노드가 처음부터 다시 돌기 때문에
   한 노드에 두면 약사가 응답할 때마다 CV 추론을 다시 하고, 결과가 달라질 수도 있다.
 """
@@ -47,13 +47,16 @@ from agent.dur_api import default_dur_api
 from agent.drug_dictionary import DrugDictionary, load_dictionary
 from agent.drug_match import ApiSearch
 from agent.dur import DurLookup
-from agent.llm import extract_llm
+from agent import config
+from agent.embed import embed_texts
+from agent.llm import explain_llm, extract_llm, tool_chat
+from agent.rag import load_index
+from agent.vector_store import default_store
 from agent.nodes import (
     Deps,
     StructureFn,
     approve_node,
     ask_type_node,
-    consult_node,
     match_node,
     plan_node,
     recheck_node,
@@ -63,6 +66,7 @@ from agent.nodes import (
     supervisor_node,
     tray_node,
     tray_review_node,
+    recheck_review_node,
     InspectFn,
 )
 from agent.pipeline import structure_prescription
@@ -89,7 +93,7 @@ STEPS: dict[str, NodeFn] = {
     "recheck": recheck_node,
     "tray": tray_node,
     "tray_review": tray_review_node,
-    "consult": consult_node,
+    "recheck_review": recheck_review_node,
 }
 
 
@@ -178,15 +182,26 @@ def after_tray(state: dict[str, Any]) -> str:
 
 
 TRAY_REVIEW = "tray_review"
+RECHECK_REVIEW = "recheck_review"
+
+
+def after_recheck(state: dict[str, Any]) -> str:
+    """재대조의 새 항목에 위험(danger)이 있으면 recheck_review(HITL ③)로, 아니면 다음 흐름으로."""
+    consult = state.get("consult_result") or {}
+    if state.get("recheck_needs_ack") and consult:
+        return RECHECK_REVIEW
+    return next_flow("recheck")(state)
 
 TOP_CHART = Chart(
     entry="supervisor",
-    nodes=("supervisor", *FLOW_ORDER, TRAY_REVIEW),
+    nodes=("supervisor", *FLOW_ORDER, TRAY_REVIEW, RECHECK_REVIEW),
     edges=(),
     branches={"supervisor": (after_supervisor, _forward("supervisor")[1]),
               **{flow: _forward(flow) for flow in FLOW_ORDER},
               "tray": (after_tray, {**_forward("tray")[1], TRAY_REVIEW: TRAY_REVIEW}),
-              TRAY_REVIEW: _forward("tray")},
+              TRAY_REVIEW: _forward("tray"),
+              "recheck": (after_recheck, {**_forward("recheck")[1], RECHECK_REVIEW: RECHECK_REVIEW}),
+              RECHECK_REVIEW: _forward("recheck")},
 )
 
 # 상위 그래프에서 서브그래프를 부르는 노드의 이름
@@ -201,6 +216,12 @@ def default_structure(prescription_id: str, ocr: dict[str, Any] | None) -> Dispe
 _FROM_SETTINGS = object()   # api를 주지 않았을 때: .env의 DRUG_API_KEY가 있으면 API를 쓴다
 
 
+def _vector_search():
+    """RAG_VECTOR_STORE=pgvector이고 DATABASE_URL이 있으면 pgvector 검색 함수, 아니면 None (파일 임베딩)."""
+    store = default_store()
+    return store.searcher(config.EMBED_MODEL) if store is not None else None
+
+
 def _make_deps(
     dictionary: DrugDictionary | None,
     structure: StructureFn | None,
@@ -208,9 +229,22 @@ def _make_deps(
     tools: DrugTools | None = None,
     dur: DurLookup | None | object = _FROM_SETTINGS,
     inspect: InspectFn | None = None,
+    rag: Any = _FROM_SETTINGS,
+    embed: Any = _FROM_SETTINGS,
+    explain: Any = _FROM_SETTINGS,
+    react: Any = _FROM_SETTINGS,
 ) -> Deps:
     if dur is _FROM_SETTINGS:              # api를 따로 정하지 않았을 때만 설정을 따른다 (api=None이면 DUR도 쓰지 않는다)
         dur = default_dur_api() if api is _FROM_SETTINGS else None
+    settings = api is _FROM_SETTINGS       # api=None(시험 · 측정)이면 상담 색인 · LLM · 임베딩도 설정에서 가져오지 않는다
+    if rag is _FROM_SETTINGS:
+        rag = load_index(config.RAG_DIR, _vector_search()) if settings else None
+    if embed is _FROM_SETTINGS:
+        embed = embed_texts if settings else None
+    if explain is _FROM_SETTINGS:
+        explain = explain_llm if settings and config.RISK_EXPLAIN else None
+    if react is _FROM_SETTINGS:
+        react = tool_chat if settings and config.AGENT_REACT else None
     return Deps(
         dictionary=dictionary if dictionary is not None else load_dictionary(),
         structure=structure if structure is not None else default_structure,
@@ -218,6 +252,10 @@ def _make_deps(
         tools=tools,
         dur=dur,
         inspect=inspect,
+        rag=rag,
+        embed=embed,
+        explain=explain,
+        react=react,
     )
 
 
@@ -300,6 +338,10 @@ def build_graph(
     tools: DrugTools | None = None,
     dur: DurLookup | None | object = _FROM_SETTINGS,
     inspect: InspectFn | None = None,
+    rag: Any = _FROM_SETTINGS,
+    embed: Any = _FROM_SETTINGS,
+    explain: Any = _FROM_SETTINGS,
+    react: Any = _FROM_SETTINGS,
 ):
     """상위 그래프를 만들어 compile한 결과를 돌려준다 (처방 서브그래프가 그 안에 들어 있다).
 
@@ -313,8 +355,11 @@ def build_graph(
     tools(mcp_client.DrugTools)를 주면 약품 매칭 · 위험 신호 대조 · 조제 계획을 MCP 도구로 부른다. 그때 API는 서버가 쓴다.
     inspect(트레이 검수, CV)를 주지 않으면 트레이 사진은 '검수하지 못함'(E_CV_INFER)으로 끝난다. 가짜 결과를 기본으로 쓰지 않는다
     (데모 · 시험은 agent.cv_adapter.stub_inspect를 넘긴다).
+    rag(위험 신호 설명의 근거 색인) · embed(검색어 임베딩) · explain(위험 신호 설명 LLM)을 주지 않으면 api와 같이 정한다:
+    api를 주지 않았으면 설정의 색인 · OpenAI, api=None이면 쓰지 않는다 (시험이 진짜 OpenAI를 부르지 않게).
+    react(AI 조사의 도구 호출 대화, llm.tool_chat)도 같다. .env AGENT_REACT=0이면 끈다.
     """
-    deps = _make_deps(dictionary, structure, api, tools, dur, inspect)
+    deps = _make_deps(dictionary, structure, api, tools, dur, inspect, rag, embed, explain, react)
     prescription = _compile_prescription(deps)
 
     def make_node(name: str):
@@ -343,6 +388,7 @@ def run_message(
     message: dict[str, Any] | None = None,
     ocr: dict[str, Any] | None = None,
     prescription_id: str | None = None,
+    meds: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """메시지 하나({message_id, text, image_id, kind})를 상위 그래프에 넣어 끝까지(또는 멈출 때까지) 돌린 상태.
 
@@ -353,6 +399,8 @@ def run_message(
         given = message_input(message, ocr, prescription_id)
     else:
         given = initial_state(conversation_id, message, prescription_id, ocr)
+    if meds:
+        given["meds_input"] = [dict(m) for m in meds]       # 복용 약 등록 메시지 (api.register_meds)
     return graph.invoke(given, thread_config(conversation_id))
 
 

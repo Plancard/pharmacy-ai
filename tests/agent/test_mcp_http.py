@@ -68,7 +68,7 @@ def test_the_server_runs_over_http_with_the_host_and_port_it_is_given(monkeypatc
         def run(self, transport, **kwargs):
             runs.append((transport, kwargs))
 
-    monkeypatch.setattr(mcp_server, "build_server", lambda *args: Server())
+    monkeypatch.setattr(mcp_server, "build_server", lambda *args, **kw: Server())
     assert mcp_server.main(["--no-api", "--http"]) == 0
     assert mcp_server.main(["--no-api", "--http", "--host", "0.0.0.0", "--port", "9000"]) == 0
     assert mcp_server.main(["--no-api"]) == 0

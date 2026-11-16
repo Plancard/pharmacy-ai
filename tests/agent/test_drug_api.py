@@ -221,6 +221,52 @@ def test_http_failures_become_api_errors_without_the_key(monkeypatch, error, sai
     assert caught.value.__suppress_context__ and "serviceKey=SECRET" not in shown
 
 
+def test_a_timeout_is_asked_once_more(monkeypatch):
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise TimeoutError()
+        return FakeResponse(json.dumps(response(product()), ensure_ascii=False).encode("utf-8"))
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    assert parse_products(drug_api.http_get_json("https://x", {"serviceKey": "k"}))[0].item_code == "202005623"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("error, tries", [
+    (TimeoutError(), 2),                                                      # 재시도 1회까지 하고 실패
+    (urllib.error.URLError("no route"), 2),
+    (urllib.error.HTTPError("https://x", 403, "Forbidden", {}, None), 1),       # 권한 · 키 문제는 다시 묻지 않는다
+])
+def test_retries_are_only_for_connection_failures(monkeypatch, error, tries):
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(1)
+        raise error
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    with pytest.raises(DrugApiError):
+        drug_api.http_get_json("https://x", {"serviceKey": "k"})
+    assert len(calls) == tries
+
+
+def test_no_retry_when_retries_are_zero(monkeypatch):
+    calls = []
+    monkeypatch.setattr(config, "DRUG_API_RETRIES", 0)
+
+    def urlopen(request, timeout):
+        calls.append(1)
+        raise TimeoutError()
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    with pytest.raises(DrugApiError):
+        drug_api.http_get_json("https://x", {"serviceKey": "k"})
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("raw", [b"<OpenAPI_ServiceResponse><cmmMsgHeader>SERVICE_KEY_IS_NOT_REGISTERED_ERROR", b"\xff\xfe"])
 def test_a_non_json_answer_is_an_api_error(monkeypatch, raw):
     monkeypatch.setattr(drug_api.urllib.request, "urlopen", lambda request, timeout: FakeResponse(raw))

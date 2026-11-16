@@ -26,6 +26,13 @@ class StructureError(Exception):
         self.code = code
 
 
+class VectorStoreError(Exception):
+    """pgvector 저장소(agent/vector_store.py) 실패 (11/16). 근거 검색은 멈추지 않고 파일 임베딩 · BM25로 계속한다.
+
+    판단 층(rag.py)이 이 오류를 받아 넘어가야 해서 맨 아래층인 여기에 둔다. 문장에 DB 주소 · 비밀번호는 넣지 않는다.
+    """
+
+
 class ConfigError(RuntimeError):
     """개발 환경 문제(키 없음 등). 재시도해도 소용없으므로 구조화 실패와 구분해 그대로 올려 보낸다."""
 
@@ -40,6 +47,7 @@ class DrugApiError(Exception):
 
     code = E_EXT_API
 
-    def __init__(self, message: str = "", status: int | None = None):
+    def __init__(self, message: str = "", status: int | None = None, retryable: bool = False):
         super().__init__(message)
         self.status = status
+        self.retryable = retryable          # 연결 실패 · 시간 초과처럼 다시 물어 볼 만한 실패인가

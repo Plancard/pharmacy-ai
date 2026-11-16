@@ -19,8 +19,12 @@ from typing import Any, Callable
 from agent import config
 from agent.errors import E_LLM, E_OCR_EMPTY, ConfigError, StructureError
 from agent.schema import DispensingOrder
-from agent.structure import extract_rule, format_llm_text, llm_input
+from agent.structure import extract_rule, format_llm_text, prepare_llm_input
 from agent.validate import order_from_extracted
+
+# LLM에 보낼 글에 개인정보로 보이는 글자가 섞여 있어 가렸을 때. 표 범위를 잘못 잡았다는 신호라 약사가 원문과 대조해야 한다.
+# 무엇을 가렸는지는 적지 않는다 (경고도 화면 · 기록에 남는다).
+REDACTED_WARNING = "LLM에 보내기 전에 개인정보로 보이는 글자를 가렸습니다. 약품 표를 제대로 읽었는지 원문과 꼭 대조하세요."
 
 RuleFn = Callable[[dict[str, Any]], dict[str, Any]]
 LlmFn = Callable[[str, "str | None"], dict[str, Any]]
@@ -49,7 +53,8 @@ def structure_prescription(
     if not isinstance(prescription_id, str) or not prescription_id.strip():
         raise StructureError("처방 ID가 없습니다.")
     # OCR 형식이 틀렸으면 어느 경로도 쓸 수 없다. 여기서 바로 StructureError
-    issue_no, table_rows = llm_input(ocr)   # LLM에는 교부번호와 약품 표만 보낸다 (환자 정보는 보내지 않는다)
+    # LLM에는 교부번호와 약품 표만 보낸다 (환자 정보는 보내지 않는다). 개인정보 모양이 섞여 있으면 가린 뒤다 (redact.py)
+    issue_no, table_rows, redacted = prepare_llm_input(ocr)
 
     failures: list[str] = []
 
@@ -86,6 +91,8 @@ def structure_prescription(
             continue
 
         notes = [f"규칙 기반으로 읽지 못해 LLM으로 읽었습니다 ({rule_error}) 원문과 꼭 대조하세요."]
+        if redacted:
+            notes.append(REDACTED_WARNING)
         if attempt > 1:
             notes.append(f"LLM이 {attempt}번째 시도에서 읽었습니다. 원문과 꼭 대조하세요.")
         order.warnings = notes + order.warnings

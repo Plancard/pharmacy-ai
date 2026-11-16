@@ -10,7 +10,11 @@
     검증은 여기서 하지 않는다. 결과는 validate.order_from_extracted를 거쳐야 쓸 수 있다.
     재시도는 여기서 하지 않는다. 몇 번 다시 시도할지는 pipeline.py가 센다 (SDK 자동 재시도는 꺼 둔다).
 
-지시문은 agent/prompts/*.md 파일이다 (structure.md: 시스템 지시, structure_retry.md: 거절 사유를 알려 주는 말).
+지시문은 agent/prompts/*.md 파일이다 (structure.md: 시스템 지시, structure_retry.md: 거절 사유를 알려 주는 말,
+risk_explain.md: 위험 신호 설명, react_match.md · react_risk.md: AI 조사(ReAct)).
+
+AI 조사 (ReAct, 11/16)
+    tool_chat(messages, tools)  →  {"content", "tool_calls"}   도구 호출이 되는 대화 한 번. 루프는 react.py가 돈다.
 
 주의
 - gpt-5 계열은 temperature를 기본값(1)만 받는다. 0 등을 보내면 400 오류가 나므로 보내지 않는다.
@@ -119,3 +123,56 @@ def extract_llm(
     if feedback:
         messages.append({"role": "user", "content": load_prompt("structure_retry").format(reason=feedback)})
     return chat_parse(messages, LlmPrescription, client=client, model=model).model_dump()
+
+
+# ------------------------------------------------------------ 도구 호출 대화 (ReAct, 11/16)
+
+
+def tool_chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]], *, client: Any = None,
+              model: str | None = None) -> dict[str, Any]:
+    """도구를 줄 수 있는 대화 한 번 (react.run_react가 되풀이해 부른다). 최종 답은 JSON 객체로 받는다.
+
+    돌려주는 모양: {"content": str | None, "tool_calls": [{"id", "name", "arguments"(JSON 글)}]}.
+    tools가 비면 도구 없이 답만 받는다. 실패하면 StructureError(E_LLM), 키가 없으면 ConfigError.
+    """
+    client = client or _default_client()
+    options: dict[str, Any] = {"response_format": {"type": "json_object"}}
+    if config.LLM_REASONING_EFFORT:
+        options["reasoning_effort"] = config.LLM_REASONING_EFFORT
+    if tools:
+        options["tools"] = tools
+    try:
+        completion = client.chat.completions.create(model=model or config.OPENAI_MODEL, messages=messages, **options)
+        message = completion.choices[0].message
+    except Exception as e:
+        raise StructureError(f"LLM 호출에 실패했습니다 ({type(e).__name__}).", code=E_LLM) from e
+    calls = [{"id": c.id, "name": c.function.name, "arguments": c.function.arguments or "{}"}
+             for c in (getattr(message, "tool_calls", None) or []) if getattr(c, "function", None) is not None]
+    return {"content": getattr(message, "content", None), "tool_calls": calls}
+
+
+# ------------------------------------------------------------ 위험 신호 설명 (18단계)
+
+
+class LlmExplanation(BaseModel):
+    index: int                  # 항목 번호 (1부터)
+    text: str
+
+
+class LlmExplanations(BaseModel):
+    items: list[LlmExplanation]
+
+
+def explain_llm(text: str, *, client: Any = None, model: str | None = None) -> dict[str, Any]:
+    """위험 신호 항목(explain.explain_input의 결과)마다 설명을 만든다. {"items": [{"index", "text"}]}.
+
+    단계는 바꾸지 않는다: 입력에 이미 정해진 단계를 주고, 결과는 explain.apply_explanations가 거른다.
+    실패하면 StructureError(E_LLM), 키가 없으면 ConfigError.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise StructureError("설명할 위험 신호가 없습니다.", code=E_LLM)
+    messages = [
+        {"role": "system", "content": load_prompt("risk_explain")},
+        {"role": "user", "content": text},
+    ]
+    return chat_parse(messages, LlmExplanations, client=client, model=model).model_dump()

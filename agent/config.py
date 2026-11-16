@@ -45,6 +45,29 @@ DRUG_API_RETRIES = int(os.getenv("DRUG_API_RETRIES", "1"))
 # 오퍼레이션 이름(getUsjntTabooInfoList03 등)은 agent/dur_api.py가 붙인다. 버전이 바뀌면 .env에 DUR_API_URL=... 로 적는다.
 DUR_API_URL = os.getenv("DUR_API_URL") or "https://apis.data.go.kr/1471000/DURPrdlstInfoService03"
 
+# 복약 상담 RAG의 근거 문서 (16단계). 둘 다 공공데이터포털 식약처 API이고 DRUG_API_KEY를 같이 쓴다 (활용신청은 따로).
+# e약은요(의약품개요정보): 효능 · 사용법 · 주의사항 · 상호작용 · 부작용 · 보관법을 쉬운 말로. 필드는 efcyQesitm 등 (data.go.kr 15075057).
+EASY_DRUG_URL = os.getenv("EASY_DRUG_URL") or "https://apis.data.go.kr/1471000/DrbEasyDrugInfoService/getDrbEasyDrugList"
+# 의약품 제품 허가정보 상세: 효능효과 · 용법용량 · 사용상의 주의사항 원문(EE_DOC_DATA · UD_DOC_DATA · NB_DOC_DATA).
+# 오퍼레이션 이름은 11/13 활용신청 상세기능정보에서 확인했다 (getDrugPrdtPrmsnDtlInq08). 버전이 바뀌면 .env에 DRUG_DETAIL_URL=... 로 적는다.
+DRUG_DETAIL_URL = os.getenv("DRUG_DETAIL_URL") or "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnDtlInq08"
+# 색인 폴더 (문서 docs.jsonl · 임베딩 embeddings.json). scripts/agent/build_rag_index.py가 만든다. git에 올린다 (공개 허가정보라 비밀이 아니다).
+RAG_DIR = RESOURCES_DIR / "rag_corpus"
+# 문서 · 질문 임베딩 모델 (OpenAI). 색인과 질문이 같은 모델이어야 한다. 바꾸면 색인을 다시 만든다.
+EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+
+# 위험 신호 AI 설명 (18단계). 위험 신호가 있는 처방마다 LLM을 한 번 더 부른다 (추론 강도 low로 몇 초).
+# 처방전 1장 1분 이내(REQ-NF-01)가 빠듯하면 0으로 끈다. 꺼도 단계와 규칙 문장은 그대로 보인다.
+RISK_EXPLAIN = os.getenv("RISK_EXPLAIN", "1").strip() != "0"
+
+# AI 조사 (ReAct + Function Calling, 11/16). 약품 매칭 실패 줄의 후보 조사와 위험 신호 근거 조사에 LLM을 여러 번(많아야 4번) 부른다.
+# 0이면 끈다: 매칭 실패 줄은 규칙 후보만, 위험 신호 설명은 한 번 부르는 설명(RISK_EXPLAIN)만 쓴다.
+AGENT_REACT = os.getenv("AGENT_REACT", "1").strip() != "0"
+
+# RAG 임베딩을 어디서 찾나 (11/16 결정: pgvector). file: agent/resources/rag_corpus/embeddings.json (기본)
+# pgvector: DATABASE_URL의 PostgreSQL(agent_rag_vectors 테이블). 먼저 build_rag_index.py --pgvector로 넣는다. DB가 안 되면 파일로 돈다.
+RAG_VECTOR_STORE = os.getenv("RAG_VECTOR_STORE", "file").strip().lower() or "file"
+
 
 def drug_api_key() -> str | None:
     """.env의 DRUG_API_KEY. 없으면 None (약품 API를 쓰지 않고 약품 사전만 쓴다)."""

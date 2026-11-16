@@ -1,4 +1,6 @@
 """tests/agent 전체에 적용되는 설정."""
+import os
+
 import pytest
 
 
@@ -26,3 +28,22 @@ def no_real_database(monkeypatch):
 def no_real_mcp_server(monkeypatch):
     """테스트는 .env의 AGENT_MCP_URL(따로 띄운 MCP 서버)에 붙지 않는다. HTTP 서버 시험은 test_mcp_http.py가 스스로 띄운다."""
     monkeypatch.delenv("AGENT_MCP_URL", raising=False)
+
+
+LIVE_FLAG = "AGENT_LIVE_OPENAI"     # 1이면 @pytest.mark.live_openai 시험이 진짜 OpenAI를 부른다 (비용이 든다)
+
+
+@pytest.fixture(autouse=True)
+def no_real_openai(request, monkeypatch):
+    """테스트는 .env의 OPENAI_API_KEY로 진짜 OpenAI(구조화 · 상담 · 임베딩)를 부르지 않는다. 키가 필요한 시험은 스스로 setenv 한다.
+
+    예외: live_openai 표시가 붙은 시험(test_live_openai.py)은 AGENT_LIVE_OPENAI=1일 때만 진짜 키를 그대로 쓴다.
+    그 밖의 시험은 이 값을 켜도 키가 지워진다 (실수로 다른 시험이 OpenAI를 부르지 않게).
+    """
+    if request.node.get_closest_marker("live_openai") is not None:
+        if os.environ.get(LIVE_FLAG) != "1":
+            pytest.skip(f"진짜 OpenAI 시험은 {LIVE_FLAG}=1 일 때만 돈다 (비용이 든다)")
+        if not os.environ.get("OPENAI_API_KEY", "").strip():
+            pytest.skip("OPENAI_API_KEY가 없다 (.env를 확인)")
+        return
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)

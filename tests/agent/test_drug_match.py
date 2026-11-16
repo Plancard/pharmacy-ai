@@ -796,3 +796,16 @@ def test_no_product_means_not_found():
 def test_check_item_code_does_not_call_the_network():
     # 제품 목록은 부른 쪽이 가져와 넘긴다. 이 함수는 계산만 한다
     assert check_item_code(GEVORIN, "게보린정", [ApiDrug(GEVORIN, "게보린정", None)]).verdict == "일치"
+
+
+def test_a_product_found_both_in_the_dictionary_and_the_api_is_one_candidate():
+    # 11/16에 찾은 문제: 사전 후보(게보린정)와 API 결과의 같은 제품이 후보에 두 번 들어가 DrugLine 검사에서 멈췄다
+    from types import SimpleNamespace
+
+    def api(term):
+        return [SimpleNamespace(item_code=GEVORIN, name="게보린정", company="삼진제약"),
+                SimpleNamespace(item_code="201800001", name="게보린소프트연질캡슐", company="삼진제약")]
+
+    got = match_line(line(name="게부린", printed_code=None), DICT, api=api)
+    codes = [c.item_code for c in got.match_candidates]
+    assert got.item_code is None and codes[0] == GEVORIN and len(codes) == len(set(codes))

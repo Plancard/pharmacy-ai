@@ -30,7 +30,7 @@ API가 실패해도 서비스는 멈추지 않는다 (REQ-NF-06). 그 줄은 사
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Callable, NamedTuple, Protocol
+from typing import Any, Callable, NamedTuple, Protocol
 
 from agent.drug_dictionary import DrugDictionary, DrugEntry
 from agent.drug_names import extract_strengths, match_key, product_key, search_term, similarity
@@ -194,11 +194,13 @@ def match_line(line: DrugLine, dictionary: DrugDictionary, *, api: ApiSearch | N
     if line.days > TRAY_DAYS:
         reasons.append(f"투약 일수 {line.days}일이 트레이 {TRAY_DAYS}일보다 깁니다.")
 
+    seen: set[str] = set()                     # 사전 후보와 API 제품이 같은 약이면 한 번만 (앞의 것을 남긴다)
+    unique = [c for c in candidates if not (c.item_code in seen or seen.add(c.item_code))]
     data = line.model_dump()
     data.update(
         item_code=item_code,
         match_method=method,
-        match_candidates=[c.model_dump() for c in candidates[:MAX_CANDIDATES]],
+        match_candidates=[c.model_dump() for c in unique[:MAX_CANDIDATES]],
         needs_pharmacist_check=bool(reasons),
         check_reasons=reasons,
     )
@@ -235,3 +237,41 @@ def match_order(order: DispensingOrder, dictionary: DrugDictionary, *, api: ApiS
             f"의약품 API를 쓰지 못해 약품 사전만으로 약을 찾았습니다({guarded.error.code}): {guarded.error}",
         ]
     return DispensingOrder.model_validate(data)
+
+
+# ------------------------------------------------------------ 도구 결과 (MCP search_drug · check_item_code와 AI 조사가 같이 쓴다)
+
+TOOL_RESULTS = 5          # 도구 하나가 돌려주는 약 수
+
+
+def _product_row(product: Any, score: float | None = None) -> dict[str, Any]:
+    row = {"item_code": product.item_code, "name": product.name, "company": getattr(product, "company", None)}
+    if score is not None:
+        row["score"] = round(score, 3)
+    return row
+
+
+def search_drug_result(name: str, dictionary: DrugDictionary, api: ApiSearch | None = None,
+                       limit: int = TOOL_RESULTS) -> dict[str, Any]:
+    """이름으로 찾은 약: 사전에서 이름이 비슷한 약 + (api가 있으면) 의약품 API의 제품. API 실패는 DrugApiError로 올린다."""
+    ranked = [(score, e) for score, e in rank_by_name(match_key(name), dictionary) if score >= CANDIDATE_MIN]
+    found: dict[str, Any] = {
+        "query": name,
+        "dictionary": [{"item_code": e.item_code, "name": e.name, "score": round(score, 3)} for score, e in ranked[:limit]],
+        "api_used": api is not None,
+        "api": None,
+    }
+    if api is not None:
+        term = search_term(name)
+        found["api"] = [_product_row(p) for p in list(api(term))[:limit]] if term else []
+    return found
+
+
+def check_code_result(item_code: str, name: str, dictionary: DrugDictionary, api: ApiSearch,
+                      limit: int = TOOL_RESULTS) -> dict[str, Any]:
+    """품목기준코드가 이 이름의 제품이 맞는지 (일치 · 불일치 · 없음). API 실패는 DrugApiError로 올린다."""
+    verdict, similar = check_item_code(item_code, name, list(api(search_term(name))))
+    entry = dictionary.by_item_code(item_code)
+    return {"item_code": item_code, "name": name, "verdict": verdict, "in_dictionary": entry is not None,
+            "dictionary_name": entry.name if entry else None,
+            "similar": [_product_row(p, score) for score, p in similar[:limit]]}

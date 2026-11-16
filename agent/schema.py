@@ -196,7 +196,9 @@ class RiskFinding(_Model):
     type: str = Field(min_length=1)          # DUR 유형 키 (ingredient_dup 등). 영어 키 목록은 13단계에서 DUR API 응답을 보고 확정한다
     item_codes: list[ItemCode] = Field(min_length=1)   # 관련된 약
     level: FindingLevel
-    message: str = Field(min_length=1)       # 약사에게 그대로 보이는 한국어 문장
+    message: str = Field(min_length=1)       # 약사에게 그대로 보이는 한국어 문장 (규칙이 만든 고정 문장)
+    # AI가 덧붙인 설명 (18단계, REQ-AG-07: LLM은 설명만, 단계 · 유형은 바꾸지 않는다). 만들지 못했거나 쓰지 않으면 None.
+    explanation: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _codes_unique(self):

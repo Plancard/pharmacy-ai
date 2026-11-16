@@ -27,6 +27,7 @@ import unicodedata
 from typing import Any
 
 from agent.drug_names import similarity
+from agent.redact import mask_text, redact_issue_no, redact_rows
 from agent.errors import E_OCR_EMPTY, StructureError   # 다른 파일도 같은 에러를 쓰려고 errors.py로 옮겼다
 
 Line = dict[str, Any]   # A.1의 lines 한 칸: {"text": ..., "bbox": [x1, y1, x2, y2], "conf": ...}
@@ -479,7 +480,13 @@ ISSUE_NOT_FOUND = "(찾지 못함)"
 
 
 def llm_input(ocr: dict[str, Any]) -> tuple[str | None, list[str]]:
-    """LLM에 보낼 내용: (교부번호 칸의 글자, 약품 표 본문의 줄들).
+    """LLM에 보낼 내용: (교부번호 칸의 글자, 약품 표 본문의 줄들). 개인정보 모양은 가린 뒤다 (prepare_llm_input)."""
+    issue_no, rows, _ = prepare_llm_input(ocr)
+    return issue_no, rows
+
+
+def prepare_llm_input(ocr: dict[str, Any]) -> tuple[str | None, list[str], int]:
+    """LLM에 보낼 내용과 가린 곳의 수: (교부번호, 약품 표 본문의 줄들, 가린 곳 + 뺀 줄의 수).
 
     처방전 위쪽의 환자·의료인 정보(이름, 주민등록번호, 전화번호, 면허번호 …)는 보내지 않는다.
     - 머리글을 찾으면 표 본문(머리글 아래 ~ '주사제 처방명세' 위)만 보낸다.
@@ -489,11 +496,22 @@ def llm_input(ocr: dict[str, Any]) -> tuple[str | None, list[str]]:
       그런 줄도 없으면 '(순번) 9자리 코드 + 약 이름'으로 시작하는 줄을 약품 줄로 본다 (11/12: 어려운 촬영본 5장이
       LLM에 보낼 줄이 없어 호출조차 못 했다). 그것도 없으면 보낼 줄이 없다(빈 목록).
       OCR 전체를 보내지는 않는다: 환자 · 의료인 정보를 LLM에 보내지 않는 원칙을 지킨다.
+    마지막으로 redact.py가 한 번 더 본다 (11/13, 두 번째 안전장치): 성명 · 주민등록번호 · 면허 · 전화 같은 칸 이름이 든 줄은 빼고,
+    주민등록번호 · 전화번호 · '이름(환자 번호)' 모양의 글자는 '[가림]'으로 바꾼다. 표 범위를 잘못 잡아 위쪽 줄이 섞여도 새지 않게 한다.
     OCR 형식이 올바르지 않으면 StructureError.
     """
     lines = straighten(_check_lines(ocr))      # 기운 사진이면 되돌린 좌표로 줄을 묶는다
+    top, bottom = _llm_range(lines)
+    body = [l for l in lines if top < _center_y(l) < bottom and l["text"].strip()]
+    issue_no, issue_changed = redact_issue_no(find_issue_no(lines, top))
+    safe = redact_rows([row_text(row) for row in group_rows(body)])
+    return issue_no, safe.rows, issue_changed + safe.masked + safe.dropped
+
+
+def _llm_range(lines: list[Line]) -> tuple[float, float]:
+    """LLM에 보낼 표 본문의 세로 범위 (위, 아래). 머리글이 있으면 그 아래, 없으면 첫 약품 줄부터. 못 찾으면 위가 무한대(빈 범위)."""
     try:
-        top, bottom = find_table(lines)
+        return find_table(lines)
     except StructureError:
         bottom = table_end(lines)
         values = [l for l in lines if classify_cell(l["text"]) is not None]
@@ -509,9 +527,38 @@ def llm_input(ocr: dict[str, Any]) -> tuple[str | None, list[str]]:
             # 환자 줄은 이름으로 시작하므로('김가상 000000101') 여기에 걸리지 않는다. 9자리 숫자만 있는 칸도 받지 않는다.
             codes = [l for l in lines if _center_y(l) < bottom and _DRUG_LINE_START.match(_nfkc(l["text"]))]
         # 첫 코드 줄에서 시작한다. 같은 행의 칸이 조금 위로 어긋나도 들어오게 그 줄 높이의 절반만큼 더 위부터.
-        top = min((l["bbox"][1] - _height(l) / 2 for l in codes), default=math.inf)
-    body = [l for l in lines if top < _center_y(l) < bottom and l["text"].strip()]
-    return find_issue_no(lines, top), [row_text(row) for row in group_rows(body)]
+        return min((l["bbox"][1] - _height(l) / 2 for l in codes), default=math.inf), bottom
+
+
+# ---------------------------------------------------------------- Agent가 간직하는 OCR (체크포인트에 저장되는 것)
+
+def agent_view(ocr: Any) -> Any:
+    """그래프 상태에 넣을 OCR: 약품 표 둘레의 칸만 글자를 남기고, 나머지 칸(환자 · 의료인 · 의료기관 정보)은 글자를 비운다 (11/13).
+
+    그래프 상태는 체크포인터(PostgreSQL)에 단계마다 쌓인다. OCR 원문을 그대로 넣으면 이름 · 주민등록번호 칸 글자까지 DB에 남는다.
+    그래서 그래프에 들어가기 전에(state.message_input) 이것으로 줄인다. Agent가 쓰는 칸은 그대로라 읽는 결과는 같다:
+      - 머리글 줄부터 '주사제 처방명세' 위까지 (머리글이 없으면 LLM 경로와 같은 대체 범위: 첫 약품 줄부터)
+      - 교부번호 칸 ('2026년11월03일 00012호' 모양), '주사제 …' 줄 (표의 끝을 찾는 데 쓴다)
+    칸 자체(bbox · line_id · conf)는 지우지 않는다. 기울기 재기(estimate_skew)가 칸 위치를 모두 쓰고, line_id는 웹의 원본 위치 표시가 쓴다.
+    남긴 글자에도 주민등록번호 · 전화번호 모양이 있으면 가린다 (redact.mask_text). 원본 OCR은 웹이 따로 가지고 있다.
+    A.1 모양이 아니면 받은 그대로 돌려준다 (구조화가 오류로 알린다).
+    """
+    try:
+        lines = _check_lines(ocr)
+    except StructureError:
+        return ocr
+    fixed = straighten(lines)                   # 같은 순서. 범위는 바로잡은 좌표로 정한다
+    try:
+        _, bottom = find_table(fixed)
+        top = min(l["bbox"][1] for l in fixed if _center_y(l) < bottom and _header_word(_key(l)) is not None)
+    except StructureError:
+        top, bottom = _llm_range(fixed)
+    kept = []
+    for original, line in zip(lines, fixed):
+        key = _key(original)
+        keep = (top <= _center_y(line) < bottom or _ISSUE_NO.match(key) is not None or key.startswith(TABLE_END_WORD))
+        kept.append({**original, "text": mask_text(original["text"])[0] if keep else ""})
+    return {**ocr, "lines": kept}
 
 
 def format_llm_text(issue_no: str | None, rows: list[str]) -> str:

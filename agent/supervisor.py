@@ -3,26 +3,27 @@
 메시지 하나는 사진 1장, 글, 또는 둘 다다 (명세서 2.2절 복합 입력). 사진은 종류를, 글은 의도(intent.py)를 가른다.
 흐름은 늘 이 순서로 실행한다 (FLOW_ORDER). 위험 신호 대조는 처방 흐름 안에서 한 번 돈다.
 
-    ask_type → prescription → register_meds → recheck → tray → consult
-    되묻기     처방 구조화     복용 약 등록      재대조    트레이   상담 답변
+    ask_type → prescription → register_meds → recheck → tray
+    되묻기     처방 구조화     복용 약 등록      재대조    트레이
 
+상담 질문 답변은 하지 않는다 (11/16 팀 결정: 상담 시스템 제외). 질문 글은 메모로 남기고 "상담 답변은 제공하지 않습니다"라고 알린다.
 규칙 (사진이 있을 때)
-- 처방전 사진: 처방 흐름. 글의 수정 요청 · 복용 약 정보는 승인 카드의 제안(proposal.py)으로만 붙는다. 질문이면 상담을 뒤에 더한다.
-  그 밖의 글(메모 · 애매함)은 메모로 남긴다.
-- 약봉투 · 포장 사진: 복용 약 재대조. 글의 복용 약 정보는 후보 제안, 질문이면 상담. 그 밖의 글은 메모.
+- 처방전 사진: 처방 흐름. 글의 수정 요청 · 복용 약 정보는 승인 카드의 제안(proposal.py)으로만 붙는다.
+  그 밖의 글(질문 · 메모 · 애매함)은 메모로 남긴다.
+- 약봉투 · 포장 사진: 복용 약 재대조. 글의 복용 약 정보는 후보 제안. 그 밖의 글은 메모.
 - 트레이 사진: 트레이 검수. 글은 무엇이든 메모로만 남긴다 (검수 판정은 사진 기준).
 - 사진 종류가 애매하면 되묻는다 (ask_type, HITL type_select). 약사가 고르면 그 종류로 다시 계획한다 (plan_after_choice).
 규칙 (글만 올 때, 새 대화)
-- 질문 → 상담. 복용 약 정보 → 복용 약 등록(후보 제안). 메모 → 메모만 남기고 끝.
+- 복용 약 정보 → 복용 약 등록(후보 제안). 질문 · 메모 → 메모만 남기고 끝 (질문이면 상담 답변이 없다고 알린다).
 - 수정 요청 → 고칠 처방이 없으므로 메모로 남기고 그렇게 알린다.
 - 의도를 못 가르면 되묻는다 (ask_type, 글의 의도를 고른다).
 이미 열린 처방에 글만 들어오면 그래프를 다시 돌리지 않는다. api.py의 handle_text가 같은 규칙으로 답한다.
-규칙 (처방이 없는 대화 = 상담 대화, 11/12 결정)
-- 글만 → 상담 (대조 없이 근거 기반 답변). 의도는 기록만 한다.
+규칙 (처방이 없는 대화: 처방전 사진이 오기 전)
+- 글만 → 메모로 남기고 "처방전 사진을 올려 시작해 주세요"라고 알린다.
 - 처방전 사진 → 처방 흐름. 대화가 처방 대화로 바뀐다 (prescription_id = conversation_id).
 - 약봉투 · 포장 · 트레이 사진 → 1차 미지원. 흐름을 돌리지 않고 "처방 대화에서 올려 주세요"라고 알린다.
 
-복용 약 등록 · 재대조 · 트레이 검수 · 상담은 아직 자리만 있다 (15 · 14 · 16단계). 그래프 층이다.
+그래프 층이다.
 """
 from __future__ import annotations
 
@@ -34,8 +35,8 @@ from agent.intent import PATIENT_INFO, EDIT_REQUEST, INTENT_LABELS, NOTE, QUESTI
 from agent.proposal import make_proposals
 from agent.state import PHOTO_KINDS, Flow
 
-# 실행 순서 (명세서 2.2절: 처방 구조화 → 복용 약 등록 → 위험 신호 대조 한 번 → 상담 답변). 되묻기가 맨 앞이다.
-FLOW_ORDER: tuple[str, ...] = ("ask_type", "prescription", "register_meds", "recheck", "tray", "consult")
+# 실행 순서 (명세서 2.2절: 처방 구조화 → 복용 약 등록 → 위험 신호 대조 한 번. 상담 답변은 11/16에 뺐다). 되묻기가 맨 앞이다.
+FLOW_ORDER: tuple[str, ...] = ("ask_type", "prescription", "register_meds", "recheck", "tray")
 
 # 사진 종류 -> 흐름
 KIND_FLOW: dict[str, Flow] = {"prescription": "prescription", "tray": "tray", "med_bag": "recheck", "package": "recheck"}
@@ -44,8 +45,10 @@ DOC_KINDS = ("prescription", "med_bag")     # OCR(A.1)의 doc_type이 가질 수
 
 # 되묻기(type_select)의 선택지: 사진이면 종류, 글이면 의도
 PHOTO_CHOICES: tuple[str, ...] = PHOTO_KINDS
-TEXT_CHOICES: tuple[str, ...] = (PATIENT_INFO, QUESTION, NOTE)
-ASK_TEXT_NOTICE = "글의 뜻을 정하지 못했습니다. 복용 약 정보 · 질문 · 메모 중에서 골라 주세요."
+TEXT_CHOICES: tuple[str, ...] = (PATIENT_INFO, NOTE)
+ASK_TEXT_NOTICE = "글의 뜻을 정하지 못했습니다. 복용 약 정보 · 메모 중에서 골라 주세요."
+NO_CONSULT_NOTICE = "상담 질문 답변은 제공하지 않습니다. 질문은 메모로 남겼습니다 (약사가 직접 확인해 주세요)."
+NO_RX_TEXT_NOTICE = "처방이 없는 대화입니다. 처방전 사진을 올려 대화를 시작해 주세요. 글은 메모로 남겼습니다."
 EDIT_WITHOUT_ORDER_NOTICE = "고칠 처방이 없어 글을 메모로 남겼습니다."
 NO_RX_PHOTO_NOTICE = "처방이 없는 대화입니다. {kind} 사진은 처방 대화에서 올려 주세요."      # 상담 대화에 온 약봉투 · 포장 · 트레이 사진
 
@@ -111,22 +114,22 @@ def _with_text(flow: Flow, text: str | None, intents: list[str], dictionary: Dru
         return MessagePlan(route=(flow,), flow=flow, memo=text.strip(), intents=tuple(intents))
     usable = {"prescription": (EDIT_REQUEST, PATIENT_INFO), "recheck": (PATIENT_INFO,)}[flow]
     proposals = tuple(make_proposals(text, [i for i in intents if i in usable], dictionary))
-    route = [flow] + (["consult"] if QUESTION in intents else [])
-    used = set(usable) | {QUESTION}
-    memo = text.strip() if not any(i in used for i in intents) else None
-    return MessagePlan(route=ordered(route), flow=flow, proposals=proposals, memo=memo, intents=tuple(intents))
+    memo = text.strip() if not any(i in usable for i in intents) else None
+    notice = NO_CONSULT_NOTICE if QUESTION in intents else None
+    return MessagePlan(route=(flow,), flow=flow, proposals=proposals, memo=memo, notice=notice, intents=tuple(intents))
 
 
 def _text_only(text: str, intents: list[str], dictionary: DrugDictionary) -> MessagePlan:
     if not intents:
         return MessagePlan(route=("ask_type",), flow="ask_type", notice=ASK_TEXT_NOTICE, ask_about="text")
-    route = (["consult"] if QUESTION in intents else []) + (["register_meds"] if PATIENT_INFO in intents else [])
+    route = ["register_meds"] if PATIENT_INFO in intents else []
     proposals = tuple(make_proposals(text, [PATIENT_INFO] if PATIENT_INFO in intents else [], dictionary))
-    notice = None
+    notice = NO_CONSULT_NOTICE if QUESTION in intents else None
     memo = None
-    if not route:                                        # 수정 요청 · 메모만: 메모로 남기고 끝
+    if not route:                                        # 수정 요청 · 질문 · 메모만: 메모로 남기고 끝
         memo = text.strip()
-        notice = EDIT_WITHOUT_ORDER_NOTICE if EDIT_REQUEST in intents else None
+        if notice is None and EDIT_REQUEST in intents:
+            notice = EDIT_WITHOUT_ORDER_NOTICE
     route_t = ordered(route)
     return MessagePlan(route=route_t, flow=route_t[0] if route_t else None, notice=notice, proposals=proposals,
                        memo=memo, intents=tuple(intents))
@@ -140,9 +143,9 @@ def has_photo(photo_kind: Any, ocr: Any, text: Any) -> bool:
     return photo_kind is not None or ocr is not None or not (text or "").strip()
 
 
-def _consult_only(text: str | None, intents: list[str]) -> MessagePlan:
-    """처방이 없는 대화에 글만 왔을 때: 상담. 고칠 처방도 대조할 처방약도 없으므로 제안 · 메모를 만들지 않는다."""
-    return MessagePlan(route=("consult",), flow="consult", intents=tuple(intents))
+def _text_without_prescription(text: str | None, intents: list[str]) -> MessagePlan:
+    """처방이 없는 대화에 글만 왔을 때: 메모로 남기고 처방전 사진으로 시작하라고 알린다 (상담 답변 없음)."""
+    return MessagePlan(route=(), notice=NO_RX_TEXT_NOTICE, memo=(text or "").strip() or None, intents=tuple(intents))
 
 
 def _photo_without_prescription(kind: str, text: str | None, intents: list[str]) -> MessagePlan:
@@ -167,7 +170,7 @@ def plan_message(photo_kind: Any, ocr: Any, text: str | None, dictionary: DrugDi
     """
     intents = classify(text)
     if not has_photo(photo_kind, ocr, text):
-        return _text_only(text, intents, dictionary) if has_prescription else _consult_only(text, intents)
+        return _text_only(text, intents, dictionary) if has_prescription else _text_without_prescription(text, intents)
     flow, notice = decide_flow(photo_kind, ocr)
     if flow == "ask_type":
         return MessagePlan(route=("ask_type",), flow="ask_type", notice=notice, ask_about="photo", intents=tuple(intents))

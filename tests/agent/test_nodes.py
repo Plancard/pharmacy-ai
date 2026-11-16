@@ -23,12 +23,10 @@ from agent.nodes import (
     EDITED_NOTICE,
     HITL_APPROVAL,
     NO_API_WARNING,
-    NOT_READY_NOTICES,
     Deps,
     approve_node,
     ask_type_node,
     decide_flow,
-    consult_node,
     match_node,
     plan_node,
     read_reply,
@@ -198,9 +196,11 @@ def test_structure_hands_the_id_and_the_ocr_to_the_structure_function():
         seen.append((prescription_id, ocr))
         return DispensingOrder.model_validate(order_of(line("게보린정")))
 
+    from agent.structure import agent_view
+
     ocr = load("cv_a1", "rx_002")
     structure_node(first_state("P0007", ocr), deps(structure=spy))
-    assert seen == [("P0007", ocr)]
+    assert seen == [("P0007", agent_view(ocr))]                    # 상태에는 표 밖 글자를 비운 OCR이 들어 있다
 
 
 @pytest.mark.parametrize("code", [E_OCR_EMPTY, E_LLM, None])
@@ -430,14 +430,14 @@ def asked(state, answer=approve_as_shown):
 def test_approve_shows_the_order_the_ocr_lines_and_a_notice():
     state = checked("rx_001")
     payload, _ = asked(state)
-    assert set(payload) == {"hitl_point", "order", "ocr_lines", "notice", "proposals", "memo"}
+    assert set(payload) == {"hitl_point", "order", "ocr_lines", "ocr_size", "notice", "proposals", "memo"}
     assert payload["hitl_point"] == HITL_APPROVAL == "rx_approval"
     assert (payload["proposals"], payload["memo"]) == ([], None)
     assert payload["order"] == state["order"]
     used = {i for item in state["order"]["items"] for i in item["source_line_ids"]}
     assert set(payload["ocr_lines"]) == {str(i) for i in used}
     some = next(iter(payload["ocr_lines"].values()))
-    assert set(some) == {"text", "conf"}
+    assert set(some) == {"text", "conf", "bbox"}                         # bbox: 원본 이미지 픽셀 좌표 (F-WEB-06)
     json.dumps(payload)
 
 
@@ -749,10 +749,10 @@ def test_the_chosen_kind_wins_over_a_disagreeing_ocr():
 
 def test_ask_type_asks_about_the_text_when_only_text_came():
     state = first_state("P0001", None, None, "오후 수령 예정")
-    pharmacist = choose("question")
+    pharmacist = choose("patient_info")
     update = ask_type_node(state, deps(ask=pharmacist))
-    assert pharmacist.seen[0]["about"] == "text" and pharmacist.seen[0]["choices"] == ["patient_info", "question", "note"]
-    assert update["route"] == ["consult"] and "photo_kind" not in update
+    assert pharmacist.seen[0]["about"] == "text" and pharmacist.seen[0]["choices"] == ["patient_info", "note"]   # 질문은 고를 수 없다 (11/16)
+    assert update["route"] == ["register_meds"] and "photo_kind" not in update
 
 
 def test_choosing_memo_for_the_text_ends_with_noted():
@@ -766,24 +766,11 @@ def test_a_choice_that_cannot_be_chosen_is_refused(reply):
         ask_type_node(first_state("P0001"), deps(ask=lambda payload: reply))
 
 
-def test_the_flows_that_are_not_built_yet_say_so():
-    for node, flow in ((register_meds_node, "register_meds"), (recheck_node, "recheck"), (consult_node, "consult")):
-        assert node(first_state("P0001"), deps()) == {
-            "notes": [NOT_READY_NOTICES[flow]], "status": "not_ready", "notice": NOT_READY_NOTICES[flow],
-        }
-    assert len(set(NOT_READY_NOTICES.values())) == 3 and "tray" not in NOT_READY_NOTICES      # 트레이 검수는 14단계에서 만들었다
-
-
-def test_a_flow_that_is_not_built_yet_does_not_hide_what_the_prescription_did():
-    state = {**first_state("P0001"), "status": "planned", "notice": "조제 계획을 만들었습니다."}
-    assert consult_node(state, deps()) == {"notes": [NOT_READY_NOTICES["consult"]]}
-
-
 # ------------------------------------------------------------ 공통
 
 
 NODE_FUNCTIONS = [
-    supervisor_node, structure_node, match_node, risk_node, approve_node, register_meds_node, recheck_node, tray_node, consult_node,
+    supervisor_node, structure_node, match_node, risk_node, approve_node, register_meds_node, recheck_node, tray_node,
 ]
 
 

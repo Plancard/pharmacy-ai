@@ -11,6 +11,9 @@ call()이 그 스레드에 요청을 넘긴 뒤 결과를 기다린다. 연결�
     tools = in_process(dictionary, api=None)        # 프로세스 없이 서버 객체에 바로 붙는다 (테스트 · 측정용)
     tools = http("http://127.0.0.1:8765/mcp")       # 따로 띄운 서버(python -m agent.mcp_server --http)에 주소로 붙는다
     tools = from_settings()                         # .env의 AGENT_MCP_URL이 있으면 http, 없으면 stdio
+
+    tools.react_tools(["search_drug", "check_item_code"])   # AI 조사(ReAct)에 줄 도구: 서버가 알려 준 이름 · 설명 · 입력 스키마 그대로
+    tools.read_resource("pharmacy://dictionary")             # 서버의 고정 자료 (글)
 """
 from __future__ import annotations
 
@@ -97,7 +100,10 @@ class DrugTools:
                 while (request := await self._queue.get()) is not None:
                     name, arguments, answer = request
                     try:
-                        answer.set_result(await client.call_tool(name, arguments))
+                        if arguments is None:                 # 리소스 읽기 (name이 URI)
+                            answer.set_result(await client.read_resource(name))
+                        else:
+                            answer.set_result(await client.call_tool(name, arguments))
                     except Exception as e:            # 연결 문제 등. 부른 쪽 스레드에서 다시 올린다
                         answer.set_exception(e)
         except Exception as e:
@@ -120,23 +126,61 @@ class DrugTools:
         """(이름, 설명) 목록."""
         return [(t.name, t.description or "") for t in self._tools]
 
-    def call(self, tool: str, /, **arguments: Any) -> dict[str, Any]:
-        """도구 하나를 부르고 (도구 인자는 키워드로: call("search_drug", name="타이레놀")) 결과(JSON 객체)를 돌려준다. 도구가 실패하면 McpToolError."""
+    def _request(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        """연결 스레드에 요청을 넘기고 답을 기다린다 (arguments가 None이면 리소스 읽기)."""
         if self._loop is None or self._queue is None:
             raise McpToolError("MCP 연결이 열려 있지 않습니다 (open()을 먼저 부르세요).")
         if self._broken is not None:
             raise McpToolError(self._broken)
         answer: concurrent.futures.Future = concurrent.futures.Future()
+        what = "리소스" if arguments is None else "도구"
         try:
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, (tool, arguments, answer))
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, (name, arguments, answer))
         except RuntimeError:                                   # 연결 스레드의 이벤트 루프가 이미 끝났다
             raise McpToolError(self._broken or "MCP 연결이 닫혔습니다.") from None
         try:
-            result = answer.result(timeout=CALL_TIMEOUT_SECONDS)
+            return answer.result(timeout=CALL_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
-            raise McpToolError(f"도구 {tool}이(가) {CALL_TIMEOUT_SECONDS:.0f}초 안에 답하지 않았습니다.") from None
+            raise McpToolError(f"{what} {name}이(가) {CALL_TIMEOUT_SECONDS:.0f}초 안에 답하지 않았습니다.") from None
         except Exception as e:
-            raise McpToolError(f"도구 {tool}을(를) 부르지 못했습니다 ({type(e).__name__}: {e}).") from None
+            raise McpToolError(f"{what} {name}을(를) 부르지 못했습니다 ({type(e).__name__}: {e}).") from None
+
+    def read_resource(self, uri: str) -> str:
+        """서버의 리소스 하나를 글로 읽는다 (pharmacy://dictionary 등). 없으면 McpToolError."""
+        result = self._request(uri, None)
+        return "".join(getattr(c, "text", "") or "" for c in result.contents)
+
+    def schema(self, tool: str) -> dict[str, Any] | None:
+        """도구의 입력 스키마 (JSON Schema). 서버에 없는 도구면 None."""
+        found = next((t for t in self._tools if t.name == tool), None)
+        return dict(found.input_schema) if found is not None else None
+
+    def react_tools(self, names: list[str]) -> list[Any]:
+        """AI 조사(ReAct)에 줄 도구 (react.Tool). 이름 · 설명 · 입력 스키마는 서버가 list_tools로 알려 준 그대로다.
+
+        실행은 call_tool로 서버가 한다. 도구가 실패하면 ToolFailure로 바꿔 LLM에게 오류로 돌려준다.
+        서버에 없는 도구가 있으면 McpToolError (부르는 쪽이 직접 호출로 대신한다).
+        """
+        from agent.react import Tool, ToolFailure     # 판단 층 (포장은 판단을 불러도 된다)
+
+        listed = {t.name: t for t in self._tools}
+        missing = [n for n in names if n not in listed]
+        if missing:
+            raise McpToolError(f"MCP 서버에 도구가 없습니다: {', '.join(missing)} (서버를 새 버전으로 다시 띄우세요).")
+
+        def runner(name: str):
+            def run(arguments: dict[str, Any]) -> dict[str, Any]:
+                try:
+                    return self.call(name, **arguments)
+                except McpToolError as e:
+                    raise ToolFailure(str(e)) from None
+            return run
+
+        return [Tool(n, listed[n].description or "", dict(listed[n].input_schema), runner(n)) for n in names]
+
+    def call(self, tool: str, /, **arguments: Any) -> dict[str, Any]:
+        """도구 하나를 부르고 (도구 인자는 키워드로: call("search_drug", name="타이레놀")) 결과(JSON 객체)를 돌려준다. 도구가 실패하면 McpToolError."""
+        result = self._request(tool, arguments)
         text = " ".join(getattr(c, "text", "") for c in result.content).strip()
         if result.is_error:
             raise McpToolError(text.removeprefix(f"Error executing tool {tool}: ") or f"도구 {tool}이(가) 실패했습니다.")
@@ -184,11 +228,12 @@ def stdio(*, no_api: bool = False) -> DrugTools:
     return DrugTools(stdio_params(no_api=no_api)).open()
 
 
-def in_process(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: DurLookup | None = None) -> DrugTools:
+def in_process(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: DurLookup | None = None,
+               rag: Any = None, embed: Any = None) -> DrugTools:
     """같은 프로세스의 서버 객체에 바로 붙은 클라이언트 (열린 상태). JSON으로 주고받는 것은 stdio와 같다."""
     from agent.mcp_server import build_server   # 같은 층. 쓸 때만 서버를 만든다
 
-    return DrugTools(build_server(dictionary, api, dur)).open()
+    return DrugTools(build_server(dictionary, api, dur, rag, embed)).open()
 
 
 def http(url: str) -> DrugTools:

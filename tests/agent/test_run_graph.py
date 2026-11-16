@@ -212,7 +212,7 @@ def test_the_subgraph_alone_cannot_be_given_a_photo_kind(sub_graph, capsys):
 
 
 @pytest.mark.parametrize("argv, status, flow, notice", [
-    (["--kind", "med_bag", "--no-ocr"], "not_ready", "recheck", "복용 약 재대조 흐름은 아직 준비 중입니다."),
+    (["--kind", "med_bag", "--no-ocr"], "noted", "recheck", "약봉투 · 포장 사진에서 복용 약을 읽는 기능은 아직 준비 중입니다. 복용 약은 검색해서 직접 등록해 주세요."),
     (["--kind", "tray", "--no-ocr"], "noted", "tray", "조제 계획이 아직 없습니다. 조제지시서를 승인한 뒤에 트레이 사진을 올려 주세요."),
     (["--kind", "prescription"], WAITING, "prescription", "약사 승인을 기다립니다."),
     (["--no-ocr"], "멈춤(type_select)", "ask_type", "사진 종류 정보가 없습니다."),
@@ -246,8 +246,8 @@ def test_text_with_the_prescription_photo_is_shown_as_a_proposal(graph):
 
 def test_text_alone_goes_to_its_flow_and_shows_the_note(graph):
     _, text = run(["--no-ocr", "--text", "게보린 먹고 있는데 괜찮나요?"], graph)
-    assert "[rx_001] 상태: not_ready | 흐름: register_meds | 순서: register_meds → consult" in text
-    assert "    자리: 복용 약 등록은 아직 준비 중입니다.\n    자리: 상담 답변은 아직 준비 중입니다." in text
+    assert "[rx_001] 상태: noted | 흐름: register_meds | 순서: register_meds" in text
+    assert "    자리: 글에서 복용 약 후보를 찾았습니다. 확인한 약만 검색해 등록해 주세요 (자동으로 등록하지 않습니다)." in text
     assert "제안: [복용 약 후보] 게보린 먹고 있는데 괜찮나요? (글에 보인 약: 게보린정)" in text
 
 

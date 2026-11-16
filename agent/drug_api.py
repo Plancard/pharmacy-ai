@@ -123,7 +123,21 @@ def parse_products(data: Any) -> list[ApiDrug]:
 
 
 def http_get_json(url: str, params: dict[str, Any]) -> Any:
-    """GET 요청을 보내 JSON으로 읽는다. 실패하면 DrugApiError (키가 든 URL은 메시지에 넣지 않는다)."""
+    """GET 요청을 보내 JSON으로 읽는다. 실패하면 DrugApiError (키가 든 URL은 메시지에 넣지 않는다).
+
+    연결 실패 · 시간 초과는 config.DRUG_API_RETRIES번까지 다시 묻는다. HTTP 오류(키 · 권한 · 주소 문제)는 다시 묻지 않는다.
+    """
+    attempts = 1 + max(0, config.DRUG_API_RETRIES)
+    for attempt in range(1, attempts + 1):
+        try:
+            return _get_json_once(url, params)
+        except DrugApiError as e:
+            if not e.retryable or attempt == attempts:
+                raise
+    raise AssertionError("도달하지 않는다")
+
+
+def _get_json_once(url: str, params: dict[str, Any]) -> Any:
     secret = params.get("serviceKey")
     request = urllib.request.Request(
         f"{url}?{urllib.parse.urlencode(params)}",
@@ -140,7 +154,7 @@ def http_get_json(url: str, params: dict[str, Any]) -> Any:
         detail = f": {reason}" if reason else ""
         raise DrugApiError(f"의약품 API 호출에 실패했습니다 (HTTP {e.code}{detail}).", status=e.code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise DrugApiError(f"의약품 API에 연결하지 못했습니다 ({type(e).__name__}).") from None
+        raise DrugApiError(f"의약품 API에 연결하지 못했습니다 ({type(e).__name__}).", retryable=True) from None
     try:
         return json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):

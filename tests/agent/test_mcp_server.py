@@ -61,7 +61,8 @@ def with_api(api):
 # ------------------------------------------------------------ 도구 목록
 def test_the_server_offers_the_drug_and_dur_tools_with_descriptions(tools):
     assert tools.tool_names() == list(TOOL_NAMES) == ["search_drug", "check_item_code", "match_drug", "verify_dictionary",
-                                                      "check_interaction", "check_duplicate", "build_plan", "get_plan"]
+                                                      "check_interaction", "check_duplicate", "build_plan", "get_plan",
+                                                      "search_evidence"]
     assert all(description for _, description in tools.tools())
 
 
@@ -268,4 +269,64 @@ def test_the_server_process_uses_dur_when_the_key_is_set(monkeypatch):
     assert mcp_server.main([]) == 0
     assert callable(built[0][1]) and isinstance(built[0][2], DurApi)
     assert mcp_server.main(["--no-api"]) == 0
-    assert built[1][1:] == ()                                        # API도 DUR도 없이
+    assert built[1][1:3] == (None, None) and built[1][4] is None     # API도 DUR도 임베딩도 없이 (근거 색인은 파일이라 읽는다)
+
+
+# ------------------------------------------------------------ 근거 검색 도구 · 약품 사전 리소스 (11/16)
+
+
+def evidence_index():
+    from agent.rag import RagIndex, chunk_docs
+
+    def doc(code, name, section, text):
+        return {"doc_id": f"{code}:t:{section}", "item_code": code, "item_name": name, "source": "시험용", "section": section,
+                "url": "", "text": text, "updated": None}
+
+    return RagIndex(chunk_docs([
+        doc("202106092", "타이레놀정500mg", "상호작용", "(시험용) 다른 해열진통제와 함께 복용하면 간 손상이 생길 수 있습니다."),
+        doc("197900277", "게보린정", "주의사항", "(시험용) 아세트아미노펜이 든 약과 함께 먹지 마십시오."),
+    ]))
+
+
+def test_search_evidence_finds_chunks_of_the_asked_drugs():
+    with in_process(DICT, rag=evidence_index()) as tools:
+        got = tools.call("search_evidence", query="함께 복용 간 손상", item_codes=["202106092"], k=3)
+    assert got["item_codes"] == ["202106092"] and got["results"]
+    first = got["results"][0]
+    assert (first["item_code"], first["drug"], first["section"], first["focused"]) == ("202106092", "타이레놀정500mg", "상호작용", True)
+    assert set(first) == {"chunk_id", "item_code", "drug", "section", "source", "url", "text", "focused", "score"}
+
+
+def test_search_evidence_without_an_index_or_a_query_fails_clearly():
+    with in_process(DICT) as tools:
+        with pytest.raises(McpToolError, match="근거 색인이 없는 서버"):
+            tools.call("search_evidence", query="간")
+    with in_process(DICT, rag=evidence_index()) as tools:
+        with pytest.raises(McpToolError, match="query가 비었습니다"):
+            tools.call("search_evidence", query="   ")
+        assert len(tools.call("search_evidence", query="함께", k=99)["results"]) <= mcp_server.MAX_EVIDENCE
+
+
+def test_the_dictionary_is_a_resource():
+    with in_process(DICT) as tools:
+        rows = json.loads(tools.read_resource(mcp_server.DICTIONARY_URI))
+    assert [r["item_code"] for r in rows] == [e.item_code for e in DICT.entries]
+    assert {"item_code", "name", "ingredients", "class_id"} == set(rows[0])
+    with in_process(DICT) as tools, pytest.raises(McpToolError):
+        tools.read_resource("pharmacy://없는자료")
+
+
+def test_react_tools_carry_the_server_schema_and_run_on_the_server():
+    from agent.react import ToolFailure
+
+    with in_process(DICT) as tools:
+        search, check = tools.react_tools(["search_drug", "check_item_code"])
+        assert search.name == "search_drug" and search.parameters["required"] == ["name"]
+        assert search.spec()["function"]["parameters"]["properties"]["name"]["type"] == "string"
+        assert check.parameters["required"] == ["item_code", "name"]
+        assert search.run({"name": "게부린"})["dictionary"][0]["item_code"] == "197900277"
+        with pytest.raises(ToolFailure, match="의약품 API를 쓰지 않는 서버"):      # 서버의 실패는 LLM에게 오류로 돌려줄 것
+            check.run({"item_code": "197900277", "name": "게보린"})
+        with pytest.raises(McpToolError, match="도구가 없습니다: delete_all"):
+            tools.react_tools(["search_drug", "delete_all"])
+        assert tools.schema("get_plan")["required"] == ["plan"] and tools.schema("없음") is None

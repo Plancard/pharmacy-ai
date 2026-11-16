@@ -15,6 +15,8 @@ from agent.supervisor import (
     ordered,
     plan_after_choice,
     plan_message,
+    NO_CONSULT_NOTICE,
+    NO_RX_TEXT_NOTICE,
 )
 
 DICT = load_dictionary(RESOURCES_DIR / "drug_dictionary.json")
@@ -27,8 +29,8 @@ def plan(photo_kind=None, ocr=None, text=None):
 
 
 def test_the_order_of_the_flows():
-    assert FLOW_ORDER == ("ask_type", "prescription", "register_meds", "recheck", "tray", "consult")
-    assert ordered(["consult", "prescription", "consult", "ask_type"]) == ("ask_type", "prescription", "consult")
+    assert FLOW_ORDER == ("ask_type", "prescription", "register_meds", "recheck", "tray")   # 상담 흐름 없음 (11/16)
+    assert ordered(["tray", "prescription", "tray", "ask_type"]) == ("ask_type", "prescription", "tray")
 
 
 # ------------------------------------------------------------ 사진만
@@ -64,9 +66,12 @@ def test_a_current_med_with_a_prescription_photo_becomes_a_candidate_not_a_regis
     assert [p["kind"] for p in got.proposals] == ["patient_info"]
 
 
-def test_a_question_with_a_prescription_photo_adds_the_consult_after_it():
+def test_a_question_with_a_prescription_photo_is_not_answered_and_the_pharmacist_is_told():
     got = plan("prescription", RX, "게보린 먹고 있는데 같이 먹어도 되나요?")
-    assert got.route == ("prescription", "consult") and [p["kind"] for p in got.proposals] == ["patient_info"]
+    assert got.route == ("prescription",) and [p["kind"] for p in got.proposals] == ["patient_info"]
+    assert got.notice == NO_CONSULT_NOTICE
+    only_question = plan("prescription", RX, "같이 먹어도 되나요?")
+    assert (only_question.memo, only_question.notice) == ("같이 먹어도 되나요?", NO_CONSULT_NOTICE)
 
 
 @pytest.mark.parametrize("text", ["메모: 오후 수령", "오후 3시"])
@@ -85,7 +90,7 @@ def test_a_med_bag_photo_takes_a_current_med_as_a_candidate_and_an_edit_as_a_mem
     assert [p["kind"] for p in plan("med_bag", None, "게보린 먹고 있어요").proposals] == ["patient_info"]
     got = plan("med_bag", None, "게보린 빼 주세요")
     assert (got.route, got.proposals, got.memo) == (("recheck",), (), "게보린 빼 주세요")
-    assert plan("med_bag", None, "괜찮나요?").route == ("recheck", "consult")
+    assert (plan("med_bag", None, "괜찮나요?").route, plan("med_bag", None, "괜찮나요?").notice) == (("recheck",), NO_CONSULT_NOTICE)
 
 
 def test_an_unclear_photo_with_text_asks_about_the_photo_first():
@@ -99,9 +104,9 @@ def test_an_unclear_photo_with_text_asks_about_the_photo_first():
 
 
 @pytest.mark.parametrize("text, route, kinds, memo, notice", [
-    ("같이 먹어도 되나요?", ("consult",), [], None, None),
+    ("같이 먹어도 되나요?", (), [], "같이 먹어도 되나요?", NO_CONSULT_NOTICE),          # 질문은 메모 + 안내 (11/16 상담 제외)
     ("게보린 먹고 있어요", ("register_meds",), ["patient_info"], None, None),
-    ("게보린 먹고 있는데 괜찮나요?", ("register_meds", "consult"), ["patient_info"], None, None),
+    ("게보린 먹고 있는데 괜찮나요?", ("register_meds",), ["patient_info"], None, NO_CONSULT_NOTICE),
     ("메모: 오후 수령", (), [], "메모: 오후 수령", None),
     ("게보린 빼 주세요", (), [], "게보린 빼 주세요", EDIT_WITHOUT_ORDER_NOTICE),
 ])
@@ -134,32 +139,33 @@ def test_after_choosing_the_prescription_kind_the_text_is_still_used():
     assert [p["kind"] for p in got.proposals] == ["edit_request"]
 
 
-@pytest.mark.parametrize("choice, route, memo", [("question", ("consult",), None), ("patient_info", ("register_meds",), None), ("note", (), "오후 3시")])
+@pytest.mark.parametrize("choice, route, memo", [("patient_info", ("register_meds",), None), ("note", (), "오후 3시")])
 def test_after_choosing_a_text_meaning(choice, route, memo):
     got = plan_after_choice("text", choice, "오후 3시", DICT)
     assert (got.route, got.memo) == (route, memo)
 
 
-@pytest.mark.parametrize("about, choice", [("photo", "question"), ("text", "tray"), ("photo", None), ("text", "edit")])
+@pytest.mark.parametrize("about, choice", [("photo", "question"), ("text", "tray"), ("photo", None), ("text", "edit"),
+                                           ("text", "question")])                       # 질문은 더 이상 고를 수 없다
 def test_a_choice_from_the_other_list_is_refused(about, choice):
     with pytest.raises(ValueError, match="고를 수 있는 값이 아닙니다"):
         plan_after_choice(about, choice, "글", DICT)
 
 
 def test_the_text_choices_and_their_labels():
-    assert TEXT_CHOICES == ("patient_info", "question", "note")
-    assert choice_labels("text") == {"patient_info": "복용 약 정보", "question": "질문", "note": "메모"}
+    assert TEXT_CHOICES == ("patient_info", "note")
+    assert choice_labels("text") == {"patient_info": "복용 약 정보", "note": "메모"}
     assert choice_labels("photo") == {"prescription": "처방전", "tray": "트레이", "med_bag": "약봉투", "package": "포장"}
 
 
 def test_a_plan_becomes_the_fields_of_the_state():
-    got = MessagePlan(route=("prescription", "consult"), flow="prescription", proposals=({"kind": "edit_request", "text": "t", "drugs": []},), memo="m")
-    assert got.as_update() == {"route": ["prescription", "consult"], "flow": "prescription",
+    got = MessagePlan(route=("prescription", "tray"), flow="prescription", proposals=({"kind": "edit_request", "text": "t", "drugs": []},), memo="m")
+    assert got.as_update() == {"route": ["prescription", "tray"], "flow": "prescription",
                                "proposals": [{"kind": "edit_request", "text": "t", "drugs": []}], "memo": "m", "intents": []}
     assert MessagePlan(route=(), notice="n").as_update()["notice"] == "n"
 
 
-# ------------------------------------------------------------ 처방이 없는 대화 (상담 대화, 11/12 결정)
+# ------------------------------------------------------------ 처방이 없는 대화 (처방전 사진이 오기 전)
 
 
 def chat(photo_kind=None, ocr=None, text=None):
@@ -167,20 +173,21 @@ def chat(photo_kind=None, ocr=None, text=None):
 
 
 @pytest.mark.parametrize("text", ["타이레놀이랑 게보린 같이 먹어도 되나요?", "게보린 먹고 있어요", "게보린 빼 주세요", "오후 3시"])
-def test_text_alone_without_a_prescription_is_a_consultation(text):
-    # 고칠 처방도 대조할 처방약도 없으므로 의도와 상관없이 상담으로 간다. 제안 · 메모는 만들지 않는다
+def test_text_alone_without_a_prescription_is_kept_as_a_memo_and_asks_for_the_prescription(text):
+    # 상담 답변이 없으므로(11/16) 의도와 상관없이 메모로 남기고 처방전 사진으로 시작하라고 알린다. 제안은 만들지 않는다
     got = chat(text=text)
-    assert (got.route, got.flow, got.proposals, got.memo, got.ask_about) == (("consult",), "consult", (), None, None)
+    assert (got.route, got.flow, got.proposals, got.memo, got.ask_about) == ((), None, (), text, None)
+    assert got.notice == NO_RX_TEXT_NOTICE
 
 
-def test_the_intents_are_still_recorded_in_a_consultation():
+def test_the_intents_are_still_recorded_without_a_prescription():
     assert chat(text="게보린 먹고 있는데 괜찮나요?").intents == ("patient_info", "question")
 
 
 @pytest.mark.parametrize("photo_kind, ocr", [("prescription", None), (None, RX)])
 def test_a_prescription_photo_without_a_prescription_starts_the_prescription_flow(photo_kind, ocr):
     got = chat(photo_kind, ocr, "같이 먹어도 되나요?")
-    assert (got.route, got.flow) == (("prescription", "consult"), "prescription")
+    assert (got.route, got.flow, got.notice) == (("prescription",), "prescription", NO_CONSULT_NOTICE)
 
 
 @pytest.mark.parametrize("photo_kind, label", [("tray", "트레이"), ("med_bag", "약봉투"), ("package", "포장")])
@@ -197,5 +204,5 @@ def test_an_unclear_photo_without_a_prescription_is_still_asked_and_the_choice_f
 
 
 def test_with_a_prescription_nothing_changes():
-    assert plan(text="게보린 먹고 있는데 괜찮나요?").route == ("register_meds", "consult")
+    assert plan(text="게보린 먹고 있는데 괜찮나요?").route == ("register_meds",)
     assert plan("tray").route == ("tray",)
