@@ -212,48 +212,19 @@ def test_the_subgraph_alone_cannot_be_given_a_photo_kind(sub_graph, capsys):
 
 
 @pytest.mark.parametrize("argv, status, flow, notice", [
-    (["--kind", "med_bag", "--no-ocr"], "noted", "recheck", "약봉투 · 포장 사진에서 복용 약을 읽는 기능은 아직 준비 중입니다. 복용 약은 검색해서 직접 등록해 주세요."),
     (["--kind", "tray", "--no-ocr"], "noted", "tray", "조제 계획이 아직 없습니다. 조제지시서를 승인한 뒤에 트레이 사진을 올려 주세요."),
     (["--kind", "prescription"], WAITING, "prescription", "약사 승인을 기다립니다."),
-    (["--no-ocr"], "멈춤(type_select)", "ask_type", "사진 종류 정보가 없습니다."),
-    (["--kind", "receipt"], "멈춤(type_select)", "ask_type", "알 수 없는 사진 종류입니다."),
-    (["--kind", "med_bag"], "멈춤(type_select)", "ask_type", "지정한 종류(약봉투)와 OCR이 읽은 종류(처방전)가 다릅니다."),
+    (["--no-ocr"], "noted", "-", "사진 종류 정보가 없습니다."),
+    (["--kind", "receipt"], "noted", "-", "받을 수 없는 사진 종류입니다: receipt"),
+    (["--kind", "med_bag"], "noted", "-", "받을 수 없는 사진 종류입니다: med_bag"),     # v0.8: 약봉투 제외
 ])
 def test_the_photo_kind_decides_the_flow(graph, argv, status, flow, notice):
     code, text = run(argv, graph)
-    assert code == 0                                                  # 되묻거나 자리에서 멈추는 것은 실패가 아니다
+    assert code == 0                                                  # 안내만 남기고 끝나는 것은 실패가 아니다
     assert f"[rx_001] 상태: {status} | 흐름: {flow}" in text
     assert notice in text
     if flow != "prescription":
         assert "경로:" not in text                                    # 이 흐름들은 조제지시서를 만들지 않는다
-
-
-def test_choose_answers_the_kind_question(graph):
-    code, text = run(["--no-ocr", "--choose", "tray"], graph)
-    assert code == 0 and "고를 수 있는 것: prescription(처방전) · tray(트레이) · med_bag(약봉투) · package(포장)" in text
-    assert "-> 약사가 'tray'을(를) 고릅니다" in text and "[rx_001] 상태: noted | 흐름: tray | 순서: tray" in text
-
-
-def test_a_choice_that_cannot_be_chosen_is_reported(graph):
-    code, text = run(["--no-ocr", "--choose", "receipt"], graph)
-    assert code == 1 and text.endswith("고를 수 있는 값이 아닙니다: receipt (가능: prescription, tray, med_bag, package)")
-
-
-def test_text_with_the_prescription_photo_is_shown_as_a_proposal(graph):
-    _, text = run(["rx8_01", "--text", "게보린 빼 주세요"], graph)
-    assert "    제안: [수정 제안] 게보린 빼 주세요 (글에 보인 약: 게보린정). 약사가 확인해야 반영됩니다" in text
-
-
-def test_text_alone_goes_to_its_flow_and_shows_the_note(graph):
-    _, text = run(["--no-ocr", "--text", "게보린 먹고 있는데 괜찮나요?"], graph)
-    assert "[rx_001] 상태: noted | 흐름: register_meds | 순서: register_meds" in text
-    assert "    자리: 글에서 복용 약 후보를 찾았습니다. 확인한 약만 검색해 등록해 주세요 (자동으로 등록하지 않습니다)." in text
-    assert "제안: [복용 약 후보] 게보린 먹고 있는데 괜찮나요? (글에 보인 약: 게보린정)" in text
-
-
-def test_a_memo_is_shown(graph):
-    _, text = run(["--kind", "tray", "--no-ocr", "--text", "3번 칸 다시 보기"], graph)
-    assert "    메모: 3번 칸 다시 보기" in text
 
 
 # ------------------------------------------------------------ 그래프 만들기
@@ -261,12 +232,9 @@ def test_a_memo_is_shown(graph):
 
 def test_the_screen_output_can_be_written_in_cp949(graph):
     """윈도우 터미널(cp949)에서 글자가 깨지거나 멈추지 않는다."""
-    outputs = [run(argv, graph)[1] for argv in (["--all"], ["--no-ocr"], ["--kind", "tray", "--no-ocr"], ["--kind", "med_bag"])]
+    outputs = [run(argv, graph)[1] for argv in (["--all"], ["--no-ocr"], ["--kind", "tray", "--no-ocr"], ["--kind", "receipt"])]
     outputs.append(run(["--all", "--subgraph"], build_prescription_graph(dictionary=DICT, structure=rule_only, api=None, checkpointer=memory_checkpointer()))[1])
     outputs.append(run(["rx8_07", "--approve"], build_graph(dictionary=DICT, structure=rule_only, api=None, checkpointer=memory_checkpointer()))[1])
-    for argv in (["rx8_01", "--text", "게보린 먹고 있는데 빼 주세요. 괜찮나요?", "--approve"], ["--no-ocr", "--choose", "tray", "--text", "오후"],
-                 ["--no-ocr", "--text", "타이레놀 먹고 있어요"]):
-        outputs.append(run(argv, build_graph(dictionary=DICT, structure=rule_only, api=None, checkpointer=memory_checkpointer()))[1])
     for text in outputs:
         text.encode("cp949")                                          # 못 쓰는 글자가 있으면 여기서 UnicodeEncodeError
 

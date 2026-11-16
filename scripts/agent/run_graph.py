@@ -9,16 +9,9 @@
     python scripts/agent/run_graph.py --all --mcp           # 약품 매칭을 MCP 도구로 부른다 (python -m agent.mcp_server를 띄운다)
     python scripts/agent/run_graph.py --all --mcp-url http://127.0.0.1:8765/mcp   # 따로 띄운 MCP 서버에 붙는다
 
-사진과 함께 글을 보내려면 --text를 준다. 글만 보내려면 --no-ocr와 함께 쓴다.
-    python scripts/agent/run_graph.py rx8_01 --text "게보린 빼 주세요"      # 수정 요청 -> 승인 카드의 제안으로만
-    python scripts/agent/run_graph.py --no-ocr --text "타이레놀 같이 먹어도 되나요?"   # 글만: 상담 자리
-    python scripts/agent/run_graph.py --no-ocr --choose tray      # 사진 종류를 되묻는 곳에서 '트레이'를 고른다
-
-슈퍼바이저의 분기를 보려면 사진 종류를 지정한다. --no-ocr 은 OCR 없이 사진 종류만 보낸다 (트레이 사진처럼).
-    python scripts/agent/run_graph.py --kind med_bag --no-ocr   # 약봉투 -> 복용 약 재대조 자리
-    python scripts/agent/run_graph.py --kind tray --no-ocr      # 트레이 -> 검수 자리
-    python scripts/agent/run_graph.py --no-ocr                  # 종류를 알 수 없음 -> 되묻는 자리
-    python scripts/agent/run_graph.py --kind med_bag            # 처방전 OCR인데 약봉투라고 함 -> 되묻는 자리
+슈퍼바이저의 분기를 보려면 사진 종류를 지정한다 (명세서 v0.8: 처방전 · 트레이만). --no-ocr 은 OCR 없이 사진 종류만 보낸다.
+    python scripts/agent/run_graph.py --kind tray --no-ocr      # 조제 계획 전의 트레이 사진 -> 안내만
+    python scripts/agent/run_graph.py --no-ocr                  # 종류도 OCR도 없음 -> 안내만
 
 pytest가 아니다. 샘플은 agent/resources/samples의 cv_a1(rx_001 ~ rx_005, CV가 보낸 OCR)과 rx8_a1(rx8_01 ~ rx8_08, 대상 8종 시연용)이다.
 규칙 경로가 성공하면 OpenAI는 부르지 않는다. 화면에는 환자 정보를 찍지 않는다 (약품 표와 위험 신호, 조제 계획만).
@@ -42,8 +35,7 @@ from agent.checkpoint import default_checkpointer, describe, memory_checkpointer
 from agent.errors import ConfigError  # noqa: E402
 from agent.mcp_client import McpToolError, http, stdio  # noqa: E402
 from agent.graph import build_graph, build_prescription_graph, resume_run, run_message, run_prescription  # noqa: E402
-from agent.nodes import APPROVE, HITL_TYPE  # noqa: E402
-from agent.proposal import PROPOSAL_LABELS  # noqa: E402
+from agent.nodes import APPROVE  # noqa: E402
 from agent.plan import plan_lines  # noqa: E402
 from agent.risk import LEVEL_LABELS  # noqa: E402
 from agent.schema import DispensingOrder, Plan  # noqa: E402
@@ -68,8 +60,7 @@ def paused_value(state: dict[str, Any]) -> dict[str, Any] | None:
 
 def show(sample_id: str, state: dict[str, Any], out: Callable[[str], None]) -> None:
     paused = paused_value(state)
-    status = f"멈춤({paused['hitl_point']})" if paused and paused["hitl_point"] == HITL_TYPE else (
-        f"승인 대기({paused['hitl_point']})" if paused else state["status"])
+    status = f"승인 대기({paused['hitl_point']})" if paused else state["status"]
     route = " → ".join(state.get("route") or []) or "-"
     out(f"[{sample_id}] 상태: {status} | 흐름: {state.get('flow') or '-'} | 순서: {route}")
     notice = paused["notice"] if paused else state.get("notice")
@@ -80,17 +71,7 @@ def show(sample_id: str, state: dict[str, Any], out: Callable[[str], None]) -> N
     for error in state.get("errors", []):
         out(f"    오류: {error}")
     for note in state.get("notes", []):
-        out(f"    자리: {note}")
-    if paused and paused["hitl_point"] == HITL_TYPE:
-        out("    고를 수 있는 것: " + " · ".join(f"{c}({paused['labels'][c]})" for c in paused["choices"]))
-        return
-    proposals = paused["proposals"] if paused else state.get("proposals") or []
-    for p in proposals:
-        drugs = ", ".join(d["name"] for d in p["drugs"]) or "-"
-        out(f"    제안: [{PROPOSAL_LABELS[p['kind']]}] {p['text']} (글에 보인 약: {drugs}). 약사가 확인해야 반영됩니다")
-    memo = paused.get("memo") if paused else state.get("memo")
-    if memo:
-        out(f"    메모: {memo}")
+        out(f"    기록: {note}")
     order_data = paused["order"] if paused else state.get("order")
     if order_data is None:
         return
@@ -126,17 +107,13 @@ def main(argv: list[str] | None = None, *, graph=None, out: Callable[[str], None
     parser.add_argument("sample", nargs="?", default=ids[0], choices=ids, help="처방전 번호 (기본 %(default)s)")
     parser.add_argument("--all", action="store_true", help="샘플 전부")
     parser.add_argument("--no-api", action="store_true", help="의약품 API를 쓰지 않는다 (약품 사전만)")
-    parser.add_argument("--kind", help="사진 종류를 지정한다: prescription · tray · med_bag · package (그 밖의 값은 알 수 없는 종류)")
+    parser.add_argument("--kind", help="사진 종류를 지정한다: prescription · tray (그 밖의 값은 받지 않는 종류)")
     parser.add_argument("--no-ocr", action="store_true", help="OCR 결과 없이 보낸다 (트레이 사진처럼)")
     parser.add_argument("--subgraph", action="store_true", help="처방 서브그래프만 단독으로 돌린다 (슈퍼바이저를 거치지 않는다)")
     parser.add_argument("--approve", action="store_true", help="승인 대기에서 화면의 조제지시서를 그대로 승인해 이어 간다")
     parser.add_argument("--db", action="store_true", help="멈춘 곳을 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)")
-    parser.add_argument("--text", help="사진과 함께(또는 --no-ocr로 글만) 보낼 글")
-    parser.add_argument("--chat", action="store_true",
-                        help="처방이 없는 상담 대화로 보낸다 (글만 → 상담, 처방전 사진 → 처방 대화로 바뀜, 그 밖의 사진 → 안내)")
     parser.add_argument("--mcp", action="store_true", help="약품 매칭을 MCP 도구(match_drug)로 부른다. 서버를 하위 프로세스로 띄운다")
     parser.add_argument("--mcp-url", help="따로 띄운 MCP 서버(python -m agent.mcp_server --http)의 주소로 붙는다. --mcp를 겸한다")
-    parser.add_argument("--choose", help="되묻는 곳(type_select)에서 고를 값 (사진: prescription · tray · med_bag · package, 글: patient_info · question · note)")
     args = parser.parse_args(argv)
     if args.subgraph and args.kind is not None:
         parser.error("--subgraph는 슈퍼바이저를 거치지 않으므로 사진 종류(--kind)를 줄 수 없습니다")
@@ -190,19 +167,10 @@ def _run(args: argparse.Namespace, ids: list[str], graph, tools, out: Callable[[
             if args.subgraph:
                 state = run_prescription(graph, rx_id, ocr)
             else:
-                message = {"kind": args.kind, "text": args.text}
-                state = run_message(graph, rx_id, message, ocr, prescription_id=None if args.chat else rx_id)
+                state = run_message(graph, rx_id, {"kind": args.kind}, ocr, prescription_id=rx_id)
             show(sample_id, state, out)
-            if args.choose and paused_value(state) is not None and paused_value(state)["hitl_point"] == HITL_TYPE:
-                out(f"    -> 약사가 '{args.choose}'을(를) 고릅니다")
-                choices = paused_value(state)["choices"]
-                if args.choose not in choices:
-                    out(f"    고를 수 있는 값이 아닙니다: {args.choose} (가능: {', '.join(choices)})")
-                    return 1
-                state = resume_run(graph, rx_id, {"choice": args.choose})
-                show(sample_id, state, out)
-            reached += paused_value(state) is not None and paused_value(state)["hitl_point"] != HITL_TYPE
-            if args.approve and paused_value(state) is not None and paused_value(state)["hitl_point"] != HITL_TYPE:
+            reached += paused_value(state) is not None
+            if args.approve and paused_value(state) is not None:
                 order = paused_value(state)["order"]
                 out("    -> 약사가 화면의 조제지시서를 그대로 승인합니다")
                 state = resume_run(graph, rx_id, {"action": APPROVE, "order": order})

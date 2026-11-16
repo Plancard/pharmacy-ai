@@ -1,22 +1,17 @@
-"""그래프의 노드 (7 ~ 11단계, 일정표 11/9 ~ 11/13, REQ-AG-01 · 04 · 05, REQ-WEB-02 · 03).
+"""그래프의 노드 (7 ~ 11단계, 명세서 v0.8 2.2절, REQ-AG-01 · 04 · 05, REQ-WEB-02 · 03).
 
 노드는 상태를 받아 바꿀 칸만 dict로 돌려준다. LangGraph 없이도 함수로 불러 시험할 수 있다.
 실제 일은 agent/ 의 다른 파일이 하고, 노드는 상태에서 꺼내 넘기고 결과를 다시 담기만 한다.
 
-    supervisor     메시지 하나의 흐름과 순서를 정한다 (supervisor.py의 규칙). 메시지 하나에 한 번만 돈다
-    ask_type       사진 종류나 글의 뜻을 되묻는다 (HITL type_select). 약사가 고르면 그것으로 흐름을 다시 정한다
+    supervisor     사진 한 장의 흐름을 정한다 (supervisor.py의 규칙: 처방전 / 트레이). 메시지 하나에 한 번만 돈다
     structure      OCR -> 조제지시서 (규칙 경로 -> 실패하면 LLM 경로)
     match          약품 -> 품목기준코드 (약품 사전 -> 사전에 없으면 식약처 의약품 API), 약사 확인 표시.
                    deps.tools(MCP 클라이언트)가 있으면 MCP 도구 match_drug로 부른다 (12단계)
     risk           처방약끼리 위험 신호 대조 (성분 중복 + DUR 조회가 있으면 병용금기 · 효능군 중복). risk_check에 담는다.
                    deps.tools(MCP)가 있으면 DUR 도구 check_interaction · check_duplicate로 부른다 (13단계)
     approve        약사 승인 대기 (HITL ①). interrupt로 멈추고, 약사 응답(승인 · 고치기)을 받아 이어 간다.
-                   글로 받은 제안과 메모를 승인 화면에 함께 보인다
     make_plan      승인된 조제지시서로 칸별 조제 계획(A.4)을 만든다. 승인 전에는 오지 않는다.
                    deps.tools(MCP)가 있으면 조제 도구 build_plan으로 부른다 (14단계)
-    register_meds  복용 약 등록: 웹이 확정한 복용 약(meds_input)을 current_meds에 더한다. 글에서 찾은 후보는 제안으로만 둔다 (15단계)
-    recheck        복용 약 재대조 (recheck.py): 처방약 + 복용 약 대조, 새 항목만 A.6으로. deps.tools(MCP)가 있으면 DUR 도구로 (15단계)
-    recheck_review 위험 신호 확인 대기 (HITL ③ risk). 새 항목에 위험(danger)이 있을 때만 온다. 약사가 확인(acknowledge)하면 이어 간다
     tray           트레이 검수: CV(deps.inspect)로 트레이 사진을 조제 계획과 대조한 A.3을 받아 확인한다 (14단계).
                    전 칸 일치면 inspected로 끝나고, 아니면 inspecting으로 tray_review에 넘긴다
     tray_review    검수 확인 대기 (HITL ② inspection). 약사가 확인 완료(confirm)하면 inspected, 재조제(redo)면 planned로 돌아간다.
@@ -24,7 +19,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from agent.drug_dictionary import DrugDictionary
@@ -49,22 +44,10 @@ from agent.llm import load_prompt
 from agent.react import ToolChatFn, ToolFailure
 from agent.errors import ConfigError
 from agent.rag import RagIndex
-from agent.recheck import add_meds, consult_result, recheck, recheck_items
-from agent.redact import mask_text
 from agent.dur import DurLookup, find_all
 from agent.risk import LEVEL_LABELS, apply_report, requires_confirmation
 from agent.schema import DispensingOrder, Inspection, Plan
-from agent.supervisor import (  # noqa: F401  decide_flow · KIND_FLOW 등은 7단계부터 이 파일에서도 불러 썼다
-    DOC_KINDS,
-    KIND_FLOW,
-    KIND_LABELS,
-    ask_choices,
-    choice_labels,
-    decide_flow,
-    has_photo,
-    plan_after_choice,
-    plan_message,
-)
+from agent.supervisor import plan_message
 
 StructureFn = Callable[[str, dict[str, Any] | None], DispensingOrder]   # OCR가 없으면(None) 구조화는 E_OCR_EMPTY로 실패한다
 AskFn = Callable[[dict[str, Any]], Any]     # 멈추고 약사에게 묻는다: 보여 줄 내용 -> 약사 응답 (실제로는 LangGraph의 interrupt)
@@ -85,9 +68,6 @@ EDITED_NOTICE = "약사가 고친 내용으로 약품 매칭과 위험 신호 �
 # 의약품 API를 쓰지 못할 때 조제지시서에 남기는 경고. 사전에서 못 찾은 약이 있을 때만 남긴다.
 # 키가 없을 때와 --no-api로 끈 때 모두 남으므로 이유는 적지 않는다.
 NO_API_WARNING = "의약품 API를 쓰지 않아 약품 사전(대상 8종)에서만 품목기준코드를 찾았습니다."
-
-ASK_TYPE_NOTICE = "사진 종류를 정하지 못했습니다. 처방전 · 트레이 · 약봉투 · 포장 중에서 골라 주세요."
-HITL_TYPE = "type_select"                   # 되묻기 (웹의 agent_gateway.HITL_POINTS와 같은 이름)
 
 
 @dataclass(frozen=True)
@@ -115,79 +95,27 @@ def _order_dict(order: DispensingOrder) -> dict[str, Any]:
 
 
 def supervisor_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """메시지 하나의 흐름과 순서를 정한다. 그래프에서 이 노드로 돌아오는 화살표는 없으므로 메시지 하나에 한 번만 돈다.
+    """사진 한 장의 흐름을 정한다. 그래프에서 이 노드로 돌아오는 화살표는 없으므로 메시지 하나에 한 번만 돈다.
 
-    실행할 흐름이 없으면(글을 메모로만 남김) noted로 끝난다.
+    실행할 흐름이 없으면(사진 종류 없음 · 이미 처방전이 있는 처방에 또 온 처방전 등) 안내만 남기고 noted로 끝난다.
     """
-    if state.get("meds_input"):                  # 복용 약 등록 메시지 (api.register_meds): 등록 → 재대조
-        return {"route": ["register_meds", "recheck"], "flow": "register_meds", "proposals": [], "memo": None,
-                "intents": [], "recheck_needs_ack": False}
-    plan = plan_message(state.get("photo_kind"), state.get("ocr"), state.get("text"), deps.dictionary,
-                        has_prescription=has_prescription(state))
+    plan = plan_message(state.get("photo_kind"), state.get("ocr"), has_order=state.get("order") is not None)
     update = plan.as_update()
     update.update(_open_prescription(state, plan.route))
     if not plan.route:
-        update["status"] = "noted"
+        update["status"] = "noted" if state.get("status") == "received" else state.get("status")
+        update["notes"] = [plan.notice]
     return update
-
-
-def has_prescription(state: dict[str, Any]) -> bool:
-    """이 대화에 처방이 있는가 (처방 대화). 상담 대화는 prescription_id가 None이다."""
-    return state.get("prescription_id") is not None
 
 
 def _open_prescription(state: dict[str, Any], route) -> dict[str, Any]:
-    """처방 흐름을 도는데 처방 ID가 없으면 대화 ID로 연다 (상담 대화 → 처방 대화, 11/12 결정: 같은 ID).
+    """처방 흐름을 도는데 처방 ID가 없으면 대화 ID로 채운다 (처방 1건 = 대화 1개, 같은 ID).
 
     웹이 처방을 만들며 prescription_id를 넣어 주는 것이 원칙이고, 빠졌을 때만 여기서 채운다.
     """
-    if "prescription" in route and not has_prescription(state):
+    if "prescription" in route and state.get("prescription_id") is None:
         return {"prescription_id": state["conversation_id"]}
     return {}
-
-
-def type_question(state: dict[str, Any]) -> dict[str, Any]:
-    """되묻는 화면 (HITL type_select): 무엇을 묻는지, 고를 수 있는 값과 이름."""
-    about = "photo" if has_photo(state.get("photo_kind"), state.get("ocr"), state.get("text")) else "text"
-    return {
-        "hitl_point": HITL_TYPE,
-        "about": about,
-        "choices": list(ask_choices(about)),
-        "labels": choice_labels(about),
-        "notice": state.get("notice") or ASK_TYPE_NOTICE,
-    }
-
-
-def read_choice(reply: Any, about: str) -> str:
-    """되묻기의 응답 {"choice": 값}을 읽는다. 사진 종류는 {"doc_type": 값}도 받는다 (기능분석서 F-WEB-05).
-
-    고를 수 없는 값이면 ValueError.
-    """
-    choice = None
-    if isinstance(reply, dict):
-        choice = reply.get("choice", reply.get("doc_type") if about == "photo" else None)
-    if choice not in ask_choices(about):
-        raise ValueError(f"고를 수 있는 값이 아닙니다: {choice!r} (가능: {', '.join(ask_choices(about))})")
-    return choice
-
-
-def ask_type_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """사진 종류나 글의 뜻을 되묻는다 (HITL type_select). 여기서 멈추고, 약사가 고르면 그것으로 흐름을 다시 정한다.
-
-    사진 종류를 고르면 약사의 선택을 따른다 (OCR이 읽은 종류와 달라도 다시 묻지 않는다).
-    """
-    question = type_question(state)
-    choice = read_choice(_ask_pharmacist(deps, question), question["about"])
-    plan = plan_after_choice(question["about"], choice, state.get("text"), deps.dictionary,
-                             has_prescription=has_prescription(state))
-    update = plan.as_update()
-    update.update(_open_prescription(state, plan.route))
-    update["notice"] = plan.notice
-    if question["about"] == "photo":
-        update["photo_kind"] = choice
-    if not plan.route:
-        update["status"] = "noted"
-    return update
 
 
 # ------------------------------------------------------------ 처방 흐름
@@ -367,7 +295,7 @@ def ocr_size(ocr: Any) -> dict[str, int] | None:
 
 
 def approval_payload(state: dict[str, Any]) -> dict[str, Any]:
-    """HITL ①에서 웹에 보일 내용 (web/agent_gateway.Pause의 payload와 같은 모양에 안내 · 제안 · 메모를 더했다)."""
+    """HITL ①에서 웹에 보일 내용 (web/agent_gateway.Pause의 payload와 같은 모양에 안내를 더했다)."""
     order = DispensingOrder.model_validate(state["order"])
     order.check_ready_for_web()
     return {
@@ -376,8 +304,6 @@ def approval_payload(state: dict[str, Any]) -> dict[str, Any]:
         "ocr_lines": ocr_lines(order, state.get("ocr")),
         "ocr_size": ocr_size(state.get("ocr")),
         "notice": approval_notice(order, state),
-        "proposals": list(state.get("proposals") or []),   # 글로 받은 수정 요청 · 복용 약 후보. 약사가 확인한 것만 고쳐서 반영한다
-        "memo": state.get("memo"),
     }
 
 
@@ -548,107 +474,3 @@ def tray_review_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         checked = "; ".join(cell_lines(inspection, names))
         return {"status": "inspected", "notice": CONFIRMED_NOTICE, "notes": [f"검수 확인(약사): {checked}"]}
     return {"status": "planned", "notice": REDO_NOTICE, "notes": ["재조제 요청(약사): 트레이를 다시 채웁니다"]}
-
-
-# ------------------------------------------------------------ 복용 약 등록 · 재대조 (HITL ③)
-
-HITL_RISK = "risk"                          # HITL ③ 지점 이름 (기능분석서 5.2절, 웹의 agent_gateway.HITL_POINTS)
-ACKNOWLEDGE = "acknowledge"                 # 약사 응답 {"action": "acknowledge"} (기능분석서 F-WEB-11)
-MEDS_FROM_TEXT_NOTICE = "글에서 복용 약 후보를 찾았습니다. 확인한 약만 검색해 등록해 주세요 (자동으로 등록하지 않습니다)."
-NO_MEDS_IN_TEXT_NOTICE = "글에서 복용 약을 찾지 못했습니다. 복용 약은 검색해서 직접 등록해 주세요."
-MEDS_PHOTO_NOTICE = "약봉투 · 포장 사진에서 복용 약을 읽는 기능은 아직 준비 중입니다. 복용 약은 검색해서 직접 등록해 주세요."
-NO_RX_FOR_MEDS_NOTICE = "처방이 없는 대화라 복용 약만 등록했습니다 (대조할 처방약이 없습니다)."
-NO_ORDER_FOR_MEDS_NOTICE = "대조할 조제지시서가 없어 복용 약만 등록했습니다."
-RISK_ACK_NOTICE = "새 위험 신호를 약사가 확인했습니다."
-MCP_RECHECK_FAILED_WARNING = "MCP DUR 도구를 쓰지 못해 Agent가 직접 복용 약을 대조했습니다"
-
-
-def _quiet(state: dict[str, Any], notice: str) -> dict[str, Any]:
-    """안내만 남긴다. 이 메시지로 아무것도 하지 않았으면 noted."""
-    update: dict[str, Any] = {"notice": notice, "notes": [notice]}
-    if state.get("status") == "received":
-        update["status"] = "noted"
-    return update
-
-
-def register_meds_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """복용 약 등록. 웹이 확정해 보낸 약(meds_input, 검색으로 고른 품목기준코드)만 등록한다 (REQ-WEB-09).
-
-    글에서 찾은 후보(proposals)는 등록하지 않는다: 약사가 확인해 웹이 다시 보내야 등록된다 (REQ-AG-01 자동 반영 없음).
-    """
-    meds = state.get("meds_input") or []
-    if not meds:
-        return _quiet(state, MEDS_FROM_TEXT_NOTICE if state.get("proposals") else NO_MEDS_IN_TEXT_NOTICE)
-    merged, added = add_meds(state.get("current_meds") or [], meds)
-    names = ", ".join(m["name"] for m in added) or "(이미 등록된 약)"
-    update: dict[str, Any] = {"current_meds": merged, "notes": [f"복용 약 등록: {names}"],
-                              "notice": f"복용 약 {len(added)}개를 등록했습니다 (모두 {len(merged)}개)."}
-    if not has_prescription(state):
-        update["notice"] = NO_RX_FOR_MEDS_NOTICE
-    return update
-
-
-def recheck_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """처방약과 등록된 복용 약을 함께 다시 대조한다 (REQ-AG-05). 처방 단계에서 이미 보인 항목은 빼고 새 항목만 A.6에 담는다.
-
-    약봉투 · 포장 사진으로 온 경우(등록할 약이 없음)는 사진 인식이 아직 없어 안내만 한다.
-    새 항목에 위험이 있으면 recheck_needs_ack → recheck_review에서 약사 확인 (HITL ③).
-    """
-    if not state.get("meds_input"):
-        return _quiet(state, MEDS_PHOTO_NOTICE)
-    if not has_prescription(state):
-        return {"recheck_needs_ack": False}
-    if not state.get("order"):
-        return {"notice": NO_ORDER_FOR_MEDS_NOTICE, "recheck_needs_ack": False}
-    order = DispensingOrder.model_validate(state["order"])
-    meds = state.get("current_meds") or []
-    report, mcp_failure = None, None
-    if deps.tools is not None:
-        try:
-            report = deps.tools.check_dur(recheck_items(order, meds))     # 같은 대조를 MCP 서버가 한다
-        except McpToolError as e:
-            mcp_failure = e
-    result = recheck(order, meds, deps.dictionary, deps.dur, report=report)
-    notes = list(result.warnings)
-    if result.new_findings:
-        names = {**{d.item_code: d.name for d in order.items if d.item_code}, **{m["item_code"]: m["name"] for m in meds}}
-        explained, note = _explain(deps, result.new_findings, names)
-        result = replace(result, new_findings=tuple(explained))
-        if note:
-            notes.append(note)
-    consult = consult_result(state["conversation_id"], state["prescription_id"], result, meds, state.get("status"))
-    if mcp_failure is not None:
-        notes.append(f"{MCP_RECHECK_FAILED_WARNING}: {mcp_failure}")
-    update: dict[str, Any] = {"consult_result": consult.model_dump(mode="json"), "recheck_needs_ack": result.needs_ack,
-                              "notice": consult.answer.splitlines()[0]}
-    if notes:
-        update["notes"] = notes
-    return update
-
-
-def risk_payload(state: dict[str, Any]) -> dict[str, Any]:
-    """HITL ③에서 웹에 보일 내용 (기능분석서 F-WEB-11: 단계 배지, 새 항목, 재검토 필요 표시)."""
-    consult = state["consult_result"]
-    return {
-        "hitl_point": HITL_RISK,
-        "consult_result": consult,
-        "current_meds": list(state.get("current_meds") or []),
-        "notice": "새 위험 신호(위험 단계)가 있습니다. 약사가 확인해야 진행합니다." + (
-            " 이미 조제가 끝난 처방입니다: 조제 내용 재검토가 필요합니다." if consult.get("recheck_after_dispense") else ""),
-        "choices": [ACKNOWLEDGE],
-    }
-
-
-def read_risk_reply(reply: Any) -> str:
-    """HITL ③ 응답 {"action": "acknowledge"}을 읽는다. 잘못된 응답이면 ValueError."""
-    action = reply.get("action") if isinstance(reply, dict) else None
-    if action != ACKNOWLEDGE:
-        raise ValueError("위험 신호 확인 응답의 action은 acknowledge여야 합니다.")
-    return action
-
-
-def recheck_review_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """위험 신호 확인 대기 (HITL ③). 확인한 항목은 notes에 남긴다 (조제 기록의 승인 이력에 쓴다)."""
-    read_risk_reply(_ask_pharmacist(deps, risk_payload(state)))
-    found = [f["message"] for f in state["consult_result"]["new_findings"] if f["level"] == "danger"]
-    return {"recheck_needs_ack": False, "notice": RISK_ACK_NOTICE, "notes": [f"위험 신호 확인(약사): {'; '.join(found)}"]}

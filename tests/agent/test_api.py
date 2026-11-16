@@ -8,8 +8,6 @@ import json
 
 import pytest
 
-from agent.supervisor import NO_CONSULT_NOTICE, NO_RX_TEXT_NOTICE
-
 import fake_langgraph
 from agent.api import STAGE_AFTER_PLAN, AgentApi, AgentRunError, Pause
 from agent.checkpoint import memory_checkpointer
@@ -67,7 +65,7 @@ def test_start_stops_at_the_approval_with_what_the_web_shows(backend):
     api = make_api()
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     assert isinstance(pause, Pause) and pause.hitl_point == "rx_approval"
-    assert set(pause.payload) == {"order", "ocr_lines", "ocr_size", "notice", "proposals", "memo"}   # 웹 FakeGateway의 payload(order · ocr_lines)에 더했다
+    assert set(pause.payload) == {"order", "ocr_lines", "ocr_size", "notice"}   # 웹 FakeGateway의 payload(order · ocr_lines)에 더했다
     order = DispensingOrder.model_validate(pause.payload["order"])
     assert [d.item_code for d in order.items] == ["202106092", "197900277"]
     assert order.risk_check.level == "warning"
@@ -93,7 +91,7 @@ def test_nothing_is_pending_for_an_unknown_prescription(backend):
 def test_the_same_prescription_cannot_be_started_twice(backend):
     api = make_api()
     api.start("P0001", load("rx8_a1", "rx8_01"))
-    with pytest.raises(ValueError, match="이미 시작한 대화"):
+    with pytest.raises(ValueError, match="이미 시작한 처방"):
         api.start("P0001", load("rx8_a1", "rx8_02"))
     assert api.pending("P0001").payload["order"]["items"][0]["name"] == "타이레놀정 500mg"   # 첫 처방은 그대로 멈춰 있다
 
@@ -113,12 +111,12 @@ def test_a_photo_that_is_not_a_prescription_does_not_stop_at_the_approval(backen
     assert "조제 계획이 아직 없습니다" in api.result("P0001")["notice"]
 
 
-def test_a_tray_photo_that_starts_a_conversation_without_a_prescription_is_not_run(backend):
+def test_a_tray_photo_before_any_prescription_only_leaves_a_notice(backend):
     api = make_api()
     assert api.start("C0001", None, "tray") is None
     result = api.result("C0001")
-    assert (result["status"], result["route"], result["prescription_id"]) == ("noted", [], None)
-    assert "처방 대화에서 올려 주세요" in result["notice"]
+    assert (result["status"], result["route"], result["plan"]) == ("noted", ["tray"], None)
+    assert "조제 계획이 아직 없습니다" in result["notice"]
 
 
 # ------------------------------------------------------------ resume: 승인
@@ -254,47 +252,6 @@ def test_from_settings_builds_the_graph_with_the_given_tools(backend, monkeypatc
 # ------------------------------------------------------------ 사진과 글 (11단계)
 
 
-def test_a_prescription_photo_with_text_shows_the_proposal_on_the_approval(backend):
-    api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_01"), "prescription", "게보린 빼 주세요")
-    assert [p["kind"] for p in pause.payload["proposals"]] == ["edit_request"]
-    assert [d["name"] for d in pause.payload["order"]["items"]] == ["타이레놀정 500mg", "게보린정"]   # 반영하지 않았다
-
-
-def test_an_unclear_photo_stops_at_type_select_and_goes_on_after_the_choice(backend):
-    api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_02"), "med_bag")      # 처방전인데 약봉투이라고 했다
-    assert (pause.hitl_point, pause.payload["about"]) == ("type_select", "photo")
-    assert api.stage("P0001") == "type_select"
-    with pytest.raises(ValueError, match="고를 수 있는 값이 아닙니다"):
-        api.resume("P0001", "type_select", {"choice": "question"})
-    again = api.resume("P0001", "type_select", {"choice": "prescription"})
-    assert again.hitl_point == "rx_approval"
-    assert api.resume("P0001", "rx_approval", approve_reply(again)) is None and api.stage("P0001") == "await_tray"
-
-
-def test_text_alone_without_a_prescription_is_kept_as_a_memo(backend):
-    # 11/16 결정: 상담 답변 없음. 처방 없는 대화의 글은 메모로 남기고 처방전 사진으로 시작하라고 알린다
-    api = make_api()
-    assert api.start("C0001", None, None, "게보린 먹고 있는데 괜찮나요?", message_id="m1") is None
-    result = api.result("C0001")
-    assert (result["route"], result["status"], result["proposals"]) == ([], "noted", [])
-    assert result["memo"] == "게보린 먹고 있는데 괜찮나요?" and result["notice"] == NO_RX_TEXT_NOTICE
-    assert result["consult_result"] is None
-    assert (result["conversation_id"], result["prescription_id"], result["message_id"]) == ("C0001", None, "m1")
-    assert result["intents"] == ["patient_info", "question"]
-
-
-def test_text_that_cannot_be_read_in_a_prescription_conversation_asks_its_meaning(backend):
-    api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_01"))
-    api.resume("P0001", "rx_approval", approve_reply(pause))
-    pause = api.send("P0001", None, None, "오후 3시")
-    assert (pause.hitl_point, pause.payload["choices"]) == ("type_select", ["patient_info", "note"])
-    assert api.resume("P0001", "type_select", {"choice": "note"}) is None
-    assert api.result("P0001")["memo"] == "오후 3시" and api.result("P0001")["plan"] is not None
-
-
 # ------------------------------------------------------------ send: 같은 대화의 다음 메시지 (11/12 요청서)
 
 
@@ -319,118 +276,10 @@ def test_send_also_starts_a_new_conversation(backend):
 def test_send_is_refused_while_the_conversation_waits_for_the_pharmacist(backend):
     api = make_api()
     api.start("P0001", load("rx8_a1", "rx8_01"))
-    with pytest.raises(ValueError, match="약사 응답을 기다리는 대화"):
+    with pytest.raises(ValueError, match="약사 응답을 기다리는 처방"):
         api.send("P0001", None, "tray")
     assert api.pending("P0001").hitl_point == "rx_approval"
 
 
-def test_a_consultation_becomes_a_prescription_conversation(backend):
-    api = make_api()
-    api.start("C0001", None, None, "같이 먹어도 되나요?")
-    pause = api.send("C0001", load("rx8_a1", "rx8_02"), "prescription", prescription_id="C0001")
-    assert pause.hitl_point == "rx_approval" and pause.payload["order"]["prescription_id"] == "C0001"
-    assert api.result("C0001")["prescription_id"] == "C0001"
 
 
-def test_text_for_a_consultation_is_not_handled_as_an_open_prescription(backend):
-    api = make_api()
-    api.start("C0001", None, None, "같이 먹어도 되나요?")
-    with pytest.raises(ValueError, match="처방이 없는 대화"):
-        api.handle_text("C0001", "게보린 빼 주세요")
-
-
-# ------------------------------------------------------------ 열린 처방에 글만 (handle_text)
-
-
-def test_text_for_a_prescription_waiting_for_approval_becomes_a_proposal(backend):
-    api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_01"))
-    got = api.handle_text("P0001", "게보린 빼 주세요")
-    assert [p["kind"] for p in got["proposals"]] == ["edit_request"] and got["proposals"][0]["drugs"][0]["name"] == "게보린정"
-    assert (got["review_needed"], got["ask"], got["memo"], got["notice"]) == (False, False, None, None)
-    assert api.pending("P0001") == pause                                # 그래프는 그대로 멈춰 있다 (자동 반영 없음)
-
-
-def test_an_edit_request_after_the_plan_marks_the_order_for_review(backend):
-    api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_01"))
-    api.resume("P0001", "rx_approval", approve_reply(pause))
-    got = api.handle_text("P0001", "게보린 빼 주세요")
-    assert got["review_needed"] and got["notice"].startswith("조제 내용 재검토 필요") and got["proposals"] == []
-
-
-def test_a_current_med_after_the_plan_is_a_candidate_for_the_recheck(backend):
-    api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_03"))
-    api.resume("P0001", "rx_approval", approve_reply(pause))
-    got = api.handle_text("P0001", "게보린 먹고 있어요")
-    assert [p["kind"] for p in got["proposals"]] == ["patient_info"] and not got["review_needed"]
-
-
-@pytest.mark.parametrize("text, notice, memo, ask", [
-    ("같이 먹어도 되나요?", NO_CONSULT_NOTICE, "같이 먹어도 되나요?", False),     # 질문은 답하지 않고 메모로 (11/16)
-    ("메모: 오후 수령", None, "메모: 오후 수령", False),
-    ("오후 3시", None, None, True),
-])
-def test_questions_memos_and_unclear_text(backend, text, notice, memo, ask):
-    api = make_api()
-    api.start("P0001", load("rx8_a1", "rx8_01"))
-    got = api.handle_text("P0001", text)
-    assert (got["notice"], got["memo"], got["ask"]) == (notice, memo, ask)
-    assert "consult" not in got
-    assert got["choices"] == (["patient_info", "note"] if ask else [])
-
-
-def test_text_for_an_unknown_prescription_is_refused(backend):
-    with pytest.raises(ValueError, match="열린 처방이 없습니다"):
-        make_api().handle_text("P-none", "게보린 빼 주세요")
-
-
-def test_the_dictionary_of_the_api_is_read_from_the_settings_when_not_given(backend, monkeypatch):
-    from agent import api as api_module
-
-    monkeypatch.setattr(api_module, "load_dictionary", lambda: DICT)
-    api = AgentApi(build_graph(dictionary=DICT, structure=Counting(), api=None, checkpointer=memory_checkpointer()))
-    api.start("P0001", load("rx8_a1", "rx8_01"))
-    assert api.handle_text("P0001", "게보린 빼 주세요")["proposals"][0]["drugs"] == [{"item_code": "197900277", "name": "게보린정"}]
-
-
-# ------------------------------------------------------------ 복용 약 검색 (REQ-WEB-09, 11/16)
-
-
-def test_search_drugs_lists_dictionary_then_api_without_repeats():
-    from types import SimpleNamespace
-
-    from agent.api import AgentApi
-    from agent.drug_dictionary import load_dictionary
-
-    api = lambda term: [SimpleNamespace(item_code="197900277", name="게보린정", company="삼진"),          # noqa: E731
-                        SimpleNamespace(item_code="201800001", name="게보린소프트연질캡슐", company="삼진")]
-    agent = AgentApi(None, load_dictionary(), drug_api=api)
-    got = agent.search_drugs("  게보린 ")
-    assert [(r["item_code"], r["source"]) for r in got] == [("197900277", "dictionary"), ("201800001", "api")]
-    with pytest.raises(ValueError):
-        agent.search_drugs(" ")
-
-
-def test_search_drugs_keeps_the_dictionary_when_the_api_fails():
-    from agent.api import AgentApi
-    from agent.drug_dictionary import load_dictionary
-    from agent.errors import DrugApiError
-
-    def down(term):
-        raise DrugApiError("HTTP 500")
-
-    got = AgentApi(None, load_dictionary(), drug_api=down).search_drugs("타이레놀")
-    assert [r["item_code"] for r in got] == ["202106092"]
-
-
-def test_search_drugs_uses_the_mcp_server_when_there_is_one():
-    pytest.importorskip("mcp")
-    from agent.api import AgentApi
-    from agent.drug_dictionary import load_dictionary
-    from agent.mcp_client import in_process
-
-    with in_process(load_dictionary()) as tools:
-        agent = AgentApi(None, load_dictionary(), tools, drug_api=lambda t: pytest.fail("서버가 찾는다"))
-        assert agent.search_drugs("게부린")[0]["item_code"] == "197900277"

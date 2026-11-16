@@ -97,7 +97,7 @@ def test_no_checkpoint_of_the_conversation_holds_personal_text(backend):
     dictionary = load_dictionary(RESOURCES_DIR / "drug_dictionary.json")
     graph = build_graph(dictionary=dictionary, api=None, checkpointer=memory_checkpointer(),
                         structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=lambda *a: pytest.fail("LLM")))
-    api = AgentApi(graph, dictionary)
+    api = AgentApi(graph)
     pause = api.start("P0001", load(SAMPLES / "rx8_a1" / "rx8_01.json"))
     api.resume("P0001", "rx_approval", {"action": "approve", "order": pause.payload["order"]})
     if backend == "real":                                                 # 진짜 LangGraph: 단계마다 쌓인 체크포인트 전부

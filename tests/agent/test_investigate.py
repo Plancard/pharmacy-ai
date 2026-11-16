@@ -8,7 +8,7 @@ from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import load_dictionary
 from agent.drug_match import match_order
 from agent.investigate import AI_CHECK, NO_SUGGESTION, drug_tools, investigate_risks, local_evidence, suggest_candidates
-from agent.nodes import Deps, match_node, recheck_node, risk_node
+from agent.nodes import Deps, match_node, risk_node
 from agent.rag import RagIndex, chunk_docs
 from agent.schema import DispensingOrder, RiskFinding
 from test_react import Scripted, answer, call, uses
@@ -206,23 +206,6 @@ def test_the_risk_node_uses_the_investigation_and_falls_back_to_the_one_shot_exp
     broken = Scripted({"content": None, "tool_calls": []})
     update = risk_node({"order": order}, deps(rag=INDEX, react=broken, explain=lambda t: {"items": [{"index": 1, "text": GOOD}]}))
     assert update["order"]["risk_check"]["findings"][0]["explanation"] == GOOD   # 한 번 부르는 설명으로 대신
-
-
-def test_the_recheck_node_investigates_new_findings_too():
-    from agent.risk import check_order
-    from fake_dur import KETOROLAC, KETOROLAC_NAME, TRISPEN, FakeDur
-
-    order = check_order(order_with("트리스펜연질캡슐"), DICT, FakeDur()).model_dump(mode="json")
-    meds = [{"item_code": KETOROLAC, "name": KETOROLAC_NAME}]
-    state = {"conversation_id": "P0001", "prescription_id": "P0001", "status": "planned", "order": order,
-             "meds_input": meds, "current_meds": meds}
-    index = RagIndex(chunk_docs([doc(TRISPEN, "트리스펜연질캡슐", "상호작용", "(시험용) 케토롤락과 함께 투여하지 마십시오.")]))
-    text = "트리스펜과 가상케토롤락정은 병용금기 조합입니다. 처방 의도를 확인하세요."
-    chat = Scripted(uses(call("search_evidence", {"query": "케토롤락"})),
-                    answer({"items": [{"index": 1, "text": text, "evidence": ["E1"]}]}))
-    update = recheck_node(state, deps(dur=FakeDur(), rag=index, react=chat))
-    finding = update["consult_result"]["new_findings"][0]
-    assert finding["level"] == "danger" and finding["explanation"] == f"{text} (근거: 트리스펜연질캡슐 · 상호작용)"
 
 
 def test_the_test_graph_never_uses_the_react_llm_and_it_can_be_switched_off(monkeypatch):

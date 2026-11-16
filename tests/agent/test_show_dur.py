@@ -108,37 +108,3 @@ def test_without_a_key_it_says_so(monkeypatch):
 def test_the_output_can_be_written_in_cp949(monkeypatch):
     _, text = run(["--no-save", "--cases"], monkeypatch)
     text.encode("cp949")
-
-
-# ------------------------------------------------------------ --flow: 그래프 전체 (15단계)
-
-import pytest  # noqa: E402
-
-import fake_langgraph  # noqa: E402
-
-
-@pytest.fixture(params=["fake", "real"])
-def backend(request, monkeypatch):
-    if request.param == "real":
-        pytest.importorskip("langgraph")
-    else:
-        fake_langgraph.install(monkeypatch)
-    return request.param
-
-
-def test_the_flow_finds_both_taboo_pairs_through_the_whole_graph(backend, monkeypatch):
-    code, text = run(["--flow"], monkeypatch)
-    assert "[T1] rx8_17(트리스펜연질캡슐 (이부프로펜, 대상 8종)) + 복용 약 메토트렉세이트: 검출 → 위험 확인(HITL ③)에서 멈춤" in text
-    assert "[T2] rx8_16(아르펜정 (이부프로펜, 대상 8종)) + 복용 약 케토롤락: 검출 → 위험 확인(HITL ③)에서 멈춤" in text
-    assert "상담 카드: 위험 단계 danger · 재검토 필요 True" in text
-    assert "처방약 + 복용 약 병용금기 2쌍 중 2쌍 통과 (그래프 전체)" in text and code == 0
-
-
-def test_the_flow_fails_when_the_dur_list_has_no_partner(backend, monkeypatch):
-    def without_partners(url, params):
-        if url.endswith(dur_api.TABOO_OPERATION):
-            return response([])
-        return fake_fetch(url, params)
-
-    code, text = run(["--flow"], monkeypatch, without_partners)
-    assert code == 1 and "상대 약을 DUR 병용금기 목록에서 찾지 못했습니다" in text and "2쌍 중 0쌍 통과" in text

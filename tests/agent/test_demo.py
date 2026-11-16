@@ -29,29 +29,27 @@ def run(argv=(), **kwargs):
 
 def test_every_scenario_runs_as_expected(backend):
     code, text = run()
-    assert code == 0 and text.endswith("전체 11개 중 11개가 기대대로 돌았습니다.")
-    assert text.count(": 기대대로") == 11
+    assert code == 0 and text.endswith("전체 7개 중 7개가 기대대로 돌았습니다.")
+    assert text.count(": 기대대로") == 7
 
 
-def test_the_story_shows_the_proposal_the_plan_and_the_questions(backend):
+def test_the_story_shows_the_risk_the_plan_and_the_tray_checks(backend):
     _, text = run()
-    assert "제안(수정 제안): 게보린 빼 주세요  ← 약사가 확인해야 반영" in text
+    assert "위험 신호(warning): 트리스펜연질캡슐 · 아르펜정에 이부프로펜 성분이 함께 들어 있습니다." in text
     assert "계획 아침: 1일 타이레놀정 500mg 1 · 게보린정 1" in text
-    assert "멈춤: type_select" in text and "고를 수 있는 것: 처방전 · 트레이 · 약봉투 · 포장" in text
     assert "트레이 칸당 최대 2알을 넘습니다: 1~3일 아침·점심·저녁 3알" in text
-    assert "메모: 게보린 빼 주세요" in text
-    assert "승인된 조제지시서 · 조제 계획: 그대로" in text                    # 같은 대화의 두 번째 메시지 (11/12)
-    assert "처방 ID: None | 의도: patient_info, question" in text             # 처방 없는 대화의 글 → 메모 (11/16 상담 제외)
-    assert "처방전 사진을 올려 대화를 시작해 주세요" in text and "상담 답변:" not in text
+    assert "안내: 이 처방에는 이미 처방전이 있습니다. 새 처방전은 새 처방으로 올려 주세요." in text
+    assert "승인된 조제지시서 · 조제 계획: 그대로" in text                    # 같은 처방의 두 번째 메시지 (11/12)
     assert "검수: 트레이 검수: 전 칸 일치 (12칸)." in text                       # 트레이 검수 (14단계)
     assert "멈춤: inspection - 트레이 검수: 불일치 1칸, 확인 필요 0칸." in text
-    assert "[경고 · 성분 중복]" in text and "재검토 필요: True" in text           # 복용 약 재대조 (15단계)
     assert "오류: E_TRAY_NOT_FOUND" in text and "단계: await_tray (조제 계획은 그대로" in text
+    for gone in ("type_select", "메모:", "제안(", "재검토 필요", "상담"):         # v0.8에서 뺀 기능은 보이지 않는다
+        assert gone not in text
 
 
 def test_quiet_shows_one_line_per_scenario(backend):
     code, text = run(["--quiet"])
-    assert code == 0 and len(text.splitlines()) == 12
+    assert code == 0 and len(text.splitlines()) == 8
 
 
 def test_a_scenario_that_goes_wrong_is_shown_in_full_and_ends_with_one(backend, monkeypatch):

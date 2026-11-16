@@ -240,7 +240,7 @@ class CountingInspect:
 def planned_api(inspect):
     graph = build_graph(dictionary=DICT, api=None, checkpointer=memory_checkpointer(), inspect=inspect,
                         structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=lambda *a: pytest.fail("LLM")))
-    api = AgentApi(graph, DICT)
+    api = AgentApi(graph)
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     assert api.resume("P0001", "rx_approval", {"action": "approve", "order": pause.payload["order"]}) is None
     return api
@@ -295,9 +295,9 @@ def test_a_failed_inspection_is_an_error_with_its_code_and_the_plan_stays(backen
 def test_a_tray_photo_before_the_approval_is_not_sent_while_waiting(backend):
     graph = build_graph(dictionary=DICT, api=None, checkpointer=memory_checkpointer(), inspect=stub_inspect("ok"),
                         structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=lambda *a: pytest.fail("LLM")))
-    api = AgentApi(graph, DICT)
+    api = AgentApi(graph)
     api.start("P0001", load("rx8_a1", "rx8_01"))
-    with pytest.raises(ValueError, match="약사 응답을 기다리는 대화"):
+    with pytest.raises(ValueError, match="약사 응답을 기다리는 처방"):
         api.send("P0001", None, "tray", image_id="tray-1")
 
 

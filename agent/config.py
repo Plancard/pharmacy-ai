@@ -45,7 +45,7 @@ DRUG_API_RETRIES = int(os.getenv("DRUG_API_RETRIES", "1"))
 # 오퍼레이션 이름(getUsjntTabooInfoList03 등)은 agent/dur_api.py가 붙인다. 버전이 바뀌면 .env에 DUR_API_URL=... 로 적는다.
 DUR_API_URL = os.getenv("DUR_API_URL") or "https://apis.data.go.kr/1471000/DURPrdlstInfoService03"
 
-# 복약 상담 RAG의 근거 문서 (16단계). 둘 다 공공데이터포털 식약처 API이고 DRUG_API_KEY를 같이 쓴다 (활용신청은 따로).
+# 위험 신호 설명 RAG의 근거 문서 (16단계, 명세서 v0.8 REQ-AG-06). 둘 다 공공데이터포털 식약처 API이고 DRUG_API_KEY를 같이 쓴다 (활용신청은 따로).
 # e약은요(의약품개요정보): 효능 · 사용법 · 주의사항 · 상호작용 · 부작용 · 보관법을 쉬운 말로. 필드는 efcyQesitm 등 (data.go.kr 15075057).
 EASY_DRUG_URL = os.getenv("EASY_DRUG_URL") or "https://apis.data.go.kr/1471000/DrbEasyDrugInfoService/getDrbEasyDrugList"
 # 의약품 제품 허가정보 상세: 효능효과 · 용법용량 · 사용상의 주의사항 원문(EE_DOC_DATA · UD_DOC_DATA · NB_DOC_DATA).

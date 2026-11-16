@@ -2,9 +2,9 @@
 
     python scripts/agent/show_dur.py              # 사전 8종: 병용금기 상대 수 · 효능군, 응답 필드 이름. 응답을 var/api/ 에 저장
     python scripts/agent/show_dur.py --cases      # 병용금기 시험 조합(agent/resources/dur_cases.json)이 검출되는지 (약 두 개만 대조)
-    python scripts/agent/show_dur.py --flow       # 같은 조합을 그래프 전체로: 처방 승인 → 복용 약 등록 → 재대조 → 위험 확인(HITL ③) (15단계)
     python scripts/agent/show_dur.py --no-save    # 저장하지 않는다
 
+복용 약과의 병용금기를 그래프 전체로 보던 --flow는 명세서 v0.8에서 복용 약 재대조가 빠져 없앴다 (11/16).
 pytest가 아니다. 저장소 루트의 .env의 DRUG_API_KEY로 실제 DUR API(DURPrdlstInfoService03)를 부른다.
 키는 화면에도 파일에도 적지 않는다. 오퍼레이션 이름이나 응답 필드가 다르면 agent/dur_api.py 위쪽 상수를 고친다.
   - 응답 원본을 <폴더>/dur_<번호>_<오퍼레이션>.json 으로 저장한다 (기본 var/api/, git에 올라가지 않는다).
@@ -138,64 +138,9 @@ def check_cases(key: str, fetch: Fetch, out: Callable[[str], None]) -> int:
     return missed
 
 
-def check_flow(key: str, fetch: Fetch, out: Callable[[str], None]) -> int:
-    """병용금기 시험 조합을 그래프 전체로 (수용 기준 REQ-AG-05: 처방약 + 복용 약). 통과하지 못한 조합의 수를 돌려준다.
-
-    시연용 처방전(rx_sample)을 승인하고, 처방약의 DUR 병용금기 목록에서 고른 상대 약을 복용 약으로 등록한다.
-    재대조가 그 쌍을 위험(병용금기)으로 찾아 HITL ③에서 멈추면 통과. LLM은 부르지 않는다 (시연용 처방전은 규칙 경로로 읽힌다).
-    """
-    from agent.api import AgentApi
-    from agent.checkpoint import memory_checkpointer
-    from agent.graph import build_graph
-    from agent.pipeline import structure_prescription
-
-    def no_llm(*args):
-        raise RuntimeError("시연용 처방전은 규칙 경로로 읽혀야 합니다")
-
-    cases = json.loads(CASES.read_text(encoding="utf-8"))["cases"]
-    lookup = dur_api.DurApi(key=key, fetch=fetch)
-    graph = build_graph(api=None, dur=lookup, checkpointer=memory_checkpointer(),
-                        structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=no_llm))
-    agent = AgentApi(graph)
-    samples = config.RESOURCES_DIR / "samples" / "rx8_a1"
-    missed = 0
-    for case in cases:
-        label = f"[{case['id']}] {case['rx_sample']}({case['drug_label']}) + 복용 약 {case['partner_ingredient']}"
-        conv = f"flow-{case['id']}"
-        try:
-            found = resolve(case["drug"], key, fetch)
-            partners = [p for p in lookup.taboo(found[0]).partners
-                        if case["partner_ingredient"] in p.ingredient + p.name] if found else []
-            if not partners:
-                out(f"{label}: 상대 약을 DUR 병용금기 목록에서 찾지 못했습니다 (--cases로 확인)")
-                missed += 1
-                continue
-            partner = partners[0]
-            ocr = json.loads((samples / f"{case['rx_sample']}.json").read_text(encoding="utf-8"))
-            pause = agent.start(conv, ocr, prescription_id=conv)
-            agent.resume(conv, "rx_approval", {"action": "approve", "order": pause.payload["order"]})
-            stop = agent.register_meds(conv, [{"item_code": partner.item_code, "name": partner.name}])
-        except DrugApiError as e:
-            out(f"{label}: 조회 실패: {e}")
-            missed += 1
-            continue
-        consult = agent.result(conv)["consult_result"] or {}
-        taboo = [f for f in consult.get("new_findings", []) if f["type"] == COMBINATION_TABOO]
-        if stop is None or stop.hitl_point != "risk" or not taboo:
-            out(f"{label}: 통과 못 함 (멈춘 곳: {stop.hitl_point if stop else '없음'}, 새 병용금기 {len(taboo)}건)")
-            missed += 1
-            continue
-        agent.resume(conv, "risk", {"action": "acknowledge"})
-        out(f"{label}: 검출 → 위험 확인(HITL ③)에서 멈춤 | {taboo[0]['message']}")
-        out(f"      상담 카드: 위험 단계 {consult['risk_level']} · 재검토 필요 {consult['recheck_after_dispense']}")
-    out(f"처방약 + 복용 약 병용금기 {len(cases)}쌍 중 {len(cases) - missed}쌍 통과 (그래프 전체)")
-    return missed
-
-
 def main(argv: list[str] | None = None, *, fetch: Fetch = http_get_json, out: Callable[[str], None] = print) -> int:
     parser = argparse.ArgumentParser(description="DUR 품목정보 API 응답 보기 · 병용금기 시험 조합 확인")
     parser.add_argument("--cases", action="store_true", help="공개 병용금기 조합(dur_cases.json)이 검출되는지 본다")
-    parser.add_argument("--flow", action="store_true", help="같은 조합을 그래프 전체로 (처방 승인 → 복용 약 등록 → 재대조)")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="저장할 폴더 (기본 var/api)")
     parser.add_argument("--no-save", action="store_true", help="저장하지 않는다")
     args = parser.parse_args(argv)
@@ -208,8 +153,6 @@ def main(argv: list[str] | None = None, *, fetch: Fetch = http_get_json, out: Ca
         return 1
     if args.cases:
         return 0 if check_cases(key, fetch, out) == 0 else 1
-    if args.flow:
-        return 0 if check_flow(key, fetch, out) == 0 else 1
     save_to = None
     if not args.no_save:
         save_to = args.out

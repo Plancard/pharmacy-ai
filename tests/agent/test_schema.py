@@ -1,7 +1,7 @@
 """agent/schema.py (부록 A 형식)와 agent/resources/samples/ 의 더미 JSON을 검사한다.
 
-1. 샘플이 모두 형식을 통과한다 (A.1 · A.3 · A.4 · A.5 · A.6, 위험 신호 필드 포함)
-2. 샘플끼리 서로 맞는다 (A.1 줄 번호 ↔ A.5 근거, A.5 ↔ A.4 계획 ↔ A.3 검수, A.5 ↔ A.6 위험 수준)
+1. 샘플이 모두 형식을 통과한다 (A.1 · A.3 · A.4 · A.5, 위험 신호 필드 포함. A.6은 v0.8에서 삭제)
+2. 샘플끼리 서로 맞는다 (A.1 줄 번호 ↔ A.5 근거, A.5 ↔ A.4 계획 ↔ A.3 검수)
 3. 어긋난 값은 거부한다
 """
 import copy
@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from agent.config import RESOURCES_DIR
 from agent.schema import (
-    TIME_SLOTS, TRAY_CELLS, ConsultResult, DispensingOrder, DrugLine, Inspection, OcrResult, Plan, RiskCheck,
+    TIME_SLOTS, TRAY_CELLS, DispensingOrder, DrugLine, Inspection, OcrResult, Plan, RiskCheck,
     RiskFinding, max_risk, risk_rank,
 )
 
@@ -42,7 +42,7 @@ RX_NAMES = ["s01_combo_a", "s02_combo_b", "s03_no_risk", "s04_flagged", "s05_no_
 
 @pytest.mark.parametrize("kind, model", [
     ("a1_ocr", OcrResult), ("a5_order", DispensingOrder), ("a4_plan", Plan),
-    ("a3_inspection", Inspection), ("a6_consult", ConsultResult),
+    ("a3_inspection", Inspection),
 ])
 def test_every_sample_passes_its_format(kind, model):
     found = names(kind)
@@ -55,11 +55,11 @@ def test_sample_set_is_complete():
     assert names("a1_ocr") == names("a5_order") == sorted(RX_NAMES)   # OCR 하나마다 정답 하나
     assert names("a4_plan") == ["s01_combo_a"]
     assert names("a3_inspection") == ["i01_ok", "i02_mismatch"]
-    assert names("a6_consult") == ["c01_combo_a_rx_only", "c02_no_risk_with_current_meds", "c03_general_no_prescription"]
+    assert not (SAMPLES / "a6_consult").exists()                     # A.6 상담 결과는 v0.8에서 삭제
 
 
 def test_round_trip_keeps_values():
-    for kind, model in [("a5_order", DispensingOrder), ("a6_consult", ConsultResult), ("a3_inspection", Inspection)]:
+    for kind, model in [("a5_order", DispensingOrder), ("a3_inspection", Inspection)]:
         for name in names(kind):
             obj = model.model_validate(load(kind, name))
             assert model.model_validate(obj.model_dump(mode="json")) == obj
@@ -111,9 +111,6 @@ def test_samples_cover_every_risk_level():
     for n in RX_NAMES:
         rc = DispensingOrder.model_validate(load("a5_order", n)).risk_check
         levels |= {rc.level} | {f.level for f in rc.findings}
-    for n in names("a6_consult"):
-        c = ConsultResult.model_validate(load("a6_consult", n))
-        levels |= {c.risk_level} | {f.level for f in c.new_findings}
     assert levels == {"none", "caution", "warning", "danger"}
 
 
@@ -151,26 +148,6 @@ def test_inspection_samples_show_ok_and_trouble():
     assert ok.summary.hitl_required is False and ok.summary.ok == 12
     assert bad.summary.hitl_required is True
     assert (bad.summary.mismatch, bad.summary.need_review) == (1, 1)
-
-
-def test_consult_risk_level_is_not_lower_than_the_order():
-    """A.6 risk_level = A.5 risk_check와 재대조 중 높은 쪽."""
-    for name in names("a6_consult"):
-        c = ConsultResult.model_validate(load("a6_consult", name))
-        if c.prescription_id is None:          # 처방 없는 일반 상담: 견줄 조제지시서가 없다
-            continue
-        orders = {DispensingOrder.model_validate(load("a5_order", n)).prescription_id: n for n in RX_NAMES}
-        order = DispensingOrder.model_validate(load("a5_order", orders[c.prescription_id]))
-        assert risk_rank(c.risk_level) >= risk_rank(order.risk_check.level)
-
-
-def test_new_findings_are_not_already_shown_in_the_order():
-    c = ConsultResult.model_validate(load("a6_consult", "c02_no_risk_with_current_meds"))
-    order = DispensingOrder.model_validate(load("a5_order", "s03_no_risk"))
-    shown = {(f.type, tuple(sorted(f.item_codes))) for f in order.risk_check.findings}
-    assert c.new_findings
-    for f in c.new_findings:
-        assert (f.type, tuple(sorted(f.item_codes))) not in shown
 
 
 # ------------------------------------------------------------------ 3. 어긋난 값은 거부한다 — 공통
@@ -223,10 +200,11 @@ def test_ocr_rejects(mutate, why):
         OcrResult.model_validate(d)
 
 
-def test_ocr_accepts_med_bag():
+def test_ocr_refuses_med_bag():
     d = load("a1_ocr", "s01_combo_a")
-    d["doc_type"] = "med_bag"
-    assert OcrResult.model_validate(d).doc_type == "med_bag"
+    d["doc_type"] = "med_bag"                    # 약봉투는 v0.8에서 제외 (A.1 doc_type은 prescription만)
+    with pytest.raises(ValidationError):
+        OcrResult.model_validate(d)
 
 
 # ------------------------------------------------------------------ A.5 약품 줄
@@ -538,61 +516,6 @@ def test_inspection_allows_every_reason():
     review = next(c for c in d["cells"] if c["status"] == "need_review")
     review["reasons"] = ["low_conf", "boundary", "overlap", "rotated"]
     assert Inspection.model_validate(d).cells
-
-
-# ------------------------------------------------------------------ A.6
-
-def consult(**kw) -> dict:
-    base = {"conversation_id": "P0001", "prescription_id": "P0001", "risk_scope": "rx_only", "new_findings": [], "recheck_after_dispense": False,
-            "risk_level": "none", "answer": "예시 답변", "evidence": []}
-    return {**base, **kw}
-
-
-def test_consult_minimal_is_valid():
-    assert ConsultResult.model_validate(consult()).evidence == []
-
-
-@pytest.mark.parametrize("c", [
-    consult(risk_scope="rx_only", new_findings=[finding()], risk_level="warning"),   # 처방약끼리만 봤는데 새 항목
-    consult(risk_scope="rx_with_current_meds", new_findings=[finding(level="danger")], risk_level="warning"),   # 항목보다 낮음
-    consult(risk_scope="rx_with_current_meds", new_findings=[finding()], risk_level="none"),
-    consult(risk_scope="whole_world"),
-    consult(risk_level="severe"),
-    consult(answer=""),
-    consult(recheck_after_dispense="maybe"),
-    consult(evidence=[{"title": "제목", "source": "출처"}]),                         # excerpt 없음
-    {k: v for k, v in consult().items() if k != "conversation_id"},                 # 대화 ID 없음
-    consult(conversation_id=""),
-    consult(prescription_id=None),                                                  # 처방 없는 대화인데 대조 범위가 rx_only
-    consult(risk_scope="none", new_findings=[finding()], risk_level="warning"),     # 대조 없이 한 상담에 새 항목
-    consult(risk_scope="none", risk_level="caution"),
-    consult(risk_scope="none", recheck_after_dispense=True),
-])
-def test_consult_rejects(c):
-    with pytest.raises(ValidationError):
-        ConsultResult.model_validate(c)
-
-
-def test_a_general_consult_without_a_prescription_is_valid():
-    # 처방 없는 대화의 상담 (11/12 결정): prescription_id None, risk_scope none, 새 항목 · 위험 단계 없음
-    c = ConsultResult.model_validate(consult(conversation_id="C0001", prescription_id=None, risk_scope="none"))
-    assert (c.conversation_id, c.prescription_id, c.risk_scope, c.risk_level) == ("C0001", None, "none", "none")
-
-
-def test_a_consult_in_a_prescription_conversation_may_skip_the_check():
-    assert ConsultResult.model_validate(consult(risk_scope="none")).prescription_id == "P0001"
-
-
-def test_consult_risk_level_may_exceed_new_findings():
-    """A.5의 위험이 더 높으면 risk_level은 그쪽을 따른다 (둘 중 높은 쪽)."""
-    c = consult(risk_scope="rx_with_current_meds", new_findings=[finding(level="caution")], risk_level="danger")
-    assert ConsultResult.model_validate(c).risk_level == "danger"
-
-
-def test_consult_new_findings_may_point_at_current_meds_not_in_the_order():
-    f = finding(item_codes=[TYLENOL, ARPEN], level="caution")                # 복용 중인 약(아르펜)은 처방에 없다
-    c = consult(risk_scope="rx_with_current_meds", new_findings=[f], risk_level="caution", recheck_after_dispense=True)
-    assert ConsultResult.model_validate(c).recheck_after_dispense is True
 
 
 # 이 파일의 경로 가정 점검: 샘플 폴더가 git에 올라가는 위치인지 (data/ 아래면 .gitignore에 걸린다)

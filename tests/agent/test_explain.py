@@ -7,10 +7,10 @@ from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import load_dictionary
 from agent.errors import ConfigError, StructureError
 from agent.explain import FAILED_NOTE, acceptable, apply_explanations, explain_findings, explain_input, passages_for
-from agent.nodes import Deps, recheck_node, risk_node
+from agent.nodes import Deps, risk_node
 from agent.rag import RagIndex, chunk_docs
 from agent.schema import RiskFinding
-from fake_dur import KETOROLAC, KETOROLAC_NAME, TRISPEN, FakeDur
+from fake_dur import KETOROLAC, KETOROLAC_NAME, TRISPEN
 
 DICT = load_dictionary(RESOURCES_DIR / "drug_dictionary.json")
 TYLENOL, GEVORIN = "202106092", "197900277"
@@ -117,20 +117,6 @@ def test_a_missing_key_leaves_the_rule_sentence_and_a_note():
     update = risk_node({"order": order_with("타이레놀정500mg", "게보린정")}, deps(explain=no_key))
     assert update["order"]["risk_check"]["findings"][0]["explanation"] is None
     assert update["notes"][0].startswith(FAILED_NOTE)
-
-
-def test_new_findings_of_a_recheck_are_explained_too():
-    order = order_with("트리스펜연질캡슐")
-    from agent.risk import check_order
-    from agent.schema import DispensingOrder
-
-    order = check_order(DispensingOrder.model_validate(order), DICT, FakeDur()).model_dump(mode="json")
-    state = {"conversation_id": "P0001", "prescription_id": "P0001", "status": "planned", "order": order,
-             "meds_input": [{"item_code": KETOROLAC, "name": KETOROLAC_NAME}],
-             "current_meds": [{"item_code": KETOROLAC, "name": KETOROLAC_NAME}]}
-    update = recheck_node(state, deps(dur=FakeDur(), explain=lambda text: {"items": [{"index": 1, "text": GOOD_TABOO}]}))
-    finding = update["consult_result"]["new_findings"][0]
-    assert finding["level"] == "danger" and finding["explanation"] == GOOD_TABOO and update["recheck_needs_ack"]
 
 
 def test_the_test_graph_never_uses_the_llm_for_explanations():

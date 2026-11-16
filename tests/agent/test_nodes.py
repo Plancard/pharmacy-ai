@@ -19,19 +19,14 @@ from agent.nodes import (
     MCP_DUR_FAILED_WARNING,
     MCP_FAILED_WARNING,
     APPROVED_NOTICE,
-    ASK_TYPE_NOTICE,
     EDITED_NOTICE,
     HITL_APPROVAL,
     NO_API_WARNING,
     Deps,
     approve_node,
-    ask_type_node,
-    decide_flow,
     match_node,
     plan_node,
     read_reply,
-    recheck_node,
-    register_meds_node,
     risk_node,
     structure_node,
     supervisor_node,
@@ -109,71 +104,6 @@ def state_with(order=None, **extra):
 
 
 # ------------------------------------------------------------ 슈퍼바이저: 사진 종류로 흐름 정하기
-
-
-@pytest.mark.parametrize("photo_kind, ocr, flow", [
-    ("prescription", None, "prescription"),
-    ("med_bag", None, "recheck"),
-    ("tray", None, "tray"),
-    (None, {"doc_type": "prescription"}, "prescription"),
-    (None, {"doc_type": "med_bag"}, "recheck"),
-    ("prescription", {"doc_type": "prescription"}, "prescription"),
-    ("med_bag", {"doc_type": "med_bag"}, "recheck"),
-    ("tray", {}, "tray"),                                       # 트레이에는 문서 종류가 없다
-    ("prescription", {"lines": []}, "prescription"),            # doc_type이 없어도 사진 종류가 있으면 따른다
-])
-def test_the_flow_follows_the_photo_kind(photo_kind, ocr, flow):
-    assert decide_flow(photo_kind, ocr) == (flow, None)
-
-
-@pytest.mark.parametrize("photo_kind, ocr, reason", [
-    (None, None, "사진 종류 정보가 없습니다."),
-    (None, {}, "사진 종류 정보가 없습니다."),
-    (None, "글자", "사진 종류 정보가 없습니다."),                  # OCR 형식이 아니면 단서로 보지 않는다
-    ("receipt", None, "알 수 없는 사진 종류입니다."),
-    ("", None, "알 수 없는 사진 종류입니다."),
-    (["prescription"], None, "알 수 없는 사진 종류입니다."),
-    ("receipt", {"doc_type": "prescription"}, "알 수 없는 사진 종류입니다."),
-    (None, {"doc_type": "receipt"}, "OCR이 읽은 문서 종류를 알 수 없습니다."),
-    ("prescription", {"doc_type": "receipt"}, "OCR이 읽은 문서 종류를 알 수 없습니다."),
-    ("prescription", {"doc_type": "med_bag"}, "지정한 종류(처방전)와 OCR이 읽은 종류(약봉투)가 다릅니다."),
-    ("med_bag", {"doc_type": "prescription"}, "지정한 종류(약봉투)와 OCR이 읽은 종류(처방전)가 다릅니다."),
-    ("tray", {"doc_type": "prescription"}, "지정한 종류(트레이)와 OCR이 읽은 종류(처방전)가 다릅니다."),
-])
-def test_an_unclear_photo_kind_is_asked_about_not_guessed(photo_kind, ocr, reason):
-    flow, notice = decide_flow(photo_kind, ocr)
-    assert flow == "ask_type"
-    assert notice == f"사진 종류를 정하지 못했습니다. {reason} 처방전 · 트레이 · 약봉투 · 포장 중에서 골라 주세요."
-
-
-def test_supervisor_sets_the_route_when_the_kind_is_clear():
-    state = first_state("P0001", load("cv_a1", "rx_001"))
-    assert supervisor_node(state, deps()) == {
-        "route": ["prescription"], "flow": "prescription", "proposals": [], "memo": None, "intents": [],
-    }
-
-
-def test_supervisor_also_leaves_the_question_when_it_asks():
-    update = supervisor_node(first_state("P0001"), deps())
-    assert (update["route"], update["flow"]) == (["ask_type"], "ask_type")
-    assert update["notice"].startswith("사진 종류를 정하지 못했습니다.")
-
-
-def test_supervisor_reads_the_kind_from_the_ocr_of_a_state_without_photo_kind():
-    state = {"prescription_id": "P0001", "ocr": {"doc_type": "med_bag"}}      # 칸이 몇 개 없어도 읽는다
-    assert supervisor_node(state, deps())["route"] == ["recheck"]
-
-
-def test_supervisor_puts_the_text_of_a_prescription_photo_into_proposals():
-    state = first_state("P0001", load("rx8_a1", "rx8_01"), "prescription", "게보린 빼 주세요")
-    update = supervisor_node(state, deps())
-    assert update["route"] == ["prescription"]
-    assert update["proposals"] == [{"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": [{"item_code": GEVORIN, "name": "게보린정"}]}]
-
-
-def test_supervisor_ends_with_noted_when_the_text_is_only_a_memo():
-    update = supervisor_node(first_state("P0001", None, None, "메모: 오후 수령"), deps())
-    assert (update["route"], update["status"], update["memo"]) == ([], "noted", "메모: 오후 수령")
 
 
 # ------------------------------------------------------------ 구조화
@@ -430,22 +360,14 @@ def asked(state, answer=approve_as_shown):
 def test_approve_shows_the_order_the_ocr_lines_and_a_notice():
     state = checked("rx_001")
     payload, _ = asked(state)
-    assert set(payload) == {"hitl_point", "order", "ocr_lines", "ocr_size", "notice", "proposals", "memo"}
+    assert set(payload) == {"hitl_point", "order", "ocr_lines", "ocr_size", "notice"}
     assert payload["hitl_point"] == HITL_APPROVAL == "rx_approval"
-    assert (payload["proposals"], payload["memo"]) == ([], None)
     assert payload["order"] == state["order"]
     used = {i for item in state["order"]["items"] for i in item["source_line_ids"]}
     assert set(payload["ocr_lines"]) == {str(i) for i in used}
     some = next(iter(payload["ocr_lines"].values()))
     assert set(some) == {"text", "conf", "bbox"}                         # bbox: 원본 이미지 픽셀 좌표 (F-WEB-06)
     json.dumps(payload)
-
-
-def test_approve_shows_the_proposals_and_the_memo_of_the_message():
-    proposal = {"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": []}
-    payload, update = asked({**checked("rx_001"), "proposals": [proposal], "memo": "오후 수령"})
-    assert (payload["proposals"], payload["memo"]) == ([proposal], "오후 수령")
-    assert update["status"] == "approved"                            # 제안은 보이기만 하고 지시서를 바꾸지 않는다
 
 
 def test_approve_says_how_many_lines_need_a_check():
@@ -711,66 +633,40 @@ def test_plan_does_not_change_the_state_it_was_given():
     assert state == before
 
 
-# ------------------------------------------------------------ 다른 흐름의 자리
+# ------------------------------------------------------------ 슈퍼바이저 (v0.8: 처방전 / 트레이)
 
 
-def choose(value):
-    return Pharmacist(lambda payload: {"choice": value})
+def test_supervisor_sends_a_prescription_photo_to_the_prescription_flow():
+    got = supervisor_node(first_state("P1", load("cv_a1", "rx_001")), deps())
+    assert (got["route"], got["flow"]) == (["prescription"], "prescription") and "status" not in got
 
 
-def test_ask_type_shows_the_question_the_supervisor_left_and_the_photo_kinds():
-    state = merged(first_state("P0001"), supervisor_node(first_state("P0001"), deps()))
-    pharmacist = choose("tray")
-    ask_type_node(state, deps(ask=pharmacist))
-    [shown] = pharmacist.seen
-    assert shown == {
-        "hitl_point": "type_select", "about": "photo", "choices": ["prescription", "tray", "med_bag", "package"],
-        "labels": {"prescription": "처방전", "tray": "트레이", "med_bag": "약봉투", "package": "포장"}, "notice": state["notice"],
-    }
-    assert "사진 종류 정보가 없습니다." in shown["notice"]
+def test_supervisor_reads_a_prescription_from_the_ocr_when_no_kind_is_given():
+    got = supervisor_node(first_state("P1", load("cv_a1", "rx_001"), photo_kind=None), deps())
+    assert got["route"] == ["prescription"]
 
 
-def test_ask_type_has_a_question_of_its_own_when_none_was_left():
-    pharmacist = choose("tray")
-    ask_type_node(first_state("P0001"), deps(ask=pharmacist))
-    assert pharmacist.seen[0]["notice"] == ASK_TYPE_NOTICE
+def test_supervisor_fills_the_prescription_id_when_the_web_left_it_out():
+    state = {**first_state("P1", load("cv_a1", "rx_001")), "prescription_id": None}
+    assert supervisor_node(state, deps())["prescription_id"] == "P1"
 
 
-@pytest.mark.parametrize("kind, route", [("prescription", ["prescription"]), ("med_bag", ["recheck"]), ("tray", ["tray"])])
-def test_the_photo_kind_the_pharmacist_chose_decides_the_route(kind, route):
-    update = ask_type_node(first_state("P0001"), deps(ask=choose(kind)))
-    assert (update["route"], update["flow"], update["photo_kind"], update["notice"]) == (route, route[0], kind, None)
+def test_supervisor_ends_with_noted_and_a_note_when_nothing_can_run():
+    got = supervisor_node(first_state("P1", None, photo_kind=None), deps())
+    assert got["route"] == [] and got["status"] == "noted" and got["notes"] == [got["notice"]]
 
 
-def test_the_chosen_kind_wins_over_a_disagreeing_ocr():
-    state = first_state("P0001", {"doc_type": "med_bag", "lines": []}, "prescription")
-    assert ask_type_node(state, deps(ask=choose("prescription")))["route"] == ["prescription"]
-
-
-def test_ask_type_asks_about_the_text_when_only_text_came():
-    state = first_state("P0001", None, None, "오후 수령 예정")
-    pharmacist = choose("patient_info")
-    update = ask_type_node(state, deps(ask=pharmacist))
-    assert pharmacist.seen[0]["about"] == "text" and pharmacist.seen[0]["choices"] == ["patient_info", "note"]   # 질문은 고를 수 없다 (11/16)
-    assert update["route"] == ["register_meds"] and "photo_kind" not in update
-
-
-def test_choosing_memo_for_the_text_ends_with_noted():
-    update = ask_type_node(first_state("P0001", None, None, "오후 수령 예정"), deps(ask=choose("note")))
-    assert (update["route"], update["status"], update["memo"]) == ([], "noted", "오후 수령 예정")
-
-
-@pytest.mark.parametrize("reply", [None, {}, {"choice": "receipt"}, {"choice": "question"}, "tray"])
-def test_a_choice_that_cannot_be_chosen_is_refused(reply):
-    with pytest.raises(ValueError, match="고를 수 있는 값이 아닙니다"):
-        ask_type_node(first_state("P0001"), deps(ask=lambda payload: reply))
+def test_supervisor_keeps_the_status_of_an_open_prescription_when_a_second_prescription_photo_comes():
+    state = {**checked("rx_001"), "status": "planned"}
+    got = supervisor_node({**state, "photo_kind": "prescription"}, deps())
+    assert got["route"] == [] and got["status"] == "planned" and "새 처방" in got["notice"]
 
 
 # ------------------------------------------------------------ 공통
 
 
 NODE_FUNCTIONS = [
-    supervisor_node, structure_node, match_node, risk_node, approve_node, register_meds_node, recheck_node, tray_node,
+    supervisor_node, structure_node, match_node, risk_node, approve_node, tray_node,
 ]
 
 
@@ -851,18 +747,3 @@ def test_when_the_mcp_dur_tool_fails_the_node_checks_by_itself_and_says_so():
     assert f"{MCP_DUR_FAILED_WARNING}: 연결이 끊겼습니다" in order.warnings
 
 
-def test_a_photo_kind_can_also_be_chosen_as_doc_type():
-    """기능분석서 F-WEB-05: 종류 선택 카드의 재개 요청은 {doc_type}."""
-    from agent.nodes import read_choice
-
-    assert read_choice({"doc_type": "package"}, "photo") == "package"
-    assert read_choice({"choice": "tray"}, "photo") == "tray"
-    with pytest.raises(ValueError):
-        read_choice({"doc_type": "question"}, "text")                # 글 의도는 choice로만
-
-
-def test_a_package_photo_goes_to_the_current_medicine_recheck():
-    from agent.supervisor import KIND_FLOW, KIND_LABELS
-
-    assert (KIND_FLOW["package"], KIND_LABELS["package"]) == ("recheck", "포장")
-    assert (KIND_FLOW["med_bag"], KIND_LABELS["med_bag"]) == ("recheck", "약봉투")

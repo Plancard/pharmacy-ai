@@ -1,15 +1,13 @@
-"""그래프 두 장 (7 ~ 11단계, 일정표 11/9 ~ 11/13, REQ-AG-01 · 04 · 05, REQ-WEB-03) — 상위 그래프와 처방 서브그래프.
+"""그래프 두 장 (7 ~ 11단계, 명세서 v0.8 2.2절, REQ-AG-01 · 04 · 05, REQ-WEB-03) — 상위 그래프와 처방 서브그래프.
 
-상위 그래프: 슈퍼바이저가 메시지 하나(사진 · 글)의 흐름과 순서(route)를 정하고, 흐름을 정해진 순서로 하나씩 실행한다.
+상위 그래프: 슈퍼바이저가 사진 한 장의 흐름(route)을 정하고 그 흐름을 실행한다 (v0.8: 처방전 / 트레이 두 갈래).
 
-    START -> supervisor -> [ask_type] -> [prescription] -> [register_meds] -> [recheck] -> [tray (-> tray_review)] -> END   (상담 답변 단계는 11/16에 뺐다)
+    START -> supervisor -> [prescription] -> [tray (-> tray_review)] -> END
     (대괄호 = route에 있을 때만 들른다. 각 노드는 route에서 자기보다 뒤에 있는 첫 흐름으로 가고, 없으면 끝난다)
     tray_review는 트레이 검수에 약사 확인이 필요할 때(status=inspecting)만 들른다 (HITL ② inspection에서 멈춤)
 
-    ask_type       되묻기 (HITL type_select에서 멈춤). 약사가 고르면 route를 다시 정한다
     prescription   처방 서브그래프 (아래)
     tray           트레이 검수 (CV deps.inspect). ok가 아닌 칸이 있으면 tray_review에서 약사 확인 (14단계)
-    그 밖           자리만 있다 (복용 약 등록 · 재대조 15단계, 상담 16단계)
 
 처방 서브그래프: 처방전 한 장을 승인 대기까지 데려간다.
 
@@ -28,11 +26,9 @@
 - approve는 interrupt로 멈춘다(HITL ①). 멈추려면 체크포인터가 있어야 하므로 그래프를 만들 때 체크포인터를 붙인다
   (checkpoint.py: DATABASE_URL이 있으면 PostgreSQL, 없으면 메모리). thread_id는 대화 ID다 (처방 대화에서는 처방 ID와 같다).
   웹은 api.py의 start · send · pending · resume · stage로 이것을 쓴다.
-- 같은 대화의 두 번째 이후 메시지(트레이 사진, 질문 등)는 이번 메시지 칸만 넣는다 (state.message_input).
+- 같은 처방의 두 번째 이후 메시지(트레이 사진)는 이번 메시지 칸만 넣는다 (state.message_input).
   처음 상태를 다시 넣으면 체크포인터가 앞서 승인된 조제지시서(order)와 조제 계획(plan)을 None으로 덮어쓴다.
-- ask_type도 interrupt로 멈춘다 (HITL type_select). 응답은 {"choice": 값}이다.
 - 조제 계획(make_plan)은 승인된 조제지시서로만 만든다 (정할 것 10).
-- 복용 약 등록 · 재대조도 두 노드다: recheck가 대조(DUR API)를 한 번 하고, 새 항목에 위험이 있으면 recheck_review가 멈춘다 (HITL ③).
 - 트레이 검수는 두 노드다: tray가 CV를 한 번 부르고, tray_review가 멈춘다. interrupt에서 이어 갈 때 노드가 처음부터 다시 돌기 때문에
   한 노드에 두면 약사가 응답할 때마다 CV 추론을 다시 하고, 결과가 달라질 수도 있다.
 """
@@ -56,17 +52,13 @@ from agent.nodes import (
     Deps,
     StructureFn,
     approve_node,
-    ask_type_node,
     match_node,
     plan_node,
-    recheck_node,
-    register_meds_node,
     risk_node,
     structure_node,
     supervisor_node,
     tray_node,
     tray_review_node,
-    recheck_review_node,
     InspectFn,
 )
 from agent.pipeline import structure_prescription
@@ -88,12 +80,8 @@ STEPS: dict[str, NodeFn] = {
     "risk": risk_node,
     "approve": approve_node,
     "make_plan": plan_node,
-    "ask_type": ask_type_node,
-    "register_meds": register_meds_node,
-    "recheck": recheck_node,
     "tray": tray_node,
     "tray_review": tray_review_node,
-    "recheck_review": recheck_review_node,
 }
 
 
@@ -182,26 +170,15 @@ def after_tray(state: dict[str, Any]) -> str:
 
 
 TRAY_REVIEW = "tray_review"
-RECHECK_REVIEW = "recheck_review"
-
-
-def after_recheck(state: dict[str, Any]) -> str:
-    """재대조의 새 항목에 위험(danger)이 있으면 recheck_review(HITL ③)로, 아니면 다음 흐름으로."""
-    consult = state.get("consult_result") or {}
-    if state.get("recheck_needs_ack") and consult:
-        return RECHECK_REVIEW
-    return next_flow("recheck")(state)
 
 TOP_CHART = Chart(
     entry="supervisor",
-    nodes=("supervisor", *FLOW_ORDER, TRAY_REVIEW, RECHECK_REVIEW),
+    nodes=("supervisor", *FLOW_ORDER, TRAY_REVIEW),
     edges=(),
     branches={"supervisor": (after_supervisor, _forward("supervisor")[1]),
               **{flow: _forward(flow) for flow in FLOW_ORDER},
               "tray": (after_tray, {**_forward("tray")[1], TRAY_REVIEW: TRAY_REVIEW}),
-              TRAY_REVIEW: _forward("tray"),
-              "recheck": (after_recheck, {**_forward("recheck")[1], RECHECK_REVIEW: RECHECK_REVIEW}),
-              RECHECK_REVIEW: _forward("recheck")},
+              TRAY_REVIEW: _forward("tray")},
 )
 
 # 상위 그래프에서 서브그래프를 부르는 노드의 이름
@@ -236,7 +213,7 @@ def _make_deps(
 ) -> Deps:
     if dur is _FROM_SETTINGS:              # api를 따로 정하지 않았을 때만 설정을 따른다 (api=None이면 DUR도 쓰지 않는다)
         dur = default_dur_api() if api is _FROM_SETTINGS else None
-    settings = api is _FROM_SETTINGS       # api=None(시험 · 측정)이면 상담 색인 · LLM · 임베딩도 설정에서 가져오지 않는다
+    settings = api is _FROM_SETTINGS       # api=None(시험 · 측정)이면 근거 색인 · LLM · 임베딩도 설정에서 가져오지 않는다
     if rag is _FROM_SETTINGS:
         rag = load_index(config.RAG_DIR, _vector_search()) if settings else None
     if embed is _FROM_SETTINGS:
@@ -388,19 +365,16 @@ def run_message(
     message: dict[str, Any] | None = None,
     ocr: dict[str, Any] | None = None,
     prescription_id: str | None = None,
-    meds: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """메시지 하나({message_id, text, image_id, kind})를 상위 그래프에 넣어 끝까지(또는 멈출 때까지) 돌린 상태.
+    """메시지 하나({message_id, image_id, kind})를 상위 그래프에 넣어 끝까지(또는 멈출 때까지) 돌린 상태.
 
-    대화의 첫 메시지면 initial_state, 이미 있는 대화면 이번 메시지 칸만(message_input) 넣는다.
+    처방의 첫 메시지면 initial_state, 이미 있는 처방이면 이번 메시지 칸만(message_input) 넣는다.
     멈췄으면 돌려준 값에 '__interrupt__'가 들어 있다. 멈춘 내용은 api.py가 checkpointer에서 다시 읽는다.
     """
     if has_thread(graph, conversation_id):
         given = message_input(message, ocr, prescription_id)
     else:
         given = initial_state(conversation_id, message, prescription_id, ocr)
-    if meds:
-        given["meds_input"] = [dict(m) for m in meds]       # 복용 약 등록 메시지 (api.register_meds)
     return graph.invoke(given, thread_config(conversation_id))
 
 

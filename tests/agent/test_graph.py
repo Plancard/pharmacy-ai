@@ -173,15 +173,13 @@ def test_the_supervisor_can_start_any_flow_and_the_flows_only_go_forward():
     assert set(targets) - {"end"} == set(FLOWS) == set(FLOW_ORDER)
     for i, flow in enumerate(FLOW_ORDER):                             # 앞에서 뒤로만: 되돌아가는 길이 없다
         _, after = TOP_CHART.branches[flow]
-        extra = {"tray": {"tray_review"}, "recheck": {"recheck_review"}}.get(flow, set())   # 약사 확인 노드를 하나 더 거칠 수 있다
+        extra = {"tray": {"tray_review"}}.get(flow, set())             # 약사 확인 노드를 하나 더 거칠 수 있다
         assert set(after) == {*FLOW_ORDER[i + 1:], "end", *extra}
         assert after["end"] == END and all(after[f] == f for f in FLOW_ORDER[i + 1:])
     _, after_review = TOP_CHART.branches["tray_review"]               # 검수 확인 뒤에는 트레이 다음 흐름으로만
     assert set(after_review) == {*FLOW_ORDER[FLOW_ORDER.index("tray") + 1:], "end"}
     assert [n for n, targets in TOP_CHART.successors().items() if "tray_review" in targets] == ["tray"]
-    _, after_risk = TOP_CHART.branches["recheck_review"]               # 위험 신호 확인 뒤에는 재대조 다음 흐름으로만
-    assert set(after_risk) == {*FLOW_ORDER[FLOW_ORDER.index("recheck") + 1:], "end"}
-    assert [n for n, targets in TOP_CHART.successors().items() if "recheck_review" in targets] == ["recheck"]
+    assert TOP_CHART.nodes == ("supervisor", "prescription", "tray", "tray_review")   # v0.8: 처방 · 트레이 흐름만
 
 
 def test_the_prescription_flow_is_a_subgraph_that_goes_structure_match_risk_approve_plan():
@@ -230,11 +228,10 @@ def test_the_risk_check_sits_between_matching_and_approval():
 
 
 @pytest.mark.parametrize("route, step", [
-    (["prescription"], "prescription"), (["recheck"], "recheck"), (["tray"], "tray"), (["ask_type"], "ask_type"),
-    (["register_meds", "recheck"], "register_meds"),
+    (["prescription"], "prescription"), (["tray"], "tray"),
     (["tray", "prescription"], "prescription"),                        # 적힌 순서가 아니라 정해진 순서(FLOW_ORDER)로
     ([], "end"), (None, "end"), ("prescription", "end"), (["unknown"], "end"),   # 모르는 값은 건너뛴다
-    (["consult"], "end"),                                               # 상담 흐름은 없다 (11/16)
+    (["consult"], "end"), (["recheck"], "end"), (["ask_type"], "end"),  # v0.8에서 뺀 흐름은 없다
 ])
 def test_after_the_supervisor_goes_to_the_first_flow_of_the_route(route, step):
     choose, targets = TOP_CHART.branches["supervisor"]
@@ -245,9 +242,6 @@ def test_after_the_supervisor_goes_to_the_first_flow_of_the_route(route, step):
 @pytest.mark.parametrize("after, route, step", [
     ("prescription", ["prescription", "tray"], "tray"),
     ("prescription", ["prescription"], "end"),
-    ("ask_type", ["ask_type", "tray"], "tray"),
-    ("register_meds", ["recheck", "register_meds"], "recheck"),
-    ("register_meds", ["register_meds", "consult"], "end"),
     ("tray", ["prescription", "tray"], "end"),                          # 이미 지난 흐름으로 돌아가지 않는다
 ])
 def test_each_flow_goes_to_the_next_flow_of_the_route(after, route, step):
@@ -598,14 +592,13 @@ def test_errors_that_were_already_in_the_state_are_kept_and_not_repeated(backend
 
 ROUTES = [
     # photo_kind, ocr, 지난 노드, 흐름, 상태
-    ("med_bag", None, ["supervisor", "recheck"], "recheck", "noted"),      # 사진 인식은 아직: 안내만 (15단계)
-    (None, {"doc_type": "med_bag", "lines": []}, ["supervisor", "recheck"], "recheck", "noted"),
     ("tray", None, ["supervisor", "tray"], "tray", "noted"),         # 조제 계획이 없으면 검수하지 않고 안내만 (14단계)
 ]
-ASKED = [
+NOT_RUN = [                                                          # v0.8: 흐름을 돌리지 않고 안내만
     (None, None, "사진 종류 정보가 없습니다."),
-    ("receipt", None, "알 수 없는 사진 종류입니다."),
-    ("prescription", {"doc_type": "med_bag", "lines": []}, "지정한 종류(처방전)와 OCR이 읽은 종류(약봉투)가 다릅니다."),
+    ("med_bag", None, "받을 수 없는 사진 종류입니다: med_bag"),
+    ("receipt", None, "받을 수 없는 사진 종류입니다: receipt"),
+    (None, {"doc_type": "med_bag", "lines": []}, "처방전이 아닙니다: med_bag"),
 ]
 
 
@@ -617,100 +610,12 @@ def test_the_supervisor_sends_each_kind_of_photo_to_its_flow(backend, calls, pho
     assert final["order"] is None and final["errors"] == [] and paused(final) is None
 
 
-@pytest.mark.parametrize("photo_kind, ocr, reason", ASKED)
-def test_an_unclear_photo_stops_to_ask_its_kind(backend, calls, photo_kind, ocr, reason):
-    state = send(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
-    assert calls == ["supervisor", "ask_type"]
-    shown = paused(state)
-    assert (shown["hitl_point"], shown["about"], shown["choices"]) == ("type_select", "photo", ["prescription", "tray", "med_bag", "package"])
-    assert reason in shown["notice"]
-
-
-def test_after_choosing_the_kind_the_flow_runs(backend, calls):
-    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    send(compiled, "P0001", load("cv_a1", "rx_001"), "med_bag")      # 처방전 OCR인데 약봉투이라고 했다 -> 되묻는다
-    calls.clear()
-    state = resume_run(compiled, "P0001", {"choice": "prescription"})
-    assert calls == ["ask_type", "structure", "match", "risk", "approve"]
-    assert paused(state)["hitl_point"] == "rx_approval"
-    final = approve(compiled, "P0001", state)
-    assert (final["status"], final["photo_kind"], final["route"]) == ("planned", "prescription", ["prescription"])
-
-
-def test_choosing_the_tray_goes_to_the_tray(backend, calls):
-    compiled = make()
-    send(compiled, "P0001")
-    calls.clear()
-    final = resume_run(compiled, "P0001", {"choice": "tray"})
-    assert calls == ["ask_type", "tray"] and final["status"] == "noted" and paused(final) is None
-    assert "조제 계획이 아직 없습니다" in final["notice"]
-
-
-def test_a_photo_kind_that_is_given_wins_over_nothing_but_not_over_a_disagreeing_ocr(backend, calls):
-    ocr = load("cv_a1", "rx_001")                                       # 이 OCR은 doc_type이 처방전이다
-    agree = send(make(), "P0001", ocr, "prescription")
-    assert paused(agree)["hitl_point"] == "rx_approval"
-    calls.clear()
-    clash = send(make(), "P0002", ocr, "med_bag")
-    assert calls == ["supervisor", "ask_type"] and paused(clash)["hitl_point"] == "type_select"
-    assert "지정한 종류(약봉투)와 OCR이 읽은 종류(처방전)가 다릅니다." in paused(clash)["notice"]
-
-
-# ------------------------------------------------------------ 사진과 글 (복합 입력)
-
-
-def test_a_prescription_photo_with_an_edit_request_shows_it_only_as_a_proposal(backend):
-    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    state = send(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "게보린 빼 주세요")
-    shown = paused(state)
-    assert [d["name"] for d in shown["order"]["items"]] == ["타이레놀정500mg", "게보린정"]     # 지시서는 그대로다
-    proposal = {"kind": "edit_request", "text": "게보린 빼 주세요", "drugs": [{"item_code": "197900277", "name": "게보린정"}]}
-    assert shown["proposals"] == [proposal]
-    final = approve(compiled, "P0001", state)                         # 약사가 제안을 따르지 않고 그대로 승인했다
-    assert [d["name"] for d in final["order"]["items"]] == ["타이레놀정500mg", "게보린정"]
-    assert final["proposals"] == [proposal] and final["status"] == "planned"
-
-
-def test_a_question_with_the_prescription_photo_is_kept_as_a_memo_and_not_answered(backend, calls):
-    # 11/16 결정: 상담 답변 없음. 질문은 메모로 남고 승인 화면의 안내로 약사에게 알린다
-    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    state = send(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "같이 먹어도 되나요?")
-    assert state["route"] == ["prescription"] and paused(state)["memo"] == "같이 먹어도 되나요?"
-    final = approve(compiled, "P0001", state)
-    assert calls[-1] == "make_plan" and "consult" not in calls
-    assert final["status"] == "planned" and final["consult_result"] is None
-
-
-def test_a_tray_photo_with_text_keeps_the_text_only_as_a_memo(backend, calls):
-    final = send(make(), "P0001", None, "tray", "게보린 빼 주세요")
-    assert calls == ["supervisor", "tray"]
-    assert (final["route"], final["memo"], final["proposals"]) == (["tray"], "게보린 빼 주세요", [])
-
-
-@pytest.mark.parametrize("text, route, status", [
-    ("타이레놀이랑 같이 먹어도 되나요?", [], "noted"),                  # 질문은 메모로 (11/16 상담 제외)
-    ("게보린 먹고 있어요", ["register_meds"], "noted"),                 # 후보 제안만, 자동 등록 없음 (15단계)
-    ("메모: 오후 수령", [], "noted"),
-    ("게보린 빼 주세요", [], "noted"),                                  # 고칠 처방이 없다
-])
-def test_text_alone_goes_to_its_flow(backend, calls, text, route, status):
-    final = send(make(structure=lambda pid, o: pytest.fail("구조화가 불리면 안 됩니다")), "P0001", None, None, text)
-    assert calls == ["supervisor", *route]
-    assert (final["route"], final["status"]) == (route, status) and paused(final) is None
-
-
-def test_text_alone_that_cannot_be_read_stops_to_ask_its_meaning(backend):
-    compiled = make()
-    shown = paused(send(compiled, "P0001", None, None, "오후 3시"))
-    assert (shown["about"], shown["choices"]) == ("text", ["patient_info", "note"])
-    final = resume_run(compiled, "P0001", {"choice": "note"})
-    assert (final["route"], final["status"], final["memo"]) == ([], "noted", "오후 3시")
-
-
-def test_the_supervisor_runs_once_even_with_text_and_a_question(backend, calls):
-    compiled = make(structure=structure_of("타이레놀정500mg"))
-    approve(compiled, "P0001", send(compiled, "P0001", load("cv_a1", "rx_001"), "prescription", "먹고 있는 약: 게보린. 괜찮나요?"))
-    assert calls.count("supervisor") == 1
+@pytest.mark.parametrize("photo_kind, ocr, notice", NOT_RUN)
+def test_photos_out_of_scope_only_leave_a_notice(backend, calls, photo_kind, ocr, notice):
+    final = send(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
+    assert calls == ["supervisor"]
+    assert (final["flow"], final["status"], final["route"]) == (None, "noted", [])
+    assert notice in final["notice"] and final["notes"] == [final["notice"]] and paused(final) is None
 
 
 @pytest.mark.parametrize("photo_kind, ocr", [("prescription", load("cv_a1", "rx_001")), ("med_bag", None), ("tray", None), (None, None)])
@@ -958,7 +863,7 @@ def test_notes_from_the_prescription_subgraph_are_not_doubled(monkeypatch):
     fake_langgraph.install(monkeypatch)
     graph = build_graph(dictionary=DICT, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=None), api=None,
                         checkpointer=memory_checkpointer())
-    shown = send(graph, "P1", load("rx8_a1", "rx8_01"), text="메모: 오후 수령")["__interrupt__"][0].value
+    shown = send(graph, "P1", load("rx8_a1", "rx8_01"))["__interrupt__"][0].value
     final = resume_run(graph, "P1", {"action": "manual", "order": shown["order"], "reason": "확인함"})
     assert final["notes"].count("위험 신호 확인 후 진행 사유: 확인함") == 1
     assert final["status"] == "planned"
@@ -989,20 +894,11 @@ def test_the_next_message_in_the_same_conversation_keeps_the_approved_order_and_
 
 
 def test_the_first_message_in_a_conversation_starts_from_the_first_state(backend):
-    state = run_message(make(), "C0001", {"message_id": "m1", "text": "타이레놀 하루 몇 번 먹어요?"})
+    state = run_message(make(), "C0001", {"message_id": "m1"})
     assert (state["conversation_id"], state["prescription_id"], state["message_id"]) == ("C0001", None, "m1")
-    assert (state["route"], state["flow"], state["intents"]) == ([], None, ["question"])
-    assert state["order"] is None and state["status"] == "noted"              # 처방전 사진이 와야 시작한다 (11/16)
-    assert state["memo"] == "타이레놀 하루 몇 번 먹어요?" and "처방전 사진" in state["notice"]
-
-
-def test_a_conversation_without_a_prescription_becomes_a_prescription_conversation_with_the_same_id(backend):
-    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
-    run_message(compiled, "C0001", {"text": "타이레놀 같이 먹어도 돼요?"})
-    state = run_message(compiled, "C0001", {"kind": "prescription"}, load("cv_a1", "rx_001"), prescription_id="C0001")
-    shown = paused(state)
-    assert shown["hitl_point"] == "rx_approval" and shown["order"]["prescription_id"] == "C0001"
-    assert compiled.get_state(thread_config("C0001")).values["prescription_id"] == "C0001"
+    assert (state["route"], state["flow"]) == ([], None)
+    assert state["order"] is None and state["status"] == "noted"              # 처방전 사진이 와야 시작한다
+    assert "처방전 사진" in state["notice"]
 
 
 def test_a_prescription_photo_opens_the_prescription_even_when_the_web_did_not_give_its_id(backend):
@@ -1011,10 +907,3 @@ def test_a_prescription_photo_opens_the_prescription_even_when_the_web_did_not_g
     assert paused(state)["order"]["prescription_id"] == "C0002"
 
 
-@pytest.mark.parametrize("kind", ["tray", "med_bag", "package"])
-def test_other_photos_without_a_prescription_are_not_run(backend, calls, kind):
-    compiled = make()
-    state = run_message(compiled, "C0003", {"kind": kind})
-    assert (state["route"], state["status"], state["prescription_id"]) == ([], "noted", None)
-    assert "처방 대화에서 올려 주세요" in state["notice"]
-    assert calls == ["supervisor"]

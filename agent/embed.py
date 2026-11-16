@@ -2,7 +2,7 @@
 
     embed_texts(texts) -> list[list[float]]     색인을 만들 때 (build_rag_index.py --embed) · 질문 하나를 찾을 때
 
-키가 없으면 ConfigError. 호출이 실패하면 EmbedError (상담은 멈추지 않고 BM25만으로 찾는다, REQ-NF-06).
+키가 없으면 ConfigError. 호출이 실패하면 EmbedError (설명은 멈추지 않고 BM25만으로 찾는다, REQ-NF-06).
 오류 문장에는 질문이 섞일 수 있어 예외 종류만 남긴다 (llm.py와 같다).
 """
 from __future__ import annotations
