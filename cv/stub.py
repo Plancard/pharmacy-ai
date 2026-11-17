@@ -18,7 +18,7 @@
 시나리오 (scenario 인자, 없으면 환경변수 CV_STUB_SCENARIO, 기본 "ok")
   ok         계획대로 담김 → 모든 칸 ok
   mismatch   약이 든 첫 칸에서 1알이 빠짐 → 그 칸 mismatch (HITL ② 확인용)
-  review     약이 든 첫 칸이 저신뢰 → 그 칸 need_review, reasons ["low_conf"]
+  review     약이 든 첫 칸의 알약이 칸 경계에 걸침 → 그 칸 need_review, reasons ["boundary"] (11/17: low_conf 사유 폐기)
   no_tray    detect·inspect가 TrayNotFound
   rotated    트레이가 180° 뒤집혀 찍힘 → 12칸 모두 need_review, reasons ["rotated"]
   ocr_empty  ocr가 OcrEmpty
@@ -34,7 +34,6 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "a1"
 TIMES = ("morning", "noon", "evening", "bedtime")   # 트레이 4행 (위→아래)
 DAYS = (1, 2, 3)                                    # 트레이 3열 (왼→오)
 CELL_PX = 320                                       # 보정 이미지 960×1280에서 칸 한 변
-CONF_MIN = 0.5                                      # 이 미만이면 need_review (low_conf)
 SCENARIOS = ("ok", "mismatch", "review", "rotated", "no_tray", "ocr_empty")
 
 
@@ -141,9 +140,9 @@ def detect(image_path, plan=None, scenario=None):
                     "class_id": None,          # 실제 모듈에서는 classes.yaml의 ID. 약은 item_code로 구분
                     "item_code": code,
                     "bbox": _box(day, time, k),
-                    "conf": 0.42 if (s == "review" and (day, time) == target) else 0.91,
+                    "conf": 0.91,
                     "cell": {"day": day, "time": time},
-                    "flags": [],               # boundary · overlap
+                    "flags": ["boundary"] if (s == "review" and (day, time) == target and k == 0) else [],   # boundary · overlap
                 })
                 k += 1
     return {
@@ -169,8 +168,6 @@ def inspect(image_path, plan, scenario=None):
         cell[d["item_code"]] = cell.get(d["item_code"], 0) + 1
         r = reasons.setdefault(key, set())
         r.update(d["flags"])
-        if d["conf"] < CONF_MIN:
-            r.add("low_conf")
 
     cells, summary = [], {"ok": 0, "mismatch": 0, "need_review": 0}
     for day in DAYS:

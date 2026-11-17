@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import uuid
+from typing import Any
 from pathlib import Path
 
 from flask import Blueprint, abort, current_app, g, jsonify, request, send_file
@@ -121,7 +122,8 @@ def detail(rx_id: str):
             order = pause.payload["order"]
             body["card"] = {**pause.payload,
                             "blockers": workflow.approval_blockers(order, pause.payload.get("plan")),
-                            "needs_confirm": workflow.needs_confirm(order)}
+                            "needs_confirm": workflow.needs_confirm(order),
+                            "is_danger": workflow.is_danger(order)}
     elif row["status"] == "waiting_tray":
         body["card"] = {"order": gateway().approved_order(sid)}
     return jsonify(body)
@@ -139,7 +141,10 @@ def image(rx_id: str, image_id: str):
 @bp.post("/prescriptions/<rx_id>/approve")
 @api_login_required
 def approve(rx_id: str):
-    """HITL ① 조제지시서 승인 (F-WEB-04, REQ-WEB-02·03). 수정(action=edit)은 다음 작업에서 붙인다."""
+    """HITL ① 조제지시서 승인(기본)·수정(action=edit)·사유 입력 진행(action=manual) (F-WEB-04·07, REQ-WEB-02·03).
+
+    수정하면 다시 계산해 승인 대기로 돌아온다. 위험(danger)은 승인할 수 없고 수정 또는 manual(사유 필수)만 된다.
+    """
     row = _load(rx_id)
     if row["status"] != "waiting_approval" or row["hitl_point"] != "rx_approval":
         return _error(409, "승인을 기다리는 처방이 아닙니다. 화면을 새로고침해 주세요.")
@@ -147,16 +152,36 @@ def approve(rx_id: str):
     if pause is None or pause.hitl_point != "rx_approval":
         return _error(409, "승인할 조제지시서를 찾지 못했습니다. 화면을 새로고침해 주세요.")
     order = pause.payload["order"]
+    body = request.get_json(silent=True) or {}
+    if body.get("action") == "edit":   # 수정은 계획이 없어도 받는다. 승인 차단 규칙은 승인에만 건다
+        try:
+            new_order = workflow.build_edited_order(order, body.get("items"))
+        except ValueError as e:
+            return _error(400, str(e))
+        if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
+                          "edit", before=order, after=new_order):
+            return _error(409, "이미 처리된 요청입니다. 화면을 새로고침해 주세요.")
+        workflow.jobs.submit(workflow.run_resume, row["id"], "rx_approval", {"action": "edit", "order": new_order})
+        return jsonify(id=str(row["id"]), status="processing"), 202
     blockers = workflow.approval_blockers(order, pause.payload.get("plan"))
     if blockers:
         return _error(409, blockers[0])
-    body = request.get_json(silent=True) or {}
-    if workflow.needs_confirm(order) and body.get("confirmed") is not True:
-        return _error(409, "위험 신호와 확인 필요 항목을 확인했다는 칸에 체크해 주세요.")
+    reply: dict[str, Any] = {"order": order, "plan": pause.payload.get("plan")}
+    if body.get("action") == "manual":   # 사유를 적어 그대로 진행. 위험(danger)은 이 길이나 수정으로만 간다
+        reason = body.get("reason")
+        reason = reason.strip() if isinstance(reason, str) else ""
+        if not reason or len(reason) > 500:
+            return _error(400, "사유를 1~500자로 적어 주세요.")
+        action, reply["reason"] = "manual", reason
+    else:
+        if workflow.is_danger(order):
+            return _error(409, "위험 항목은 그대로 승인할 수 없습니다. 항목을 수정하거나 사유를 적어 진행하세요.")
+        if workflow.needs_confirm(order) and body.get("confirmed") is not True:
+            return _error(409, "위험 신호와 확인 필요 항목을 확인했다는 칸에 체크해 주세요.")
+        action, reason = "approve", None
 
     if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
-                      "approve", before=order, after=order):
+                      action, before=order, after=order, reason=reason):
         return _error(409, "이미 처리된 승인입니다. 화면을 새로고침해 주세요.")
-    workflow.jobs.submit(workflow.run_resume, row["id"], "rx_approval", {"action": "approve", "order": order,
-                                                                       "plan": pause.payload.get("plan")})
+    workflow.jobs.submit(workflow.run_resume, row["id"], "rx_approval", {"action": action, **reply})
     return jsonify(id=str(row["id"]), status="processing"), 202

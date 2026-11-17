@@ -265,13 +265,48 @@ def test_unmatched_item_blocks_approval(monkeypatch, tmp_path, fake_rx):
     assert fake_rx.approvals == []
 
 
-def test_danger_level(monkeypatch, tmp_path, fake_rx):
+def test_danger_cannot_be_approved_only_edit_or_manual(monkeypatch, tmp_path, fake_rx):
     c = make_client(monkeypatch, tmp_path, scenario="danger")
     rx_id = upload(c).get_json()["id"]
+    card = c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert card["order"]["risk_check"]["level"] == "danger" and card["is_danger"] is True
+    r = approve(c, rx_id, confirmed=True)                       # 확인란을 체크해도 그대로 승인은 안 된다
+    assert r.status_code == 409 and "위험" in r.get_json()["error"] and fake_rx.approvals == []
+
+
+@pytest.mark.parametrize("reason", [None, "", "   ", "가" * 501, 123])
+def test_manual_needs_a_reason(monkeypatch, tmp_path, fake_rx, reason):
+    c = make_client(monkeypatch, tmp_path, scenario="danger")
+    rx_id = upload(c).get_json()["id"]
+    r = approve(c, rx_id, action="manual", reason=reason)
+    assert r.status_code == 400 and fake_rx.approvals == []
+    assert c.get(f"/api/prescriptions/{rx_id}").get_json()["status"] == "waiting_approval"
+
+
+def test_manual_with_reason_records_and_moves_on(monkeypatch, tmp_path, fake_rx):
+    c = make_client(monkeypatch, tmp_path, scenario="danger")
+    rx_id = upload(c).get_json()["id"]
+    assert approve(c, rx_id, action="manual", reason="  처방 의사에게 전화로 확인함 ").status_code == 202
+    a = fake_rx.approvals[0]
+    assert a["action"] == "manual" and a["hitl_point"] == "rx_approval"
     d = c.get(f"/api/prescriptions/{rx_id}").get_json()
-    assert d["card"]["order"]["risk_check"]["level"] == "danger"
-    assert approve(c, rx_id).status_code == 409
-    assert approve(c, rx_id, confirmed=True).status_code == 202
+    assert d["status"] == "waiting_tray"
+    assert [(e["event"], e.get("action")) for e in d["timeline"]] == [("received", None), ("response", "manual")]
+
+
+def test_manual_is_rejected_without_a_plan(monkeypatch, tmp_path, fake_rx):
+    """계획을 못 만든 처방(3일 초과)은 manual도 안 되고 수정만 받는다."""
+    c = make_client(monkeypatch, tmp_path, scenario="range")
+    rx_id = upload(c).get_json()["id"]
+    r = approve(c, rx_id, action="manual", reason="그냥 진행")
+    assert r.status_code == 409 and fake_rx.approvals == []
+
+
+def test_warning_needs_confirm_checkbox(client, fake_rx):
+    rx_id = upload(client).get_json()["id"]
+    assert client.get(f"/api/prescriptions/{rx_id}").get_json()["card"]["is_danger"] is False
+    assert approve(client, rx_id).status_code == 409
+    assert approve(client, rx_id, confirmed=True).status_code == 202
 
 
 def test_waiting_state_survives_restart(monkeypatch, tmp_path, fake_rx):
@@ -374,3 +409,103 @@ def test_unmatched_item_has_no_plan_and_blocks(monkeypatch, tmp_path, fake_rx):
 def test_hitl_points_dropped_type_select_and_risk():
     from web.agent_gateway import HITL_POINTS
     assert HITL_POINTS == ("rx_approval", "inspection")
+
+
+# ------------------------------------------------------------ HITL ① 수정(edit): 다시 계산해서 다시 승인 대기
+def _edit_items(card, **change):
+    """카드의 항목을 그대로 수정 요청 형식으로 바꾸고, 첫 항목 값을 change로 덮어쓴다."""
+    items = [{"index": i, "name": it["name"], "count_per_dose": it["count_per_dose"], "times": it["times"],
+              "days": it["days"]} for i, it in enumerate(card["order"]["items"])]
+    items[0].update(change)
+    return items
+
+
+def edit(client, rx_id, items):
+    return approve(client, rx_id, action="edit", items=items)
+
+
+def test_edit_recalculates_and_waits_again(client, fake_rx):
+    rx_id = upload(client).get_json()["id"]
+    card = client.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    r = edit(client, rx_id, _edit_items(card, count_per_dose=2, times=["morning", "evening"]))
+    assert r.status_code == 202
+    a = fake_rx.approvals[0]
+    assert a["action"] == "edit" and a["hitl_point"] == "rx_approval"
+    assert a["before"]["items"][0]["count_per_dose"] == 1 and a["after"]["items"][0]["count_per_dose"] == 2
+
+    d = client.get(f"/api/prescriptions/{rx_id}").get_json()      # 다시 멈춘다: 처리 중이 아니라 승인 대기
+    assert d["status"] == "waiting_approval" and d["hitl_point"] == "rx_approval"
+    first = d["card"]["order"]["items"][0]
+    assert first["count_per_dose"] == 2 and first["times"] == ["morning", "evening"]
+    assert first["source_line_ids"] == [58, 59, 60, 62]            # 원문 줄 정보는 그대로
+    cells = {(c["day"], c["time"]) for c in d["card"]["plan"]["plan"]}
+    assert (1, "noon") in cells                                    # 다른 약은 점심에도 먹는다
+    assert [e["event"] for e in d["timeline"]] == ["received", "response"]
+    assert d["timeline"][1]["action"] == "edit"
+    assert approve(client, rx_id, confirmed=True).status_code == 202   # 수정 뒤에 승인할 수 있다
+
+
+def test_edit_fixes_a_missing_plan(monkeypatch, tmp_path, fake_rx):
+    """3일 초과로 계획이 없던 처방을 일수를 줄여 고치면 계획이 생기고 승인할 수 있다."""
+    c = make_client(monkeypatch, tmp_path, scenario="range")
+    rx_id = upload(c).get_json()["id"]
+    card = c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert card["plan"] is None
+    items = _edit_items(card, days=3)
+    for it in items[1:]:
+        it["days"] = 3
+    assert edit(c, rx_id, items).status_code == 202
+    d = c.get(f"/api/prescriptions/{rx_id}").get_json()
+    assert d["card"]["plan"]["days"] == 3 and d["card"]["error_code"] is None and d["card"]["blockers"] == []
+
+
+def test_edit_name_rematches_and_drops_old_flag(monkeypatch, tmp_path, fake_rx):
+    c = make_client(monkeypatch, tmp_path, scenario="flagged")
+    rx_id = upload(c).get_json()["id"]
+    card = c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert card["plan"] is None and card["blockers"]
+    items = _edit_items(card)
+    items[3]["name"] = "게보린정"                                   # 못 찾은 약을 찾을 수 있는 이름으로 고침
+    assert edit(c, rx_id, items).status_code == 202
+    d = c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    fixed = d["order"]["items"][3]
+    assert fixed["item_code"] == "197900277" and "needs_pharmacist_check" not in fixed
+    assert d["plan"] is not None
+
+
+def test_edit_removing_an_item_drops_its_warning(client, fake_rx):
+    rx_id = upload(client).get_json()["id"]
+    card = client.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert card["order"]["risk_check"]["level"] == "warning"       # 타이레놀 + 게보린 성분 중복
+    items = [i for i in _edit_items(card) if i["name"] != "게보린정"]
+    assert edit(client, rx_id, items).status_code == 202
+    d = client.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert [i["name"] for i in d["order"]["items"]] == ["타이레놀정500mg", "프론크논캡슐"]
+    assert d["order"]["risk_check"]["findings"] == [] and d["order"]["risk_check"]["level"] == "none"
+
+
+@pytest.mark.parametrize("bad", [
+    [],                                                            # 모두 삭제
+    [{"index": 0, "name": "", "count_per_dose": 1, "times": ["morning"], "days": 3}],
+    [{"index": 0, "name": "타이레놀정500mg", "count_per_dose": 0, "times": ["morning"], "days": 3}],
+    [{"index": 0, "name": "타이레놀정500mg", "count_per_dose": 1, "times": [], "days": 3}],
+    [{"index": 0, "name": "타이레놀정500mg", "count_per_dose": 1, "times": ["night"], "days": 3}],
+    [{"index": 0, "name": "타이레놀정500mg", "count_per_dose": 1, "times": ["morning"], "days": 99}],
+    [{"index": 0, "name": "타이레놀정500mg", "count_per_dose": True, "times": ["morning"], "days": 3}],
+    [{"index": 0, "name": "A", "count_per_dose": 1, "times": ["morning"], "days": 3},
+     {"index": 0, "name": "B", "count_per_dose": 1, "times": ["morning"], "days": 3}],   # 같은 항목 두 번
+    "items",
+])
+def test_edit_rejects_bad_input_without_recording(client, fake_rx, bad):
+    rx_id = upload(client).get_json()["id"]
+    r = edit(client, rx_id, bad)
+    assert r.status_code == 400 and r.get_json()["error"]
+    assert fake_rx.approvals == []
+    assert client.get(f"/api/prescriptions/{rx_id}").get_json()["status"] == "waiting_approval"
+
+
+def test_edit_only_while_waiting_for_approval(client, fake_rx):
+    rx_id = upload(client).get_json()["id"]
+    card = client.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert approve(client, rx_id, confirmed=True).status_code == 202
+    assert edit(client, rx_id, _edit_items(card)).status_code == 409   # 트레이 대기에서는 수정할 수 없다

@@ -111,8 +111,64 @@ def approval_blockers(order: dict[str, Any], plan: dict[str, Any] | None = ...) 
     return []
 
 
+TIME_VALUES = ("morning", "noon", "evening", "bedtime")
+MAX_DAYS_INPUT = 30   # 3일을 넘는 값도 받는다: 조제 계획을 못 만든 이유(E_PLAN_RANGE)를 화면에 보이기 위해
+
+
+def _int_in(value: Any, low: int, high: int, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ValueError(f"{label}은(는) {low}~{high} 사이 정수여야 합니다.")
+    return value
+
+
+def build_edited_order(order: dict[str, Any], edits: Any) -> dict[str, Any]:
+    """약사가 고친 항목 목록으로 새 조제지시서를 만든다 (HITL ① edit). 잘못된 입력이면 ValueError(화면용 문장).
+
+    edits: [{index: 원래 항목 번호 | null(새 항목), name, count_per_dose, times, days}] — 목록에 없는 원래 항목은 삭제.
+    원래 줄 정보(source_line_ids)는 그대로 둔다. 이름을 바꾼 항목은 item_code를 비워 Agent가 다시 찾게 한다.
+    """
+    if not isinstance(edits, list) or not edits:
+        raise ValueError("약품이 하나 이상 있어야 합니다. 모두 지우려면 새 처방전을 올려 주세요.")
+    if len(edits) > 20:
+        raise ValueError("약품은 20개까지 입력할 수 있습니다.")
+    original = order.get("items", [])
+    items, used = [], set()
+    for n, e in enumerate(edits, 1):
+        if not isinstance(e, dict):
+            raise ValueError(f"{n}번째 항목 형식이 올바르지 않습니다.")
+        idx = e.get("index")
+        base = original[idx] if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(original) else None
+        if base is not None:
+            if idx in used:
+                raise ValueError(f"{n}번째 항목이 중복되었습니다.")
+            used.add(idx)
+        name = str(e.get("name") or "").strip()
+        if not name or len(name) > 100:
+            raise ValueError(f"{n}번째 약품 이름을 1~100자로 입력해 주세요.")
+        times = e.get("times")
+        if (not isinstance(times, list) or not times or len(set(times)) != len(times)
+                or any(t not in TIME_VALUES for t in times)):
+            raise ValueError(f"{name}: 복용 시간을 하나 이상 고르세요.")
+        item = dict(base) if base else {"item_code": None, "source_line_ids": []}
+        if base is None or name != base.get("name"):
+            item["item_code"] = None
+            item.pop("needs_pharmacist_check", None)
+            item.pop("check_reasons", None)
+        item.update(name=name,
+                    count_per_dose=_int_in(e.get("count_per_dose"), 1, 10, f"{name}의 1회 알 수"),
+                    days=_int_in(e.get("days"), 1, MAX_DAYS_INPUT, f"{name}의 복용 일수"),
+                    times=[t for t in TIME_VALUES if t in times])
+        items.append(item)
+    return {**order, "items": items}
+
+
+def is_danger(order: dict[str, Any]) -> bool:
+    """위험(danger) 단계면 그대로 승인할 수 없다. 수정하거나 사유를 적어(manual) 진행한다 (기능분석서 F-WEB-07)."""
+    return (order.get("risk_check") or {}).get("level") == "danger"
+
+
 def needs_confirm(order: dict[str, Any]) -> bool:
-    """위험(danger) 단계 항목이나 확인 필요 표시가 있으면 약사가 확인란을 체크해야 승인된다 (명세서 2.8절)."""
+    """경고 이하 위험이나 확인 필요 표시가 있으면 약사가 확인란을 체크해야 승인된다 (명세서 2.8절)."""
     risk = (order.get("risk_check") or {}).get("level")
     flagged = any(it.get("needs_pharmacist_check") for it in order.get("items", []))
-    return risk == "danger" or flagged
+    return risk in ("warning", "danger") or flagged

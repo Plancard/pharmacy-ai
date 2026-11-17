@@ -131,6 +131,23 @@ class FakeGateway:
         return {"prescription_id": rx_id, "items": items,
                 "risk_check": {"scope": "rx_only", "level": level, "findings": findings}}
 
+    def _rematch(self, rx_id: str, order: dict[str, Any]) -> dict[str, Any]:
+        """edit 뒤 약품 다시 찾기·위험 신호 다시 보기의 가짜 버전: 이름으로 샘플 약품을 찾고, 없는 약의 경고는 뺀다."""
+        known = {it["name"]: it["item_code"] for it in _ITEMS}
+        items = copy.deepcopy(order["items"])
+        for it in items:
+            if it.get("item_code") is None:
+                if it["name"] in known:
+                    it["item_code"] = known[it["name"]]
+                else:
+                    it.update(needs_pharmacist_check=True, check_reasons=["대상 8종이 아닌 약품 (품목기준코드 없음)"])
+        present = {it["item_code"] for it in items if it.get("item_code")}
+        risk = order.get("risk_check") or {"scope": "rx_only", "level": "none", "findings": []}
+        findings = [f for f in risk.get("findings", []) if set(f["item_codes"]) <= present]
+        rank = ["none", "caution", "warning", "danger"]
+        level = max((f["level"] for f in findings), key=rank.index, default="none")
+        return {**order, "items": items, "risk_check": {**risk, "level": level, "findings": findings}}
+
     def _plan(self, rx_id: str, order: dict[str, Any]) -> tuple[dict | None, str | None, str | None]:
         """조제 계획(A.4)과, 못 만들었을 때의 (error_code, 이유). 실제 Agent는 HITL ① 앞에서 계획을 만든다 (11/17)."""
         items = order["items"]
@@ -179,6 +196,15 @@ class FakeGateway:
         data = self._load(rx_id)
         if not data or not data.get("pause") or data["pause"]["hitl_point"] != hitl_point:
             raise AgentError("E_LLM", "멈춰 있는 지점이 없거나 다릅니다.")
+        if hitl_point == "rx_approval" and reply.get("action") == "edit":
+            # 실제 그래프: 매칭 → 처방약 대조 → 조제 계획을 다시 계산하고 다시 멈춘다 (잠정, 구조화는 다시 안 함)
+            old = data["pause"]["payload"]
+            order = self._rematch(rx_id, reply["order"])
+            plan, plan_error, why = self._plan(rx_id, order)
+            pause = Pause("rx_approval", {**old, "order": order, "plan": plan, "error_code": plan_error, "notice": why})
+            data.update(pause={"hitl_point": pause.hitl_point, "payload": pause.payload})
+            self._save(rx_id, data)
+            return pause
         if hitl_point == "rx_approval":
             # 실제 그래프: 승인된 조제지시서 → 조제 계획(A.4) → state.status = 'planned'로 끝난다
             data.update(pause=None, approved_order=reply["order"])

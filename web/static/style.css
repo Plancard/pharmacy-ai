@@ -105,3 +105,12 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 .tl-item.error .tl-state { color: var(--bad); }
 .tl-item.active .tl-state { color: var(--accent); }
 .tl-item.done .tl-state { color: var(--ok); }
+
+/* 조제지시서 수정 폼 (HITL ① edit) */
+.edit-form { border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: grid; gap: 10px; }
+.edit-form input[type="text"] { width: 100%; box-sizing: border-box; }
+.edit-form input[type="number"] { width: 4.5em; }
+.time-checks { display: flex; gap: 8px; flex-wrap: wrap; }
+.time-checks label { display: flex; align-items: center; gap: 3px; font-size: 14px; white-space: nowrap; }
+.time-checks input { padding: 0; }
+.reason-input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }

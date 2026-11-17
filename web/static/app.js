@@ -158,13 +158,16 @@
   function view(rx) {
     const events = rx.timeline || [];
     const received = events.find((e) => e.event === "received");
-    const approval = events.filter((e) => e.event === "response" && e.hitl_point === "rx_approval").pop();
+    const responses = events.filter((e) => e.event === "response" && e.hitl_point === "rx_approval");
+    const approval = responses.filter((e) => e.action !== "edit").pop();
+    const edits = responses.filter((e) => e.action === "edit");
     const order = rx.card && rx.card.order;
     const s = rx.status;
     const steps = [step("done", "처방전 접수", received && received.at,
       h("p", { class: "muted" }, "처방전 사진을 올렸습니다."))];
 
-    // 조제지시서 (HITL ①)
+    // 조제지시서 (HITL ①). 약사가 고칠 때마다 '수정 → 다시 계산'이 한 단계씩 쌓인다
+    edits.forEach((e, i) => steps.push(step("done", `조제지시서 수정 ${i + 1}회 (다시 계산)`, e.at)));
     if (approval) {
       steps.push(step("done", "조제지시서 승인", approval.at,
         order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null));
@@ -262,23 +265,84 @@
         h("tbody", {}, rows)));
   }
 
+  // 수정 폼 (HITL ① edit): 이름·1회 알 수·복용 시간·일수를 고치거나 항목을 지우고 새 항목을 더한다.
+  // 보내면 서버가 매칭·대조·조제 계획을 다시 계산하고 승인 대기로 돌아온다. 여기서는 자체 오류만 보인다.
+  function editForm(rx, onClose) {
+    const order = rx.card.order;
+    const err = h("p", { class: "form-error", role: "alert", hidden: true });
+    const body = h("tbody", {});
+    function row(it, index) {
+      const times = h("span", { class: "time-checks" }, TIME_ORDER.map((t) =>
+        h("label", {}, h("input", { type: "checkbox", value: t, checked: !!(it && it.times.includes(t)) }), TIMES[t])));
+      const tr = h("tr", { "data-index": index == null ? "" : String(index) },
+        h("td", {}, h("input", { type: "text", class: "f-name", value: it ? it.name : "", maxlength: "100", "aria-label": "약품 이름" })),
+        h("td", {}, h("input", { type: "number", class: "f-count", min: "1", max: "10", value: it ? it.count_per_dose : 1, "aria-label": "1회 알 수" })),
+        h("td", {}, times),
+        h("td", {}, h("input", { type: "number", class: "f-days", min: "1", max: "30", value: it ? it.days : 3, "aria-label": "복용 일수" })),
+        h("td", {}, h("button", { type: "button", class: "link", onclick: () => tr.remove() }, "삭제")));
+      return tr;
+    }
+    order.items.forEach((it, i) => body.append(row(it, i)));
+    const add = h("button", { type: "button", class: "link", onclick: () => body.append(row(null, null)) }, "+ 항목 추가");
+    const send = h("button", { type: "button" }, "수정 내용으로 다시 계산");
+    send.addEventListener("click", async () => {
+      err.hidden = true;
+      const items = [...body.children].map((tr) => ({
+        index: tr.dataset.index === "" ? null : Number(tr.dataset.index),
+        name: tr.querySelector(".f-name").value.trim(),
+        count_per_dose: Number(tr.querySelector(".f-count").value),
+        times: [...tr.querySelectorAll(".time-checks input:checked")].map((c) => c.value),
+        days: Number(tr.querySelector(".f-days").value),
+      }));
+      send.disabled = true;
+      try {
+        await api(`/api/prescriptions/${rx.id}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "edit", items }),
+        });
+        await refresh();
+      } catch (e) {
+        err.textContent = e.message;
+        err.hidden = false;
+        send.disabled = false;
+      }
+    });
+    const cancel = h("button", { type: "button", class: "link", onclick: onClose }, "수정 취소");
+    return h("div", { class: "edit-form" },
+      h("p", { class: "muted" }, "이름을 바꾸면 약품을 다시 찾고, 조제 계획과 위험 신호도 다시 계산합니다."),
+      h("table", { class: "items" },
+        h("thead", {}, h("tr", {}, ["약품", "1회 알 수", "복용 시간", "일수", ""].map((t) => h("th", {}, t)))), body),
+      h("div", { class: "actions" }, add, cancel, send), err);
+  }
+
   function approvalCard(rx) {
-    const { order, plan, notice, ocr_lines: lines, ocr_size: size, blockers, needs_confirm: needsConfirm } = rx.card;
+    const { order, plan, notice, ocr_lines: lines, ocr_size: size, blockers, needs_confirm: needsConfirm, is_danger: isDanger } = rx.card;
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const confirm = needsConfirm
       ? h("label", { class: "confirm" }, h("input", { type: "checkbox", id: "confirm-risk" }),
         "위험 신호와 확인 필요 항목을 확인했습니다")
       : null;
-    const btn = h("button", { type: "button", disabled: blockers.length > 0 }, "조제지시서 승인");
+    // 위험(danger)은 그대로 승인할 수 없다: 사유를 적어 진행하거나 항목을 수정한다 (F-WEB-07)
+    const reasonBox = isDanger
+      ? h("textarea", { id: "manual-reason", rows: "2", maxlength: "500", class: "reason-input",
+        placeholder: "위험 항목을 확인한 사유 (예: 처방 의사에게 확인함)", "aria-label": "진행 사유" })
+      : null;
+    const btn = h("button", { type: "button", disabled: blockers.length > 0 },
+      isDanger ? "사유 입력 후 진행" : "조제지시서 승인");
     btn.addEventListener("click", async () => {
       err.hidden = true;
       btn.disabled = true;
       try {
         const confirmed = needsConfirm ? document.getElementById("confirm-risk").checked : false;
+        const payload = isDanger
+          ? { action: "manual", reason: reasonBox.value.trim() }
+          : { confirmed };
+        if (isDanger && !payload.reason) throw new Error("사유를 적어 주세요.");
         await api(`/api/prescriptions/${rx.id}/approve`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmed }),
+          body: JSON.stringify(payload),
         });
         await refresh();
       } catch (e) {
@@ -306,6 +370,7 @@
       }
       if (boxes.firstChild) boxes.firstChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
+    const form = h("div", {});   // 수정 폼 자리 (2초 갱신은 처리 중에만 돌아서 입력 중인 폼이 지워지지 않는다)
     return h("div", { class: "approval" },
       h("div", { class: "approval-grid" },
         rx.image_url ? h("figure", { class: "rx-image" },
@@ -320,8 +385,14 @@
           planPanel(order, plan, notice),
           riskPanel(order.risk_check || {}))),
       blockers.map((b) => h("p", { class: "form-error" }, b)),
-      h("div", { class: "actions" }, confirm, btn),
-      err);
+      reasonBox,
+      h("div", { class: "actions" }, isDanger ? null : confirm, btn,
+        h("button", { type: "button", class: "link", onclick: () => {
+          const f = editForm(rx, () => { form.replaceChildren(); });
+          form.replaceChildren(f);
+          f.querySelector("input").focus();
+        } }, "항목 수정")),
+      err, form);
   }
 
   // 새로고침해도 보던 처방을 다시 연다 (REQ-WEB-03)
