@@ -67,8 +67,12 @@ def init_app(app: Flask) -> None:
     if backend == "fake":
         app.extensions["agent"] = FakeGateway(Path(app.config["VAR_DIR"]) / "fake_agent",
                                               app.config["FAKE_AGENT_SCENARIO"])
+    elif backend == "langgraph":
+        from web.langgraph_gateway import from_settings   # agent · langgraph 패키지는 이때만 읽는다
+
+        app.extensions["agent"] = from_settings()
     else:
-        raise RuntimeError(f"AGENT_BACKEND={backend}는 아직 없습니다. 지금은 fake만 씁니다.")
+        raise RuntimeError(f"AGENT_BACKEND={backend} (가능: fake · langgraph)")
 
 
 def gateway() -> "FakeGateway":

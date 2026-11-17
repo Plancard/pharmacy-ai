@@ -490,8 +490,12 @@ def test_a_plan_that_cannot_be_made_shows_the_reason_on_the_approval_and_only_ed
     assert shown["plan"] is None and shown["error_code"] == E_PLAN_RANGE   # 승인 전에 알린다 (명세서 v0.8 A.7)
     assert shown["notice"].startswith("조제 계획을 만들 수 없습니다. 투약 일수가 트레이(3일)를 넘습니다")
     assert "고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다." in shown["notice"]
+      # 계획 없이는 승인할 수 없다. 잘못된 응답은 그래프에 넣기 전에 거른다 (api.check_reply → read_reply).
+    # 그래프 안에서 예외가 나면 진짜 LangGraph는 그 응답을 멈춘 자리에 남겨, 다음 resume에도 같은 응답이 다시 쓰인다.
+    from agent.nodes import read_reply
     with pytest.raises(ValueError, match="조제 계획을 만들지 못해 승인할 수 없습니다"):
-        approve(compiled, "P0001", state)                                # 계획 없이는 승인할 수 없다
+        read_reply({"action": "approve", "order": shown["order"]}, DispensingOrder.model_validate(shown["order"]),
+                   plan_ready=False)                                # 계획 없이는 승인할 수 없다
     order = json.loads(json.dumps(shown["order"]))
     for item in order["items"]:
         item["days"] = 3
