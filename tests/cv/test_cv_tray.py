@@ -80,7 +80,7 @@ def test_model_called_with_spec_values():
     quad = tray_quad(0)
     model = FakeModel([dense(quad)], [0.9])
     tray.rectify_image(photo_of(quad), model)
-    assert model.kw["imgsz"] == 960 and model.kw["conf"] == 0.5
+    assert model.kw["imgsz"] == 960 and model.kw["conf"] == 0.70
 
 
 def test_upside_down_photo_follows_screen_top():
@@ -113,7 +113,7 @@ def test_upright_rolls_wide_quad():
 def test_no_tray_or_low_conf():
     quad = tray_quad(0)
     with pytest.raises(TrayNotFound) as e:
-        tray.rectify_image(photo_of(quad), FakeModel())          # 신뢰도 0.5 미만이면 모델이 아무것도 안 돌려준다
+        tray.rectify_image(photo_of(quad), FakeModel())          # 신뢰도 0.70 미만이면 모델이 아무것도 안 돌려준다
     assert e.value.code == "E_TRAY_NOT_FOUND"
 
 
@@ -132,6 +132,21 @@ def test_bad_aspect_is_rejected():
 def test_aspect_within_tolerance_passes():
     quad = tray_quad(0, w=640, h=800)            # 비율 0.8 → 3:4에서 6.7% 차이
     tray.rectify_image(photo_of(quad), FakeModel([dense(quad)], [0.9]))
+
+
+def test_aspect_tolerance_is_15_percent():
+    assert tray.ASPECT_TOL == 0.15
+    low = tray_quad(0, w=544, h=800)             # 비율 0.68(검증 32장 최저) → 3:4에서 9.3% 차이: ±10%는 겨우 통과, ±15%는 여유
+    tray.rectify_image(photo_of(low), FakeModel([dense(low)], [0.9]))
+    high = tray_quad(0, w=672, h=800)            # 비율 0.84 → 12% 차이, 통과
+    tray.rectify_image(photo_of(high), FakeModel([dense(high)], [0.9]))
+    over = tray_quad(0, w=720, h=800)            # 비율 0.90 → 20% 차이, 재촬영
+    with pytest.raises(TrayNotFound):
+        tray.rectify_image(photo_of(over), FakeModel([dense(over)], [0.9]))
+
+
+def test_confirmed_thresholds():
+    assert (tray.SEG_CONF, tray.BOUNDARY_FRAC, tray.OVERLAP_IOU) == (0.70, 0.20, 0.5)
 
 
 def test_unreadable_file(tmp_path):
