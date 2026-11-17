@@ -217,6 +217,12 @@ class FakeGateway:
         self._save(rx_id, data)
         return None
 
+    def check_reply(self, rx_id: str, hitl_point: str, reply: dict[str, Any]) -> None:
+        """응답이 지금 멈춘 지점에 맞는지만 본다 (가짜는 지점만 확인. 응답 모양 검사는 진짜 Agent가 한다)."""
+        data = self._load(rx_id)
+        if not data or not data.get("pause") or data["pause"]["hitl_point"] != hitl_point:
+            raise ValueError(f"멈춰 있는 지점이 없거나 다릅니다: {rx_id} ({hitl_point})")
+
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         data = self._load(rx_id)
         return data.get("approved_order") if data else None

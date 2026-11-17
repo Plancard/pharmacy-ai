@@ -158,6 +158,10 @@ def approve(rx_id: str):
             new_order = workflow.build_edited_order(order, body.get("items"))
         except ValueError as e:
             return _error(400, str(e))
+        try:
+            gateway().check_reply(str(row["id"]), "rx_approval", {"action": "edit", "order": new_order})
+        except ValueError as e:
+            return _error(400, str(e))
         if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
                           "edit", before=order, after=new_order):
             return _error(409, "이미 처리된 요청입니다. 화면을 새로고침해 주세요.")
@@ -180,6 +184,10 @@ def approve(rx_id: str):
             return _error(409, "위험 신호와 확인 필요 항목을 확인했다는 칸에 체크해 주세요.")
         action, reason = "approve", None
 
+    try:   # 응답이 Agent가 받을 모양인지 미리 본다: 잘못된 응답이 백그라운드에서 처방을 실패로 만들지 않게
+        gateway().check_reply(str(row["id"]), "rx_approval", {"action": action, **reply})
+    except ValueError as e:
+        return _error(400, str(e))
     if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
                       action, before=order, after=order, reason=reason):
         return _error(409, "이미 처리된 승인입니다. 화면을 새로고침해 주세요.")
