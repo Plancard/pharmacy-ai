@@ -74,6 +74,15 @@ def image(rx_id: uuid.UUID, image_id: uuid.UUID, pharmacy_id: int) -> dict | Non
     )
 
 
+def history(rx_id: uuid.UUID) -> list[dict]:
+    """처방의 HITL 응답 이력(approvals)을 오래된 것부터. 처방 타임라인에 시각을 보여 준다."""
+    return db.query_all(
+        "SELECT hitl_point, action, created_at FROM approvals WHERE prescription_id = %s "
+        "ORDER BY created_at, id",
+        (rx_id,),
+    )
+
+
 def set_waiting(rx_id: uuid.UUID, hitl_point: str) -> bool:
     """처리 중 → 승인 대기."""
     row = db.execute(

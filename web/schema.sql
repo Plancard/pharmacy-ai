@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS prescriptions (
     display_no  TEXT        NOT NULL,                                -- 화면 표시용 번호 (예: P0001)
     user_id     BIGINT      NOT NULL REFERENCES users(id),
     status      TEXT        NOT NULL DEFAULT 'processing',          -- 값 목록은 아래 prescriptions_status_check
-    hitl_point  TEXT        CHECK (hitl_point IN ('type_select', 'rx_approval', 'inspection', 'risk')),
+    hitl_point  TEXT        CHECK (hitl_point IN ('rx_approval', 'inspection')),
     error_code  TEXT,                                                -- 값 목록은 아래 prescriptions_error_code_check
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -69,9 +69,10 @@ CREATE INDEX IF NOT EXISTS idx_prescriptions_created ON prescriptions(pharmacy_i
 --   waiting_tray      조제 계획까지 끝남, 조제 후 트레이 사진 대기 (hitl_point 없음)
 --   done              처방 흐름 종료, 조제 기록 저장 완료
 --   failed            오류로 중단
+--   cancelled         약사가 취소 (11/19 취소 기능에서 쓴다. 이력에는 완료건만 넘기므로 조제 기록은 없음)
 ALTER TABLE prescriptions DROP CONSTRAINT IF EXISTS prescriptions_status_check;
 ALTER TABLE prescriptions ADD CONSTRAINT prescriptions_status_check
-    CHECK (status IN ('processing', 'waiting_approval', 'waiting_tray', 'done', 'failed'));
+    CHECK (status IN ('processing', 'waiting_approval', 'waiting_tray', 'done', 'failed', 'cancelled'));
 
 -- 실패 코드 (명세서 A.7, 기능분석서 6장). E_INTERRUPTED는 처리 중에 서버가 다시 시작되어 끊긴 처방 (11/12 추가, 웹 전용)
 ALTER TABLE prescriptions DROP CONSTRAINT IF EXISTS prescriptions_error_code_check;
@@ -106,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_images_rx ON images(prescription_id);
 CREATE TABLE IF NOT EXISTS approvals (
     id              BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     prescription_id UUID        NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
-    hitl_point      TEXT        NOT NULL CHECK (hitl_point IN ('type_select', 'rx_approval', 'inspection', 'risk')),
+    hitl_point      TEXT        NOT NULL CHECK (hitl_point IN ('rx_approval', 'inspection')),
     action          TEXT        NOT NULL CHECK (action IN ('approve', 'edit', 'manual')),
     user_id         BIGINT      NOT NULL REFERENCES users(id),
     before_json     JSONB,                         -- interrupt 때 보여 준 내용

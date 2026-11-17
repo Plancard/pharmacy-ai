@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="layout" id="app" data-csrf="{{ csrf_token() }}" data-labels='{{ status_labels | tojson }}'>
+<div class="layout" id="app" data-csrf="{{ csrf_token() }}" data-labels='{{ status_labels | tojson }}' data-tz="{{ config.DISPLAY_TZ }}">
   <aside class="card">
     <h2>처방 목록</h2>
     <ul class="rx-list" id="rx-list">

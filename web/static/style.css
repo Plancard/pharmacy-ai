@@ -34,6 +34,7 @@ button.link { background: none; color: var(--accent); padding: 0; font-size: 14p
 .badge.waiting_tray { background: #f0f9ff; color: #0369a1; }
 .badge.done { background: #f0fdf4; color: var(--ok); }
 .badge.failed { background: #fef2f2; color: var(--bad); }
+.badge.cancelled { background: #f3f4f6; color: var(--muted); }
 .muted { color: var(--muted); }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
@@ -86,3 +87,21 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 .actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .confirm { display: flex; gap: 8px; align-items: center; font-size: 14px; }
 @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } .approval-grid { grid-template-columns: 1fr; } }
+
+/* 처방 타임라인 (REQ-WEB-07) — 색만으로 구분하지 않고 단계마다 상태 글자를 함께 쓴다 */
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.tl-item { position: relative; display: grid; grid-template-columns: 20px 1fr; gap: 12px; padding-bottom: 18px; }
+.tl-item::before { content: ""; position: absolute; left: 7px; top: 18px; bottom: 0; width: 2px; background: var(--line); }
+.tl-item:last-child::before { display: none; }
+.tl-dot { width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--line); background: var(--card); box-sizing: border-box; }
+.tl-item.done .tl-dot { background: var(--ok); border-color: var(--ok); }
+.tl-item.active .tl-dot { background: var(--card); border-color: var(--accent); border-width: 4px; }
+.tl-item.error .tl-dot { background: var(--bad); border-color: var(--bad); }
+.tl-item.cancelled .tl-dot { background: var(--muted); border-color: var(--muted); }
+.tl-main { min-width: 0; display: grid; gap: 8px; }
+.tl-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.tl-state { margin-left: auto; font-size: 12px; color: var(--muted); }
+.tl-item.pending .tl-head strong { color: var(--muted); font-weight: 500; }
+.tl-item.error .tl-state { color: var(--bad); }
+.tl-item.active .tl-state { color: var(--accent); }
+.tl-item.done .tl-state { color: var(--ok); }
