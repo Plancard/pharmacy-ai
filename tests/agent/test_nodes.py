@@ -175,6 +175,22 @@ def checked(sample_id):
     return merged(state, risk_node(state, deps()))
 
 
+def with_plan(state):
+    """그래프 순서대로 조제 계획까지 만든 상태 (v0.8: 계획은 승인 전에 만든다)."""
+    return merged(state, plan_node(state, deps()))
+
+
+def ready(*lines):
+    """약품 매칭 · 위험 신호 대조 · 조제 계획까지 마쳐 승인 대기에 들어갈 상태."""
+    state = after_match(*lines)
+    return with_plan(merged(state, risk_node(state, deps())))
+
+
+def ready_order(order):
+    """주어진 조제지시서(위험 신호 대조 포함)에 조제 계획을 붙인 상태."""
+    return with_plan(state_with(order))
+
+
 def test_match_finds_the_item_codes_and_marks_the_lines_to_check():
     update = match_node(structured("rx_001"), deps())
     assert set(update) == {"order", "status"} and update["status"] == "matched"
@@ -357,10 +373,10 @@ def asked(state, answer=approve_as_shown):
     return payload, update
 
 
-def test_approve_shows_the_order_the_ocr_lines_and_a_notice():
-    state = checked("rx_001")
-    payload, _ = asked(state)
-    assert set(payload) == {"hitl_point", "order", "ocr_lines", "ocr_size", "notice"}
+def test_approve_shows_the_order_the_plan_the_ocr_lines_and_a_notice():
+    state = with_plan(checked("rx_001"))
+    payload, _ = asked(state, edit(lambda order: None))
+    assert set(payload) == {"hitl_point", "order", "plan", "error_code", "ocr_lines", "ocr_size", "notice"}
     assert payload["hitl_point"] == HITL_APPROVAL == "rx_approval"
     assert payload["order"] == state["order"]
     used = {i for item in state["order"]["items"] for i in item["source_line_ids"]}
@@ -371,22 +387,57 @@ def test_approve_shows_the_order_the_ocr_lines_and_a_notice():
 
 
 def test_approve_says_how_many_lines_need_a_check():
-    payload, _ = asked(checked("rx_001"))
+    payload, _ = asked(ready(line("타이레놀정500mg"), line("뮤코다인캡슐200mg")))
     assert payload["notice"] == "약사 승인을 기다립니다. 확인이 필요한 약품이 2줄 있습니다."
+
+
+def test_the_approval_card_shows_the_plan_made_before_approval():
+    payload, _ = asked(ready(line("타이레놀정500mg"), line("게보린정")), manual_with("확인함"))
+    plan = Plan.model_validate(payload["plan"])
+    assert len(plan.plan) == 3 and payload["error_code"] is None
+
+
+def test_without_a_plan_the_card_shows_the_code_and_only_an_edit_goes_on():
+    """3일 초과(E_PLAN_RANGE)면 계획 없이 승인 카드를 보이고, 그대로 승인 · 사유 진행은 받지 않는다."""
+    from agent.nodes import NO_PLAN_CANNOT_APPROVE
+
+    long = DrugLine(item_code=None, name="타이레놀정500mg", printed_code=None, count_per_dose=1, times=["morning"], days=4)
+    state = ready(long)
+    with pytest.raises(ValueError) as error:
+        asked(state)
+    assert str(error.value) == NO_PLAN_CANNOT_APPROVE
+    with pytest.raises(ValueError):
+        asked(state, manual_with("확인함"))
+
+    def three_days(order):
+        order["items"][0]["days"] = 3
+
+    payload, update = asked(state, edit(three_days))
+    assert (payload["plan"], payload["error_code"]) == (None, E_PLAN_RANGE)
+    assert update["status"] == "edited" and update["plan"] is None
+
+
+def test_a_line_without_an_item_code_cannot_be_approved_or_passed_with_a_reason():
+    from agent.nodes import UNMATCHED_CANNOT_APPROVE
+
+    state = with_plan(checked("rx_001"))                              # 알모란정은 품목기준코드를 정하지 못했다
+    for answer in (approve_as_shown, manual_with("확인함")):
+        with pytest.raises(ValueError) as error:
+            asked(state, answer)
+        assert str(error.value) == UNMATCHED_CANNOT_APPROVE
 
 
 def test_approve_has_nothing_to_add_when_no_line_needs_a_check():
     # 인쇄된 코드가 사전의 품목기준코드와 같고 이름도 맞으면 자동으로 확정된다 (약사 확인 없음)
     state = state_with(order_of(line("타이레놀정500mg", printed_code=TYLENOL)))
     state = merged(state, match_node(state, deps()))
-    state = merged(state, risk_node(state, deps()))
+    state = with_plan(merged(state, risk_node(state, deps())))
     assert asked(state)[0]["notice"] == "약사 승인을 기다립니다."
 
 
 def test_approve_says_a_warning_must_be_confirmed_before_approval():
-    state = after_match(line("타이레놀정500mg"), line("게보린정"))
-    state = merged(state, risk_node(state, deps()))
-    assert asked(state)[0]["notice"] == (
+    state = ready(line("타이레놀정500mg"), line("게보린정"))
+    assert asked(state, manual_with("확인함"))[0]["notice"] == (
         "약사 승인을 기다립니다. 확인이 필요한 약품이 2줄 있습니다."
         " 위험 신호가 1건 있습니다(경고). 약사가 확인한 뒤에 승인할 수 있습니다."
     )
@@ -405,7 +456,7 @@ def order_with_risk(level):
 
 @pytest.mark.parametrize("level, label, confirm", [("caution", "주의", False), ("warning", "경고", True), ("danger", "위험", True)])
 def test_approve_asks_for_a_confirmation_from_warning_up_but_only_shows_a_caution(level, label, confirm):
-    notice = asked(state_with(order_with_risk(level)), manual_with("확인함"))[0]["notice"]
+    notice = asked(ready_order(order_with_risk(level)), manual_with("확인함"))[0]["notice"]
     assert f"위험 신호가 1건 있습니다({label})." in notice
     assert ("약사가 확인한 뒤에 승인할 수 있습니다." in notice) is confirm
 
@@ -419,7 +470,7 @@ def test_a_danger_cannot_be_approved_as_shown():
     from agent.nodes import DANGER_NEEDS_REASON
 
     with pytest.raises(ValueError) as error:
-        asked(state_with(order_with_risk("danger")))
+        asked(ready_order(order_with_risk("danger")))
     assert str(error.value) == DANGER_NEEDS_REASON
     with pytest.raises(ValueError):
         read_reply({"action": "approve", "order": order_with_risk("danger")}, DispensingOrder.model_validate(order_with_risk("danger")))
@@ -427,9 +478,9 @@ def test_a_danger_cannot_be_approved_as_shown():
 
 @pytest.mark.parametrize("level", ["none", "caution", "warning", "danger"])
 def test_manual_with_a_reason_goes_on_and_keeps_the_reason(level):
-    _, update = asked(state_with(order_with_risk(level) if level != "none" else checked("rx_001")["order"]),
-                      manual_with("  처방의와 통화해 확인함 "))
-    assert update["status"] == "approved"
+    state = ready_order(order_with_risk(level)) if level != "none" else ready(line("타이레놀정500mg"))
+    _, update = asked(state, manual_with("  처방의와 통화해 확인함 "))
+    assert update["status"] == "planned"
     assert update["notice"] == "약사가 사유를 적고 진행했습니다. 사유: 처방의와 통화해 확인함"
     assert update["notes"] == ["위험 신호 확인 후 진행 사유: 처방의와 통화해 확인함"]
 
@@ -453,9 +504,10 @@ def test_approve_refuses_an_order_that_skipped_the_risk_check():
         approve_node(matched("rx_001"), deps())
 
 
-def test_approving_the_order_as_shown_approves_it():
-    _, update = asked(checked("rx_001"))
-    assert update == {"status": "approved", "notice": APPROVED_NOTICE, "error_code": None}
+def test_approving_the_order_as_shown_confirms_the_plan_on_the_card():
+    state = ready(line("타이레놀정500mg"))
+    _, update = asked(state)
+    assert update == {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None}   # 계획은 새로 만들지 않는다
 
 
 def edit(change):
@@ -468,14 +520,14 @@ def edit(change):
 
 
 def test_editing_puts_the_new_lines_in_and_asks_for_matching_and_checking_again():
-    state = after_match(line("타이레놀정500mg"), line("게보린정"))
-    state = merged(state, risk_node(state, deps()))
+    state = ready(line("타이레놀정500mg"), line("게보린정"))
 
     def two_days(order):
         order["items"][0]["days"] = 2
 
     update = approve_node(state, deps(ask=edit(two_days)))
-    assert set(update) == {"order", "status", "notice", "error_code"}
+    assert set(update) == {"order", "plan", "status", "notice", "error_code"}
+    assert update["plan"] is None                                    # 고친 뒤에는 계획도 다시 만든다
     assert (update["status"], update["notice"], update["error_code"]) == ("edited", EDITED_NOTICE, None)
     assert update["order"]["items"][0]["days"] == 2
     assert update["order"]["risk_check"] is None                     # 고친 뒤에는 다시 대조한다
@@ -483,7 +535,7 @@ def test_editing_puts_the_new_lines_in_and_asks_for_matching_and_checking_again(
 
 
 def test_approving_with_changed_lines_counts_as_an_edit():
-    state = checked("rx_001")
+    state = with_plan(checked("rx_001"))
 
     def approve_changed(payload):
         order = copy.deepcopy(payload["order"])
@@ -541,8 +593,8 @@ def test_without_an_ask_function_the_node_uses_langgraph_interrupt(monkeypatch):
 
 
 def test_after_a_plan_failure_the_notice_starts_with_the_reason():
-    state = {**checked("rx_001"), "status": "failed", "notice": "조제 계획을 만들 수 없습니다. 이유."}
-    assert asked(state)[0]["notice"].startswith("조제 계획을 만들 수 없습니다. 이유. 고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다.")
+    state = {**checked("rx_001"), "plan": None, "notice": "조제 계획을 만들 수 없습니다. 이유."}
+    assert asked(state, edit(lambda order: None))[0]["notice"].startswith("조제 계획을 만들 수 없습니다. 이유. 고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다.")
 
 
 # ------------------------------------------------------------ 고친 뒤 다시 매칭
@@ -576,58 +628,56 @@ def test_without_an_edit_matching_decides_every_line_again():
     assert item.item_code is None                                     # 구조화 직후의 줄에는 약사의 선택이 없다
 
 
-# ------------------------------------------------------------ 조제 계획 (승인 뒤)
+# ------------------------------------------------------------ 조제 계획 (승인 전, v0.8)
 
 
-def approved(*lines):
-    """약품 매칭 · 위험 신호 대조를 마치고 약사가 승인한 상태."""
+def risk_checked(*lines):
+    """약품 매칭 · 위험 신호 대조를 마친 상태 (조제 계획 바로 앞)."""
     state = after_match(*lines)
-    state = merged(state, risk_node(state, deps()))
-    return {**state, "status": "approved"}
+    return merged(state, risk_node(state, deps()))
 
 
-def test_plan_makes_the_a4_plan_of_the_approved_order():
-    update = plan_node(approved(line("타이레놀정500mg"), line("게보린정")), deps())
-    assert set(update) == {"plan", "status", "notice"} and update["status"] == "planned"
+def test_plan_makes_the_a4_plan_before_the_approval():
+    state = risk_checked(line("타이레놀정500mg"), line("게보린정"))
+    update = plan_node(state, deps())
+    assert set(update) == {"plan", "notice", "error_code"}            # 상태는 checked 그대로 (승인 전)
+    assert (update["notice"], update["error_code"]) == (None, None)
     plan = Plan.model_validate(update["plan"])
     assert [(c.day, c.time, [(i.item_code, i.count) for i in c.items]) for c in plan.plan] == [
         (day, "morning", [(TYLENOL, 1), (GEVORIN, 1)]) for day in (1, 2, 3)
     ]
-    assert update["notice"] == "조제 계획을 만들었습니다 (3일, 약이 든 칸 3개)."
     json.dumps(update)
 
 
-@pytest.mark.parametrize("status", ["edited", "checked", "matched", "planned", "failed", None])
-def test_plan_refuses_an_order_that_was_not_approved(status):
-    state = {**approved(line("타이레놀정500mg")), "status": status}
-    with pytest.raises(ValueError, match="승인되지 않은"):
+def test_plan_refuses_an_order_that_skipped_the_risk_check():
+    state = after_match(line("타이레놀정500mg"))
+    with pytest.raises(ValueError, match="위험 신호 대조"):
         plan_node(state, deps())
 
 
 def test_a_plan_beyond_the_tray_is_a_failure_with_the_range_code():
     long = DrugLine(item_code=None, name="타이레놀정500mg", printed_code=None, count_per_dose=1, times=["morning"], days=7)
-    state = approved(long)
-    update = plan_node(state, deps())
-    assert (update["status"], update["plan"], update["error_code"]) == ("failed", None, E_PLAN_RANGE)
+    update = plan_node(risk_checked(long), deps())
+    assert (update["plan"], update["error_code"]) == (None, E_PLAN_RANGE)
     assert update["errors"] == [f"[plan] E_PLAN_RANGE {update['notice']}"]
-    assert "order" not in update                                     # 조제지시서는 그대로 남는다
+    assert "order" not in update and "status" not in update          # 조제지시서와 상태는 그대로, 승인 대기로 간다
 
 
 def test_a_line_without_a_drug_cannot_be_planned():
-    update = plan_node(approved(line("타이레놀정500mg"), line("가나다정")), deps())
-    assert (update["status"], update["error_code"]) == ("failed", None)
+    update = plan_node(risk_checked(line("타이레놀정500mg"), line("가나다정")), deps())
+    assert (update["plan"], update["error_code"]) == (None, None)
     assert "약을 정하지 못한 줄이 있습니다: 2번째 약품(가나다정)" in update["notice"]
 
 
-def test_a_cell_with_more_than_two_pills_is_a_failure_with_the_range_code():
+def test_a_cell_can_hold_more_than_two_pills():
+    """11/12 결정: 칸당 알 수 제한은 없앴다."""
     two = DrugLine(item_code=None, name="뮤코다인캡슐200mg", printed_code=None, count_per_dose=2, times=["morning"], days=1)
-    update = plan_node(approved(two, line("프론크논캡슐")), deps())
-    assert (update["status"], update["plan"], update["error_code"]) == ("failed", None, E_PLAN_RANGE)
-    assert update["notice"].endswith("트레이 칸당 최대 2알을 넘습니다: 1일 아침 3알")
+    update = plan_node(risk_checked(two, line("프론크논캡슐")), deps())
+    assert update["error_code"] is None and update["plan"] is not None
 
 
 def test_plan_does_not_change_the_state_it_was_given():
-    state = approved(line("타이레놀정500mg"), line("게보린정"))
+    state = risk_checked(line("타이레놀정500mg"), line("게보린정"))
     before = copy.deepcopy(state)
     plan_node(state, deps())
     assert state == before
@@ -666,13 +716,13 @@ def test_supervisor_keeps_the_status_of_an_open_prescription_when_a_second_presc
 
 
 NODE_FUNCTIONS = [
-    supervisor_node, structure_node, match_node, risk_node, approve_node, tray_node,
+    supervisor_node, structure_node, match_node, risk_node, plan_node, approve_node, tray_node,
 ]
 
 
 @pytest.mark.parametrize("node", NODE_FUNCTIONS, ids=lambda f: f.__name__)
 def test_a_node_does_not_change_the_state_it_was_given(node):
-    state = checked("rx_001")
+    state = ready(line("타이레놀정500mg"), line("게보린정"))
     before = copy.deepcopy(state)
     node(state, deps())
     assert state == before
@@ -680,7 +730,7 @@ def test_a_node_does_not_change_the_state_it_was_given(node):
 
 @pytest.mark.parametrize("node", NODE_FUNCTIONS, ids=lambda f: f.__name__)
 def test_a_node_only_writes_fields_the_state_has(node):
-    state = checked("rx_001")
+    state = ready(line("타이레놀정500mg"), line("게보린정"))
     assert set(node(state, deps())) <= set(typing.get_type_hints(GraphState))
 
 
@@ -691,12 +741,13 @@ def test_the_tools_cannot_be_swapped_while_the_graph_runs():
 
 def test_a_sample_goes_through_the_nodes_in_order_to_the_plan():
     state = first_state("P0001", load("rx8_a1", "rx8_01"))
-    for node in (supervisor_node, structure_node, match_node, risk_node, approve_node):
+    for node in (supervisor_node, structure_node, match_node, risk_node, plan_node):
         state = merged(state, node(state, deps()))
-    assert (state["flow"], state["status"], state["error_code"], state["errors"]) == ("prescription", "approved", None, [])
-    assert state["plan"] is None
-    state = merged(state, plan_node(state, deps()))
-    assert state["status"] == "planned" and len(state["plan"]["plan"]) == 9
+    assert (state["flow"], state["status"], state["error_code"], state["errors"]) == ("prescription", "checked", None, [])
+    shown = state["plan"]
+    assert len(shown["plan"]) == 9                                    # 승인 전에 만든 계획
+    state = merged(state, approve_node(state, deps(ask=manual_with("확인함"))))
+    assert state["status"] == "planned" and state["plan"] == shown   # 승인은 보인 계획을 확정만 한다
     json.dumps(state)
 
 

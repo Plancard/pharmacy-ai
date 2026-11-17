@@ -79,6 +79,15 @@ def show_pause(pause: Pause | None, out: Out) -> None:
     risk = pause.payload["order"].get("risk_check") or {}
     for f in risk.get("findings", []):
         out(f"      위험 신호({f['level']}): {f['message']}")
+        for e in f.get("evidence", []):
+            out(f"        근거: {e['title']} ({e['source']})")
+    plan = pause.payload.get("plan")
+    if plan is not None:                                            # v0.8: 조제 계획은 승인 전에 승인 카드에 보인다
+        names = {d["item_code"]: d["name"] for d in pause.payload["order"]["items"] if d.get("item_code")}
+        for line in plan_lines(Plan.model_validate(plan), names):
+            out(f"      계획(승인 카드) {line}")
+    else:
+        out(f"      계획: 만들 수 없음 ({pause.payload.get('error_code') or '코드 없음'}) - 고치기(edit)만 할 수 있음")
 
 
 def show_result(api: AgentApi, rx_id: str, out: Out) -> dict[str, Any]:
@@ -101,10 +110,11 @@ def s1_prescription_approve_then_plan(api: AgentApi, out: Out) -> bool:
     pause = api.start("D1", load("rx8_01"))
     show_pause(pause, out)
     ok = pause is not None and pause.hitl_point == "rx_approval" and len(pause.payload["order"]["items"]) == 2
-    out("   약사: 그대로 승인")
+    ok &= pause is not None and pause.payload["plan"] is not None
+    out("   약사: 승인 카드의 조제지시서 · 조제 계획을 보고 그대로 승인 → 계획 확정")
     ok &= api.resume("D1", "rx_approval", approve(pause)) is None
     result = show_result(api, "D1", out)
-    return ok and result["status"] == "planned" and len(result["plan"]["plan"]) == 9
+    return ok and result["status"] == "planned" and result["plan"] == pause.payload["plan"]
 
 
 def s2_duplicate_warning_on_approval(api: AgentApi, out: Out) -> bool:
@@ -120,26 +130,33 @@ def s2_duplicate_warning_on_approval(api: AgentApi, out: Out) -> bool:
 
 
 def s3_edit_after_a_plan_that_cannot_be_made(api: AgentApi, out: Out) -> bool:
-    out("   약사: 처방전 사진(rx8_07, 한 칸에 3알이 들어가는 처방)")
-    pause = api.start("D3", load("rx8_07"))
-    out("   약사: 그대로 승인")
-    back = api.resume("D3", "rx_approval", approve(pause))
-    show_pause(back, out)
-    order = copy.deepcopy(back.payload["order"])
-    order["items"] = order["items"][:2]
-    out("   약사: 뮤코다인을 빼고 고치기(edit) → 다시 대조한 지시서를 승인")
+    out("   약사: 처방전 사진(rx8_18, 투약 4일 - 트레이는 3일까지)")
+    pause = api.start("D3", load("rx8_18"))
+    show_pause(pause, out)
+    out("   약사: 그대로 승인 → 거절됨")
+    try:
+        api.resume("D3", "rx_approval", approve(pause))
+        refused = None
+    except ValueError as e:
+        refused = e
+        out(f"      거절: {e}")
+    order = copy.deepcopy(pause.payload["order"])
+    for item in order["items"]:
+        item["days"] = 3
+    out("   약사: 투약일수를 3일로 고치기(edit) → 다시 매칭 · 대조 · 계획")
     again = api.resume("D3", "rx_approval", {"action": "edit", "order": order})
     show_pause(again, out)
     api.resume("D3", "rx_approval", approve(again))
     result = show_result(api, "D3", out)
-    return back is not None and "칸당" in back.payload["notice"] and result["status"] == "planned"
+    return (pause.payload["plan"] is None and pause.payload["error_code"] == "E_PLAN_RANGE" and refused is not None
+            and again is not None and again.payload["plan"] is not None and result["status"] == "planned")
 
 
 def s4_second_prescription_photo(api: AgentApi, out: Out) -> bool:
     out("   약사: 처방전(rx8_04)을 승인한 뒤, 같은 처방에 처방전 사진을 또 올렸다")
     api.resume("D4", "rx_approval", approve(api.start("D4", load("rx8_04"))))
     before = api.result("D4")
-    again = api.send("D4", load("rx8_05"), "prescription", message_id="m2")
+    again = api.send("D4", load("rx8_05"), "prescription")
     result = show_result(api, "D4", out)
     out(f"      안내: {result['notice']}")
     return (again is None and result["order"] == before["order"] and result["plan"] == before["plan"]
@@ -152,7 +169,7 @@ def s5_tray_photo_all_ok(api: AgentApi, out: Out) -> bool:
     api.resume("D5", "rx_approval", approve(pause))
     planned = api.result("D5")
     out("   (같은 처방의 두 번째 메시지: 이번 메시지 칸만 넣는다)")
-    again = api.send("D5", None, "tray", message_id="m2", image_id="tray-ok")
+    again = api.send("D5", None, "tray", image_id="tray-ok")
     show_pause(again, out)
     result = show_result(api, "D5", out)
     kept = result["order"] == planned["order"] and result["plan"] == planned["plan"]
@@ -186,23 +203,26 @@ def s10_tray_not_found_then_confirm(api: AgentApi, out: Out) -> bool:
         out(f"      오류: {e.code} - {e}")
     stage = api.stage("D10")
     out(f"      단계: {stage} (조제 계획은 그대로, 다시 찍으면 된다)")
-    out("   약사: 다시 찍은 사진: 저신뢰 칸 1개 → 약사가 보고 확인 완료(confirm)")
-    pause = api.send("D10", None, "tray", image_id="tray-review")
+    out("   약사: 다시 찍은 사진이 180° 뒤집혀 찍힘 → 검수 확인(HITL ②)에서 다시 찍기(redo)")
+    pause = api.send("D10", None, "tray", image_id="tray-rotated")
     show_pause(pause, out)
-    api.resume("D10", "inspection", {"action": "confirm"})
+    api.resume("D10", "inspection", {"action": "redo"})
+    out("   약사: 바로 놓고 다시 찍은 사진")
+    done = api.send("D10", None, "tray", image_id="tray-ok")
     result = show_result(api, "D10", out)
     return (failed is not None and failed.code == "E_TRAY_NOT_FOUND" and stage == "await_tray"
-            and pause is not None and "신뢰도 낮음" in pause.payload["cells"][0] and result["status"] == "inspected")
+            and pause is not None and "뒤집혀" in pause.payload["cells"][0] and done is None
+            and result["status"] == "inspected")
 
 
 SCENARIOS: list[tuple[str, Callable[[AgentApi, Out], bool]]] = [
-    ("처방전 사진 → 승인 → 조제 계획", s1_prescription_approve_then_plan),
-    ("성분 중복(이부프로펜) → 승인 화면에 경고, 승인 → 조제 계획", s2_duplicate_warning_on_approval),
-    ("계획을 못 만들면 승인 대기로 돌아와 고치기", s3_edit_after_a_plan_that_cannot_be_made),
+    ("처방전 사진 → 승인 카드에 조제 계획 → 승인으로 확정", s1_prescription_approve_then_plan),
+    ("성분 중복(이부프로펜) → 승인 화면에 경고와 근거, 승인 → 조제 계획 확정", s2_duplicate_warning_on_approval),
+    ("4일 처방 → 승인 카드에 계획 없음(E_PLAN_RANGE), 승인 거절 → 고치기", s3_edit_after_a_plan_that_cannot_be_made),
     ("이미 처방전이 있는 처방에 처방전 사진 → 안내만, 조제지시서 · 계획은 그대로", s4_second_prescription_photo),
     ("승인 뒤 같은 처방에 트레이 사진 → 전 칸 일치, 조제지시서 · 계획은 그대로", s5_tray_photo_all_ok),
     ("트레이 불일치 → 검수 확인(HITL ②)에서 재조제 → 다시 찍어 전 칸 일치", s9_tray_mismatch_redo_then_ok),
-    ("트레이를 못 찾음 → 오류 코드, 계획은 그대로 → 다시 찍어 확인 완료", s10_tray_not_found_then_confirm),
+    ("트레이를 못 찾음 → 오류 코드, 계획은 그대로 → 뒤집힌 사진은 다시 찍기 → 전 칸 일치", s10_tray_not_found_then_confirm),
 ]
 
 

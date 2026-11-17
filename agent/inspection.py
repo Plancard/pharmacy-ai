@@ -25,7 +25,7 @@ from agent.schema import Inspection, Plan
 HITL_INSPECTION = "inspection"           # HITL ② 지점 이름 (기능분석서 5.2절)
 CONFIRM, REDO = "confirm", "redo"        # 약사 응답의 action (기능분석서 F-WEB-09)
 STATUS_LABELS = {"ok": "일치", "mismatch": "불일치", "need_review": "확인 필요"}
-REASON_LABELS = {"low_conf": "신뢰도 낮음", "boundary": "칸 경계에 걸침", "overlap": "알약 겹침", "rotated": "트레이가 뒤집혀 찍힘"}
+REASON_LABELS = {"boundary": "칸 경계에 걸침", "overlap": "알약 겹침", "rotated": "트레이가 뒤집혀 찍힘"}
 
 
 class InspectionError(Exception):

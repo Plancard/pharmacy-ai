@@ -514,8 +514,16 @@ def test_inspection_rejects_unknown_reason_and_status():
 def test_inspection_allows_every_reason():
     d = load("a3_inspection", "i02_mismatch")
     review = next(c for c in d["cells"] if c["status"] == "need_review")
-    review["reasons"] = ["low_conf", "boundary", "overlap", "rotated"]
+    review["reasons"] = ["boundary", "overlap", "rotated"]
     assert Inspection.model_validate(d).cells
+
+
+def test_inspection_refuses_the_low_conf_reason():
+    d = load("a3_inspection", "i02_mismatch")
+    review = next(c for c in d["cells"] if c["status"] == "need_review")
+    review["reasons"] = ["low_conf"]                      # 명세서 v0.9: 검출 기준선 0.70 하나로, 저신뢰 사유는 폐기
+    with pytest.raises(ValidationError):
+        Inspection.model_validate(d)
 
 
 # 이 파일의 경로 가정 점검: 샘플 폴더가 git에 올라가는 위치인지 (data/ 아래면 .gitignore에 걸린다)

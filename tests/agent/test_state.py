@@ -21,7 +21,7 @@ def test_the_first_state_has_every_field_of_the_graph_state():
 def test_the_first_state_values():
     assert initial_state("C0001") == {
         "conversation_id": "C0001", "prescription_id": None,
-        "message_id": None, "image_id": None, "photo_kind": None, "ocr": None,
+        "image_id": None, "photo_kind": None, "ocr": None,
         "route": [], "flow": None, "order": None, "plan": None, "inspection": None,
         "status": "received", "notice": None, "error_code": None, "errors": [], "notes": [],
     }
@@ -32,9 +32,9 @@ def test_a_prescription_conversation_carries_its_prescription_id():
 
 
 def test_the_message_is_carried_into_the_state():
-    message = {"message_id": "m1", "image_id": "img1", "kind": "prescription"}
+    message = {"image_id": "img1", "kind": "prescription"}
     state = initial_state("P0001", message, "P0001")
-    assert (state["message_id"], state["image_id"], state["photo_kind"]) == ("m1", "img1", "prescription")
+    assert (state["image_id"], state["photo_kind"]) == ("img1", "prescription") and "message_id" not in state
 
 
 def test_ocr_and_photo_kind_are_carried_into_the_state():
@@ -45,19 +45,21 @@ def test_ocr_and_photo_kind_are_carried_into_the_state():
 
 
 def test_a_message_with_an_unknown_key_is_refused():
-    assert MESSAGE_KEYS == ("message_id", "image_id", "kind")
+    assert MESSAGE_KEYS == ("image_id", "kind")
     with pytest.raises(ValueError, match="모르는 키"):
         read_message({"kind": "tray", "photo": b"..."})          # 원본 바이트는 담지 않는다 (image_id만)
     with pytest.raises(ValueError, match="모르는 키"):
         read_message({"kind": "prescription", "text": "게보린 빼 주세요"})   # v0.8: 글 입력 없음
+    with pytest.raises(ValueError, match="모르는 키"):
+        read_message({"kind": "tray", "message_id": "m2"})        # 변경요청 11/16: message_id 칸 삭제
 
 
 def test_the_next_message_does_not_carry_the_order_or_the_plan():
     # 같은 대화의 다음 메시지 입력에 order · plan · status가 있으면 앞서 승인된 조제지시서와 계획이 지워진다 (11/12 요청서)
-    data = message_input({"message_id": "m2", "kind": "tray", "image_id": "img2"})
+    data = message_input({"kind": "tray", "image_id": "img2"})
     assert not {"order", "plan", "status", "conversation_id", "errors", "notes"} & set(data)
     assert "prescription_id" not in data
-    assert (data["message_id"], data["photo_kind"], data["image_id"], data["route"]) == ("m2", "tray", "img2", [])
+    assert (data["photo_kind"], data["image_id"], data["route"]) == ("tray", "img2", [])
 
 
 def test_a_message_that_opens_a_prescription_carries_its_id():
@@ -85,7 +87,7 @@ def test_the_values_the_state_can_take():
     assert PHOTO_KINDS == ("prescription", "tray")                 # v0.8: 약봉투 · 포장 제외
     assert FLOWS == ("prescription", "tray")
     assert STATUSES == (
-        "received", "structured", "matched", "checked", "approved", "edited", "planned", "inspecting", "inspected",
+        "received", "structured", "matched", "checked", "edited", "planned", "inspecting", "inspected",
         "noted", "failed",
     )
 

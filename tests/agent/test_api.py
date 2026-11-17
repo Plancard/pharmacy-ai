@@ -8,6 +8,8 @@ import json
 
 import pytest
 
+from agent.errors import E_PLAN_RANGE
+
 import fake_langgraph
 from agent.api import STAGE_AFTER_PLAN, AgentApi, AgentRunError, Pause
 from agent.checkpoint import memory_checkpointer
@@ -65,7 +67,8 @@ def test_start_stops_at_the_approval_with_what_the_web_shows(backend):
     api = make_api()
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     assert isinstance(pause, Pause) and pause.hitl_point == "rx_approval"
-    assert set(pause.payload) == {"order", "ocr_lines", "ocr_size", "notice"}   # 웹 FakeGateway의 payload(order · ocr_lines)에 더했다
+    assert set(pause.payload) == {"order", "plan", "error_code", "ocr_lines", "ocr_size", "notice"}   # 웹 FakeGateway의 payload(order · ocr_lines)에 더했다
+    assert len(pause.payload["plan"]["plan"]) == 9 and pause.payload["error_code"] is None   # 조제 계획은 승인 전에 보인다 (v0.8)
     order = DispensingOrder.model_validate(pause.payload["order"])
     assert [d.item_code for d in order.items] == ["202106092", "197900277"]
     assert order.risk_check.level == "warning"
@@ -211,19 +214,22 @@ def test_a_drug_the_pharmacist_chose_for_an_unknown_line_stays_after_an_edit(bac
 # ------------------------------------------------------------ 조제 계획을 못 만들 때
 
 
-def test_a_plan_that_cannot_be_made_comes_back_to_the_approval(backend):
+def test_a_plan_that_cannot_be_made_shows_the_reason_and_only_an_edit_goes_on(backend):
     api = make_api()
-    pause = api.start("P0001", load("rx8_a1", "rx8_07"))                  # 한 칸에 3알
-    back = api.resume("P0001", "rx_approval", approve_reply(pause))
-    assert back.hitl_point == "rx_approval"
-    assert back.payload["notice"].startswith("조제 계획을 만들 수 없습니다. 트레이 칸당 최대 2알을 넘습니다")
-    assert api.stage("P0001") == "rx_approval"
-    order = copy.deepcopy(back.payload["order"])
-    order["items"] = order["items"][:2]
+    pause = api.start("P0001", load("rx8_a1", "rx8_18"))                  # 투약 4일 (트레이는 3일까지)
+    assert (pause.payload["plan"], pause.payload["error_code"]) == (None, E_PLAN_RANGE)
+    assert pause.payload["notice"].startswith("조제 계획을 만들 수 없습니다.")
+    with pytest.raises(ValueError, match="조제 계획을 만들지 못해"):
+        api.resume("P0001", "rx_approval", approve_reply(pause))
+    assert api.stage("P0001") == "rx_approval"                           # 거절해도 그대로 멈춰 있다
+    order = copy.deepcopy(pause.payload["order"])
+    for item in order["items"]:
+        item["days"] = 3
     again = api.resume("P0001", "rx_approval", {"action": "edit", "order": order})
+    assert again.payload["plan"] is not None and again.payload["error_code"] is None
     assert api.resume("P0001", "rx_approval", approve_reply(again)) is None
     result = api.result("P0001")
-    assert result["status"] == "planned" and result["error_code"] is None
+    assert result["status"] == "planned" and result["error_code"] is None and result["plan"] == again.payload["plan"]
 
 
 # ------------------------------------------------------------ 다시 켜도 이어 간다
@@ -262,10 +268,10 @@ def test_the_next_message_keeps_the_approved_order_and_the_plan(backend):
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     api.resume("P0001", "rx_approval", approve_reply(pause))
     before = api.result("P0001")
-    assert api.send("P0001", None, "tray", message_id="m2", image_id="tray-1") is None
+    assert api.send("P0001", None, "tray", image_id="tray-1") is None
     after = api.result("P0001")
     assert (after["order"], after["plan"]) == (before["order"], before["plan"])
-    assert (after["route"], after["message_id"], api.stage("P0001")) == (["tray"], "m2", "inspected")
+    assert (after["route"], api.stage("P0001")) == (["tray"], "inspected") and "message_id" not in after
 
 
 def test_send_also_starts_a_new_conversation(backend):

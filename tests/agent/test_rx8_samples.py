@@ -16,7 +16,7 @@ from agent.errors import E_PLAN_RANGE
 from agent.checkpoint import memory_checkpointer
 from agent.graph import build_graph, resume_run
 from agent.pipeline import structure_prescription
-from agent.plan import MAX_PER_CELL, PlanError, build_plan
+from agent.plan import PlanError, build_plan
 from agent.risk import NO_DUR_WARNING, UNCHECKED_TAIL, check_order
 from agent.schema import TRAY_DAYS, OcrResult
 from graph_calls import first_state, send
@@ -109,7 +109,6 @@ def test_each_prescription_plans_as_expected(rx_id):
     if expected["plan"] == "ok":
         plan = build_plan(order)
         assert plan.days <= TRAY_DAYS
-        assert all(sum(i.count for i in c.items) <= MAX_PER_CELL for c in plan.plan)
     else:
         with pytest.raises(PlanError) as error:
             build_plan(order)
@@ -118,7 +117,7 @@ def test_each_prescription_plans_as_expected(rx_id):
 
 def test_the_demo_combinations_are_the_two_warnings_that_can_be_planned():
     warnings = [rx_id for rx_id in IDS if load("rx8_expected", rx_id)["risk_level"] == "warning" and load("rx8_expected", rx_id)["plan"] == "ok"]
-    assert warnings == ["rx8_01", "rx8_02"]
+    assert warnings == ["rx8_01", "rx8_02", "rx8_07"]                     # rx8_07: 조합 A + 뮤코다인 (한 칸 3알, 칸당 제한 없음)
 
 
 @pytest.mark.parametrize("rx_id", IDS)
@@ -127,15 +126,15 @@ def test_each_prescription_stops_for_approval_and_then_plans(monkeypatch, rx_id)
     graph = build_graph(dictionary=DICT, structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=no_llm), api=None,
                         checkpointer=memory_checkpointer())
     shown = send(graph, f"P-{rx_id}", load("rx8_a1", rx_id))["__interrupt__"][0].value
-    flagged = load("rx8_expected", rx_id)["flagged"]
-    assert shown["notice"].startswith("약사 승인을 기다립니다.")
-    assert ("확인이 필요한 약품" in shown["notice"]) is bool(flagged)
-    final = resume_run(graph, f"P-{rx_id}", {"action": "approve", "order": shown["order"]})
-    if load("rx8_expected", rx_id)["plan"] == "ok":
-        assert final["status"] == "planned" and final["plan"] is not None
-    else:                                                             # 계획을 못 만들면 이유를 들고 다시 승인 대기로
-        assert final["__interrupt__"][0].value["notice"].startswith("조제 계획을 만들 수 없습니다.")
-        assert load("rx8_expected", rx_id)["plan"] in ("E_PLAN_RANGE", "unmatched")
+    expected = load("rx8_expected", rx_id)
+    assert ("확인이 필요한 약품" in shown["notice"]) is bool(expected["flagged"])
+    if expected["plan"] == "ok":                                      # 승인 카드에 조제 계획이 함께 있다 (v0.8)
+        assert shown["notice"].startswith("약사 승인을 기다립니다.") and shown["plan"] is not None
+        final = resume_run(graph, f"P-{rx_id}", {"action": "approve", "order": shown["order"]})
+        assert final["status"] == "planned" and final["plan"] == shown["plan"]   # 보인 계획을 그대로 확정
+    else:                                                             # 계획을 못 만들면 승인 카드에 이유를 보이고 계획은 없다
+        assert shown["notice"].startswith("조제 계획을 만들 수 없습니다.") and shown["plan"] is None
+        assert shown["error_code"] == {"E_PLAN_RANGE": E_PLAN_RANGE, "unmatched": None}[expected["plan"]]
 
 
 def test_the_script_output_can_be_written_in_cp949(tmp_path):
@@ -166,13 +165,13 @@ def test_the_images_exist_for_every_prescription():
 
 
 def test_the_test_set_covers_the_acceptance_criteria():
-    """20장 구성: 8종 전부 · 시연 중복 2쌍(경고) · 병용금기 시연 처방 2장(아르펜 · 트리스펜) · 트레이 초과 2장 · 대상 외 약품 2장."""
+    """20장 구성: 8종 전부 · 시연 중복 2쌍(경고) · 이부프로펜 처방 2장(아르펜 · 트리스펜) · 트레이 초과 1장 · 대상 외 약품 2장."""
     expected = {rx_id: load("rx8_expected", rx_id) for rx_id in IDS}
     plans = [e["plan"] for e in expected.values()]
-    assert plans.count("ok") == 16 and plans.count("E_PLAN_RANGE") == 2 and plans.count("unmatched") == 2
+    assert plans.count("ok") == 17 and plans.count("E_PLAN_RANGE") == 1 and plans.count("unmatched") == 2   # rx8_18 (4일)
     assert [rx_id for rx_id, e in expected.items() if not all(i["target"] for i in e["items"])] == ["rx8_19", "rx8_20"]
     ibuprofen = {"201110120", "200201239"}
     taboo_demo = [rx_id for rx_id in ("rx8_16", "rx8_17") if ibuprofen & {i["item_code"] for i in expected[rx_id]["items"]}]
-    assert taboo_demo == ["rx8_16", "rx8_17"]                            # 복용 약 메토트렉세이트 · 케토롤락을 넣어 볼 처방
+    assert taboo_demo == ["rx8_16", "rx8_17"]
     counts = [len(e["items"]) for e in expected.values()]
     assert {1, 2, 3} <= set(counts)                                       # 약 1 · 2 · 3종 처방이 모두 있다

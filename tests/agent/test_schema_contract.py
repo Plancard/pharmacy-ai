@@ -50,7 +50,11 @@ def test_cv_stub_ocr_is_a1(stub):
     OcrResult.model_validate(stub.ocr(f"{CV_A1[0].stem}.png"))
 
 
-@pytest.mark.parametrize("scenario", ["ok", "mismatch", "review", "rotated"])
+@pytest.mark.parametrize("scenario", [
+    "ok", "mismatch", "rotated",
+    # cv/stub.py의 review 시나리오는 아직 low_conf를 낸다. 명세서 v0.9에서 폐기된 사유라 Agent는 받지 않는다 (CV 수정 요청, 11/17)
+    pytest.param("review", marks=pytest.mark.xfail(reason="cv/stub.py가 v0.9에서 폐기된 low_conf를 아직 냄", strict=False)),
+])
 def test_cv_stub_inspection_is_a3(stub, scenario):
     plan = Plan.model_validate(sample_plan())                      # 우리가 보내는 A.4
     res = stub.inspect("tray_demo.jpg", plan.model_dump(mode="json"), scenario)

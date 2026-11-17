@@ -156,8 +156,8 @@ def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: 
         return out
 
     @server.tool(name="build_plan",
-                 description="약사가 승인한 조제지시서(A.5)로 트레이 칸별 조제 계획(A.4)을 만든다. 만들 수 없으면(3일 초과 · 칸당 2알 초과 · "
-                             "약을 정하지 못한 줄) plan은 null이고 error에 코드와 이유가 있다. 승인 여부는 부르는 쪽이 지킨다.")
+                 description="조제지시서(A.5)로 트레이 칸별 조제 계획(A.4)을 만든다 (승인 카드에 보이고 승인되면 확정). 만들 수 없으면(3일 초과 · "
+                             "약을 정하지 못한 줄) plan은 null이고 error에 코드와 이유가 있다.")
     def build_plan_tool(order: dict[str, Any]) -> dict[str, Any]:
         try:
             parsed = DispensingOrder.model_validate(order)

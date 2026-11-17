@@ -8,7 +8,7 @@
 
 pytest가 아니다. 서버는 python -m agent.mcp_server 로 띄운다 (stdio). 서버 쪽 의약품 API는 .env의 DRUG_API_KEY를 따른다.
 비교는 처방전마다 그래프를 두 번 돌린다: 매칭 노드가 함수(drug_match.match_order)를 부를 때와 MCP 도구(match_drug)를 부를 때.
-승인 대기 화면(조제지시서 · 안내)과, 그대로 승인한 뒤의 결과(조제 계획 또는 다시 승인 대기)가 둘 다 같아야 한다.
+승인 대기 화면(조제지시서 · 조제 계획 · 안내)과, 그대로 승인할 수 있으면 승인한 뒤의 결과가 둘 다 같아야 한다.
 비교에서는 OpenAI를 부르지 않는다 (규칙 경로만). 규칙 경로로 못 읽는 처방전은 두 번 다 같은 실패여야 한다.
 """
 from __future__ import annotations
@@ -31,8 +31,9 @@ from agent.drug_dictionary import load_dictionary  # noqa: E402
 from agent.errors import ConfigError, StructureError  # noqa: E402
 from agent.graph import build_graph, resume_run, run_message  # noqa: E402
 from agent.mcp_client import DrugTools, McpToolError, http, in_process, stdio  # noqa: E402
-from agent.nodes import APPROVE, HITL_APPROVAL  # noqa: E402
+from agent.nodes import APPROVE, HITL_APPROVAL, read_reply  # noqa: E402
 from agent.pipeline import structure_prescription  # noqa: E402
+from agent.schema import DispensingOrder  # noqa: E402
 
 SAMPLES = config.RESOURCES_DIR / "samples"
 SAMPLE_DIRS = ("cv_a1", "rx8_a1")
@@ -65,21 +66,30 @@ def _seen(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_once(graph, rx_id: str, ocr: dict[str, Any]) -> list[dict[str, Any]]:
-    """처방전 하나: 승인 대기까지, 그리고 그대로 승인한 뒤."""
+    """처방전 하나: 승인 대기까지(조제 계획 포함), 그리고 그대로 승인할 수 있으면 승인한 뒤."""
     state = run_message(graph, rx_id, None, ocr, prescription_id=rx_id)
     steps = [_seen(state)]
     pause = _pause(state)
     if pause is not None and pause.get("hitl_point") == HITL_APPROVAL:
-        steps.append(_seen(resume_run(graph, rx_id, {"action": APPROVE, "order": pause["order"]})))
+        reply = {"action": APPROVE, "order": pause["order"]}
+        try:                      # 웹처럼 먼저 거른다: 약을 정하지 못한 줄 · 계획 없음 · 위험은 그대로 승인할 수 없다
+            read_reply(reply, DispensingOrder.model_validate(pause["order"]), plan_ready=pause.get("plan") is not None)
+        except ValueError:
+            return steps
+        steps.append(_seen(resume_run(graph, rx_id, reply)))
     return steps
 
 
 def describe_end(steps: list[dict[str, Any]]) -> str:
     last = steps[-1]
     if last["pause"] is not None:
-        if len(steps) > 1:
-            return "승인 → 다시 승인 대기 (조제 계획을 만들 수 없음)"
-        return f"멈춤: {last['pause'].get('hitl_point')}"
+        pause = last["pause"]
+        if pause.get("hitl_point") == HITL_APPROVAL and len(steps) == 1:
+            if pause.get("plan") is None:
+                code = pause.get("error_code")
+                return f"승인 대기 (조제 계획을 만들 수 없음{f', {code}' if code else ''}: 고친 뒤 승인)"
+            return "승인 대기 (그대로 승인할 수 없음: 사유 입력 필요)"
+        return f"멈춤: {pause.get('hitl_point')}"
     if last["status"] == "planned":
         return "승인 → 조제 계획"
     return f"{last['status']}" + (f" ({last['error_code']})" if last.get("error_code") else "")

@@ -11,7 +11,7 @@ import fake_langgraph
 from agent.api import AgentApi, AgentRunError
 from agent.checkpoint import memory_checkpointer
 from agent.config import RESOURCES_DIR
-from agent.cv_adapter import file_inspect, stub_inspect
+from agent.cv_adapter import file_inspect, stub_inspect as cv_stub_inspect
 from agent.drug_dictionary import load_dictionary
 from agent.errors import E_CV_INFER, E_PLAN_RANGE, E_TRAY_NOT_FOUND
 from agent.graph import build_graph
@@ -52,6 +52,21 @@ ORDER_ITEMS = [{"item_code": TYLENOL, "name": "타이레놀정500mg"}]
 
 def load(kind, name):
     return json.loads((SAMPLES / kind / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def stub_inspect(scenario):
+    """CV 가짜 모듈의 검수. 명세서 v0.9에서 A.3 칸 사유 low_conf가 빠졌는데 cv/stub.py는 아직 low_conf를 낸다.
+
+    CV 파트가 stub을 고칠 때까지(신정훈 님께 요청) 시험에서는 low_conf를 boundary로 바꿔 쓴다. 고친 뒤에는 그대로 통과한다.
+    """
+    inspect = cv_stub_inspect(scenario)
+
+    def run(image_id, plan):
+        result = inspect(image_id, plan)
+        for cell in result.get("cells", []):
+            cell["reasons"] = ["boundary" if r == "low_conf" else r for r in cell.get("reasons", [])]
+        return result
+    return run
 
 
 def stub(scenario, plan=PLAN):
@@ -109,7 +124,13 @@ def test_a_result_that_says_no_check_is_needed_while_a_cell_is_not_ok_still_asks
 def test_the_cells_that_are_not_ok_are_described_with_names():
     inspection = read_inspection(stub("review"), PLAN)
     assert cell_lines(inspection, {TYLENOL: "타이레놀정500mg"}) == [
-        "1일 아침 확인 필요: 예상 타이레놀정500mg 1 / 실제 타이레놀정500mg 1 (신뢰도 낮음)"]
+        "1일 아침 확인 필요: 예상 타이레놀정500mg 1 / 실제 타이레놀정500mg 1 (칸 경계에 걸침)"]
+
+
+def test_the_low_conf_reason_is_no_longer_accepted():
+    """명세서 v0.9 A.3: 칸 사유는 boundary · overlap · rotated만. low_conf가 오면 형식 오류다 (CV stub 수정 요청)."""
+    with pytest.raises(InspectionError, match="A.3"):
+        read_inspection(cv_stub_inspect("review")("tray-1", PLAN.model_dump(mode="json")), PLAN)
     missing = read_inspection(stub("mismatch"), PLAN)
     assert cell_lines(missing) == [f"1일 아침 불일치: 예상 {TYLENOL} 1 / 실제 없음"]
 
@@ -248,7 +269,7 @@ def planned_api(inspect):
 
 def test_a_tray_with_all_cells_ok_finishes_without_stopping(backend):
     api = planned_api(stub_inspect("ok"))
-    assert api.send("P0001", None, "tray", message_id="m2", image_id="tray-1") is None
+    assert api.send("P0001", None, "tray", image_id="tray-1") is None
     result = api.result("P0001")
     assert api.stage("P0001") == "inspected" and result["inspection"]["summary"]["ok"] == 12
     assert result["plan"]["prescription_id"] == result["inspection"]["prescription_id"] == "P0001"
@@ -305,8 +326,9 @@ def test_a_tray_photo_before_the_approval_is_not_sent_while_waiting(backend):
 
 
 def approved_order():
+    """위험 신호 대조까지 마친 조제지시서 (조제 계획은 승인 전에 만든다, v0.8)."""
     order = DispensingOrder.model_validate(load("a5_order", "s01_combo_a"))
-    return {"status": "approved", "order": order.model_dump(mode="json")}
+    return {"status": "checked", "order": order.model_dump(mode="json")}
 
 
 class FakeTools:
@@ -323,18 +345,18 @@ class FakeTools:
 def test_the_plan_is_made_by_the_mcp_tool_when_there_is_one():
     tools = FakeTools()
     update = plan_node(approved_order(), deps(tools=tools))
-    assert tools.calls == 1 and update["status"] == "planned" and "notes" not in update
+    assert tools.calls == 1 and update["plan"] is not None and "notes" not in update
 
 
 def test_a_broken_mcp_server_does_not_stop_the_plan():
     update = plan_node(approved_order(), deps(tools=FakeTools(error=McpToolError("연결이 끊겼습니다"))))
-    assert update["status"] == "planned" and update["plan"]["days"] == 3
+    assert update["plan"]["days"] == 3
     assert update["notes"] == [f"{MCP_PLAN_FAILED_WARNING}: 연결이 끊겼습니다"]
 
 
 def test_a_plan_the_mcp_tool_cannot_make_goes_back_with_its_code():
-    update = plan_node(approved_order(), deps(tools=FakeTools(error=PlanError("칸당 2알을 넘습니다", code=E_PLAN_RANGE))))
-    assert (update["status"], update["error_code"], update["plan"]) == ("failed", E_PLAN_RANGE, None)
+    update = plan_node(approved_order(), deps(tools=FakeTools(error=PlanError("트레이는 3일까지입니다", code=E_PLAN_RANGE))))
+    assert (update["error_code"], update["plan"]) == (E_PLAN_RANGE, None) and "status" not in update
 
 
 @pytest.fixture

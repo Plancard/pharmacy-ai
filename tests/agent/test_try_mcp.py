@@ -48,7 +48,8 @@ def test_the_script_shows_four_tools_and_the_same_graph_results(backend):
     assert "사전  202106092  타이레놀정500mg" in text
     assert "전체 25장 중 25장이 같습니다." in text
     assert "[같음] rx8_01: 승인 → 조제 계획" in text
-    assert "[같음] rx8_07: 승인 → 다시 승인 대기 (조제 계획을 만들 수 없음)" in text
+    assert "[같음] rx8_07: 승인 → 조제 계획" in text                      # 11/12: 칸당 알 수 제한 없음
+    assert "[같음] rx8_18: 승인 대기 (조제 계획을 만들 수 없음, E_PLAN_RANGE: 고친 뒤 승인)" in text   # 투약 4일
     assert "[다름]" not in text
 
 

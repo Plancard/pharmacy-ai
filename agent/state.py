@@ -10,7 +10,7 @@ State에는 JSON으로 바꿀 수 있는 값(dict · list · str · None)만 담
 
 메시지는 사진 1장이다 (v0.8: 글 · 복합 입력 · 약봉투 · 포장 사진 · 사진 종류 판별 제외). 슈퍼바이저(supervisor.py)가 흐름을 정한다.
 
-    prescription   처방 서브그래프: 구조화 → 약품 매칭 → 위험 신호 대조 → 승인 대기(멈춤) → 조제 계획
+    prescription   처방 서브그래프: 구조화 → 약품 매칭 → 위험 신호 대조 → 조제 계획 → 승인 대기(멈춤, 승인하면 계획 확정)
     tray           트레이 검수: CV 검수 결과(A.3)를 받아, ok가 아닌 칸이 있으면 약사 확인(HITL ② inspection)에서 멈춘다 (14단계)
 """
 from __future__ import annotations
@@ -26,12 +26,13 @@ PhotoKind = Literal["prescription", "tray"]
 # 흐름. 흐름마다 상위 그래프의 노드가 하나씩 있다. 실행 순서는 supervisor.FLOW_ORDER가 정한다.
 Flow = Literal["prescription", "tray"]
 # 진행 단계. 멈춘 것(승인 대기 · 검수 확인)은 상태 값이 아니라 그래프가 멈춘 것으로 안다 (checkpointer의 interrupts. api.py).
-# approved는 약사가 승인한 상태, edited는 약사가 고쳐 매칭 · 대조를 다시 하는 상태, planned는 조제 계획을 만든 상태다.
+# edited는 약사가 고쳐 매칭 · 대조 · 계획을 다시 하는 상태, planned는 약사가 승인해 조제 계획이 확정된 상태다 (웹: waiting_tray).
+# 조제 계획은 승인 전에 만들어 state.plan에 담기지만(v0.8), 승인 전 상태는 checked 그대로다.
 # noted는 흐름을 돌리지 않고 안내만 남기고 끝난 것이다 (사진 종류가 없음, 조제 계획 전의 트레이 사진 등).
 # inspecting은 트레이 검수 결과에 약사 확인이 필요해 HITL ②에서 멈춘 것, inspected는 검수가 끝난 것이다(전 칸 일치 또는 약사 확인).
 # 트레이 검수가 실패하거나 재조제(redo)면 planned로 남는다 (웹: waiting_tray, 다시 찍은 사진을 기다린다).
 Status = Literal[
-    "received", "structured", "matched", "checked", "approved", "edited", "planned", "inspecting", "inspected",
+    "received", "structured", "matched", "checked", "edited", "planned", "inspecting", "inspected",
     "noted", "failed",
 ]
 
@@ -44,7 +45,6 @@ class GraphState(TypedDict, total=False):
     conversation_id: str                      # 대화 ID (= 체크포인터의 thread_id). 대화 1개 = thread 1개 (11/12 결정)
     prescription_id: str | None               # 처방 ID. conversation_id와 같다 (웹이 넣어 준다. 빠지면 슈퍼바이저가 채운다)
     # --- 이번 메시지 (사진 1장 = 슈퍼바이저 한 번 실행). 같은 처방의 다음 메시지는 이 칸들만 바꾼다 (message_input)
-    message_id: str | None                    # 웹이 발급한 메시지 ID (messages 테이블). 없으면 None
     image_id: str | None                      # 사진의 ID (images 테이블). 사진이 없으면 None. 원본 바이트는 담지 않는다
     photo_kind: PhotoKind | None              # 들어온 사진 종류 (웹이 정한다). None이면 OCR이 있을 때만 처방전으로 본다
     ocr: dict[str, Any] | None                # CV가 보낸 A.1 형식 OCR 결과. 트레이 사진에는 없다
@@ -52,7 +52,7 @@ class GraphState(TypedDict, total=False):
     route: list[str]                          # 슈퍼바이저가 정한 실행할 흐름 (실행 순서). 지나기 전에는 빈 목록
     flow: Flow | None                         # 이번 메시지의 흐름. 흐름을 돌리지 않으면 None
     order: dict[str, Any] | None              # 조제지시서 (DispensingOrder.model_dump(mode="json"))
-    plan: dict[str, Any] | None               # 조제 계획 A.4 (Plan.model_dump(mode="json")). 승인 뒤에만 생긴다
+    plan: dict[str, Any] | None               # 조제 계획 A.4 (Plan.model_dump(mode="json")). 승인 전에 만들어 승인 카드에 보인다 (v0.8)
     inspection: dict[str, Any] | None         # 마지막 트레이 검수 결과 A.3 (CV가 준 것을 확인한 것). 트레이 사진을 검수한 뒤에만 생긴다
     status: Status                            # 지금 어느 단계인지
     notice: str | None                        # 화면에 보여 줄 안내 (실패 원인, 승인 대기 안내, 되묻는 말)
@@ -61,7 +61,7 @@ class GraphState(TypedDict, total=False):
     notes: Annotated[list[str], operator.add]    # 조제 기록에 남길 안내 (사유 입력 · 검수 확인 · AI 조사 등). 쌓는다
 
 
-MESSAGE_KEYS = ("message_id", "image_id", "kind")     # 웹이 넘기는 메시지 {message_id, image_id, kind}. 없는 키는 None (v0.8: 글 입력 없음)
+MESSAGE_KEYS = ("image_id", "kind")     # 웹이 넘기는 메시지 {image_id, kind}. 없는 키는 None (v0.8: 글 입력 · message_id 없음, 변경요청 11/16)
 
 
 def read_message(message: dict[str, Any] | None) -> dict[str, Any]:
@@ -71,7 +71,6 @@ def read_message(message: dict[str, Any] | None) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"메시지에 모르는 키가 있습니다: {', '.join(unknown)} (가능: {', '.join(MESSAGE_KEYS)})")
     return {
-        "message_id": message.get("message_id"),
         "image_id": message.get("image_id"),
         "photo_kind": message.get("kind"),
     }

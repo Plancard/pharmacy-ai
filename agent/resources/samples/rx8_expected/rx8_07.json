@@ -1,8 +1,8 @@
 {
  "image_id": "rx8_07",
- "purpose": "트레이 초과: 한 칸에 3알 (조제 계획 E_PLAN_RANGE)",
+ "purpose": "한 칸에 3알 (칸당 알 수 제한 없음, 조제 계획 정상)",
  "risk_level": "warning",
- "plan": "E_PLAN_RANGE",
+ "plan": "ok",
  "flagged": [],
  "items": [
   {

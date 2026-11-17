@@ -32,10 +32,9 @@ def test_all_samples_are_shown_with_their_answer():
     assert code == 0
     for name in show_plan.sample_ids():
         assert f"[{name}]" in text
-    assert text.count("계획을 만들 수 없음 (E_PLAN_RANGE)") == 2            # s03 · s04
-    assert "약을 정하지 못한 줄이 있습니다: 4번째 약품(알모탄정)" in text
-    assert ("계획을 만들 수 없음 (E_PLAN_RANGE): 조제 계획을 만들 수 없습니다. 트레이 칸당 최대 2알을 넘습니다: 1~3일 아침·저녁 3알"
-            in text)                                                   # s03: 프론크논 1알 + 뮤코다인 2알
+    assert text.count("계획을 만들 수 없음") == 1                              # s04만 (11/12: 칸당 알 수 제한 없음)
+    assert "계획을 만들 수 없음 (코드 없음): 조제 계획을 만들 수 없습니다. 약을 정하지 못한 줄이 있습니다: 4번째 약품(알모탄정)" in text
+    assert "[s03_no_risk] 약품 2줄: 프론크논캡슐 · 뮤코다인캡슐200mg\n    조제 계획: 3일" in text   # 프론크논 1알 + 뮤코다인 2알도 한 칸에
 
 
 def test_a_plan_that_differs_from_the_a4_sample_ends_with_one(monkeypatch, tmp_path):

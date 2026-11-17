@@ -41,7 +41,7 @@ RiskScope = Literal["rx_only"]                                # 대조한 범위
 MatchMethod = Literal["code", "name", "api", "none"]
 
 CellStatus = Literal["ok", "mismatch", "need_review"]         # A.3 칸 판정
-CellReason = Literal["low_conf", "boundary", "overlap", "rotated"]   # A.3 확인이 필요한 이유
+CellReason = Literal["boundary", "overlap", "rotated"]        # A.3 확인이 필요한 이유 (low_conf는 v0.9에서 폐기: 검출 기준선 0.70 하나로)
 
 
 def risk_rank(level: str) -> int:
@@ -186,6 +186,16 @@ class Plan(_Model):
         return self
 
 
+# ------------------------------------------------------------------ 근거 (A.5 risk_check 항목의 evidence)
+
+class Evidence(_Model):
+    """위험 신호 항목의 RAG 검색 근거 하나 (명세서 v0.8 A.5: 제목 · 출처 · 발췌)."""
+
+    title: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    excerpt: str = Field(min_length=1)
+
+
 # ------------------------------------------------------------------ 위험 신호 (A.5 risk_check)
 
 class RiskFinding(_Model):
@@ -197,6 +207,8 @@ class RiskFinding(_Model):
     message: str = Field(min_length=1)       # 약사에게 그대로 보이는 한국어 문장 (규칙이 만든 고정 문장)
     # AI가 덧붙인 설명 (18단계, REQ-AG-07: LLM은 설명만, 단계 · 유형은 바꾸지 않는다). 만들지 못했거나 쓰지 않으면 None.
     explanation: str | None = Field(default=None, min_length=1)
+    # RAG 검색 근거 (명세서 v0.8 A.5, F-AG-06). 찾지 못했으면 빈 목록 (화면은 '근거 없음'). 단계 · 유형은 근거와 상관없이 규칙이 정한다
+    evidence: list[Evidence] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _codes_unique(self):
@@ -329,13 +341,3 @@ class DispensingOrder(_Model):
     def flagged_indices(self) -> list[int]:
         """약사 확인 표시가 붙은 약품 줄의 번호(0부터). 승인 화면이 강조해 보여 준다."""
         return [i for i, d in enumerate(self.items) if d.needs_pharmacist_check]
-
-
-# ------------------------------------------------------------------ 근거 (A.5 risk_check 항목의 evidence)
-
-class Evidence(_Model):
-    """위험 신호 항목의 RAG 검색 근거 하나 (명세서 v0.8 A.5: 제목 · 출처 · 발췌)."""
-
-    title: str = Field(min_length=1)
-    source: str = Field(min_length=1)
-    excerpt: str = Field(min_length=1)

@@ -1,7 +1,7 @@
 """그래프에 샘플 처방전을 넣어 돌려 보고 결과를 보여 준다 (7 ~ 11단계) — 손으로 돌려 보는 스크립트.
 
     python scripts/agent/run_graph.py                       # rx_001 한 장: 승인 대기에서 멈춘 모습
-    python scripts/agent/run_graph.py rx8_01 --approve      # 승인 대기에서 약사가 그대로 승인 → 조제 계획까지
+    python scripts/agent/run_graph.py rx8_01 --approve      # 승인 대기에서 약사가 그대로 승인 → 조제 계획 확정
     python scripts/agent/run_graph.py --all                 # 샘플 전부 (CV 처방전 5장 + 시연용 처방전 8장)
     python scripts/agent/run_graph.py --no-api              # .env에 DRUG_API_KEY가 있어도 식약처 API를 쓰지 않는다 (약품 사전만)
     python scripts/agent/run_graph.py --subgraph --all      # 처방 서브그래프만 단독으로 (슈퍼바이저를 거치지 않는다). 결과는 상위 그래프와 같다
@@ -15,7 +15,8 @@
 
 pytest가 아니다. 샘플은 agent/resources/samples의 cv_a1(rx_001 ~ rx_005, CV가 보낸 OCR)과 rx8_a1(rx8_01 ~ rx8_08, 대상 8종 시연용)이다.
 규칙 경로가 성공하면 OpenAI는 부르지 않는다. 화면에는 환자 정보를 찍지 않는다 (약품 표와 위험 신호, 조제 계획만).
-처방 흐름은 승인 대기(HITL ①)에서 멈춘다. --approve를 주면 화면의 조제지시서를 그대로 승인해 이어 간다.
+처방 흐름은 조제 계획까지 만든 뒤 승인 대기(HITL ①)에서 멈춘다. --approve를 주면 화면의 조제지시서를 그대로 승인해 계획을 확정한다
+(약을 정하지 못한 줄이 있거나 계획을 만들지 못했으면 승인할 수 없다고 보여 주고 넘어간다).
 langgraph가 설치되어 있어야 한다 (pip install -r agent/requirements.txt).
 """
 from __future__ import annotations
@@ -35,7 +36,7 @@ from agent.checkpoint import default_checkpointer, describe, memory_checkpointer
 from agent.errors import ConfigError  # noqa: E402
 from agent.mcp_client import McpToolError, http, stdio  # noqa: E402
 from agent.graph import build_graph, build_prescription_graph, resume_run, run_message, run_prescription  # noqa: E402
-from agent.nodes import APPROVE  # noqa: E402
+from agent.nodes import APPROVE, read_reply  # noqa: E402
 from agent.plan import plan_lines  # noqa: E402
 from agent.risk import LEVEL_LABELS  # noqa: E402
 from agent.schema import DispensingOrder, Plan  # noqa: E402
@@ -68,8 +69,9 @@ def show(sample_id: str, state: dict[str, Any], out: Callable[[str], None]) -> N
         out(f"    안내: {notice}")
     if state.get("error_code") and not paused:
         out(f"    오류 코드: {state['error_code']}")
-    for error in state.get("errors", []):
-        out(f"    오류: {error}")
+    if not paused:                         # 멈춘 동안의 이유는 안내(승인 카드)에 있다. 상위 그래프는 서브그래프의 기록을 아직 받지 않았다
+        for error in state.get("errors", []):
+            out(f"    오류: {error}")
     for note in state.get("notes", []):
         out(f"    기록: {note}")
     order_data = paused["order"] if paused else state.get("order")
@@ -92,13 +94,15 @@ def show(sample_id: str, state: dict[str, Any], out: Callable[[str], None]) -> N
             out(f"         - [{LEVEL_LABELS[finding.level]}] {finding.message}")
     for warning in order.warnings:
         out(f"    경고: {warning}")
-    if state.get("plan") is not None:
+    plan = paused.get("plan") if paused else state.get("plan")     # v0.8: 계획은 승인 전에 만들어 승인 카드에 보인다
+    if plan is not None:
         names = {d.item_code: d.name for d in order.items if d.item_code}
-        out("    조제 계획:")
-        for line in plan_lines(Plan.model_validate(state["plan"]), names):
+        out("    조제 계획:" + (" (승인 카드에 보임)" if paused else ""))
+        for line in plan_lines(Plan.model_validate(plan), names):
             out(f"      {line}")
     elif paused:
-        out("    조제 계획: 약사가 승인한 뒤에 만듭니다")
+        code = paused.get("error_code")
+        out(f"    조제 계획: 만들 수 없음{f' ({code})' if code else ''}. 고친 뒤(edit) 승인할 수 있습니다")
 
 
 def main(argv: list[str] | None = None, *, graph=None, out: Callable[[str], None] = print) -> int:
@@ -171,10 +175,16 @@ def _run(args: argparse.Namespace, ids: list[str], graph, tools, out: Callable[[
             show(sample_id, state, out)
             reached += paused_value(state) is not None
             if args.approve and paused_value(state) is not None:
-                order = paused_value(state)["order"]
-                out("    -> 약사가 화면의 조제지시서를 그대로 승인합니다")
-                state = resume_run(graph, rx_id, {"action": APPROVE, "order": order})
-                show(sample_id, state, out)
+                shown = paused_value(state)
+                reply = {"action": APPROVE, "order": shown["order"]}
+                try:                                   # 웹(api.check_reply)처럼 이어 가기 전에 거른다
+                    read_reply(reply, DispensingOrder.model_validate(shown["order"]), plan_ready=shown.get("plan") is not None)
+                except ValueError as e:
+                    out(f"    -> 그대로 승인할 수 없습니다: {e}")
+                else:
+                    out("    -> 약사가 화면의 조제지시서를 그대로 승인합니다")
+                    state = resume_run(graph, rx_id, reply)
+                    show(sample_id, state, out)
         except ConfigError as e:
             out(f"설정 문제: {e}")
             return 1

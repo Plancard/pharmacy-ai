@@ -10,7 +10,9 @@
     risk           처방약끼리 위험 신호 대조 (성분 중복 + DUR 조회가 있으면 병용금기 · 효능군 중복). risk_check에 담는다.
                    deps.tools(MCP)가 있으면 DUR 도구 check_interaction · check_duplicate로 부른다 (13단계)
     approve        약사 승인 대기 (HITL ①). interrupt로 멈추고, 약사 응답(승인 · 고치기)을 받아 이어 간다.
-    make_plan      승인된 조제지시서로 칸별 조제 계획(A.4)을 만든다. 승인 전에는 오지 않는다.
+                   승인하면 승인 카드의 조제 계획을 그대로 확정해 planned(트레이 대기)로 끝난다
+    make_plan      조제지시서로 칸별 조제 계획(A.4)을 만든다. 승인 전에 만들어 승인 카드에 함께 보인다 (명세서 v0.8 2.2절 5단계).
+                   만들 수 없으면(3일 초과 E_PLAN_RANGE · 약을 정하지 못한 줄) 계획 없이 승인 대기로 가서 이유를 보인다
                    deps.tools(MCP)가 있으면 조제 도구 build_plan으로 부른다 (14단계)
     tray           트레이 검수: CV(deps.inspect)로 트레이 사진을 조제 계획과 대조한 A.3을 받아 확인한다 (14단계).
                    전 칸 일치면 inspected로 끝나고, 아니면 inspecting으로 tray_review에 넘긴다
@@ -38,7 +40,7 @@ from agent.inspection import (
 )
 from agent.mcp_client import DrugTools, McpToolError
 from agent.plan import PlanError, build_plan
-from agent.explain import ExplainFn, explain_findings, passages_for
+from agent.explain import ExplainFn, attach_evidence, explain_findings, passages_for
 from agent.investigate import DRUG_TOOL_NAMES, drug_tools, investigate_risks, local_evidence, suggest_candidates
 from agent.llm import load_prompt
 from agent.react import ToolChatFn, ToolFailure
@@ -63,6 +65,9 @@ APPROVED_NOTICE = "약사가 승인했습니다."
 MANUAL_NOTICE = "약사가 사유를 적고 진행했습니다."
 DANGER_NEEDS_REASON = ("위험 단계 항목이 있어 그대로 승인할 수 없습니다. "
                        "처방을 고치거나(edit), 사유를 적어 진행(manual, reason)해 주세요.")
+UNMATCHED_CANNOT_APPROVE = ("약을 정하지 못한 줄(품목기준코드 없음)이 있어 승인할 수 없습니다. "
+                            "약을 고르거나 줄을 지운 뒤(edit) 다시 승인해 주세요.")      # 기능분석서 v1.2 5.1절
+NO_PLAN_CANNOT_APPROVE = "조제 계획을 만들지 못해 승인할 수 없습니다. 조제지시서를 고친 뒤(edit) 다시 승인해 주세요."
 EDITED_NOTICE = "약사가 고친 내용으로 약품 매칭과 위험 신호 대조를 다시 했습니다."
 
 # 의약품 API를 쓰지 못할 때 조제지시서에 남기는 경고. 사전에서 못 찾은 약이 있을 때만 남긴다.
@@ -238,28 +243,31 @@ def _evidence_search(deps: Deps):
 
 
 def _explain(deps: Deps, findings, names: dict[str, str]):
-    """위험 신호 항목에 AI 설명을 붙인다 (18단계). 단계 · 유형 · 규칙 문장은 그대로. 키가 없거나 실패하면 설명 없이 + 안내.
+    """위험 신호 항목에 AI 설명과 근거(evidence, A.5)를 붙인다 (18단계). 단계 · 유형 · 규칙 문장은 그대로.
+    키가 없거나 실패하면 설명 없이 + 안내. 근거는 색인(deps.rag)이 있으면 설명과 상관없이 붙인다 (명세서 v0.8 REQ-AG-06).
 
     AI 조사(deps.react)와 근거 색인이 있으면 LLM이 근거 검색 도구로 찾아 가며 설명한다 (11/16 ReAct).
     조사를 끝내지 못하면 한 번 부르는 설명(deps.explain)으로 대신한다.
     """
+    passages = passages_for(deps.rag, findings, names)       # 근거 색인이 없으면 빈 목록
     if deps.react is not None:
         got = investigate_risks(findings, names, _evidence_search(deps), deps.react, load_prompt("react_risk"))
         if got is not None:
-            return got
+            explained, note = got
+            return attach_evidence(explained, passages), note     # AI가 인용하지 않은 항목도 근거를 받는다
     if deps.explain is None:
-        return list(findings), None
+        return attach_evidence(findings, passages), None
 
     def call(text: str) -> dict[str, Any]:
         try:
             return deps.explain(text)
         except ConfigError as e:                 # 키가 없으면 설명 없이 (explain_findings가 StructureError를 받는다)
             raise StructureError(str(e)) from None
-    return explain_findings(findings, names, call, passages_for(deps.rag, findings, names))
+    return explain_findings(findings, names, call, passages)
 
 
 def approval_notice(order: DispensingOrder, state: dict[str, Any]) -> str:
-    """승인 화면에 보일 안내. 조제 계획을 만들지 못해 돌아왔으면 그 이유를 앞에 붙인다."""
+    """승인 화면에 보일 안내. 조제 계획을 만들지 못했으면 그 이유를 앞에 붙인다 (격자 대신 오류와 수정 안내, F-WEB-07 ③)."""
     notice = "약사 승인을 기다립니다."
     flagged = len(order.flagged_indices)
     if flagged:
@@ -269,7 +277,7 @@ def approval_notice(order: DispensingOrder, state: dict[str, Any]) -> str:
         notice += f" 위험 신호가 {len(risk.findings)}건 있습니다({LEVEL_LABELS[risk.level]})."
         if requires_confirmation(risk.level):
             notice += " 약사가 확인한 뒤에 승인할 수 있습니다."
-    if state.get("status") == "failed":
+    if state.get("plan") is None and state.get("notice"):
         notice = f"{state.get('notice')} 고친 뒤 다시 승인해 주세요. " + notice
     return notice
 
@@ -295,12 +303,18 @@ def ocr_size(ocr: Any) -> dict[str, int] | None:
 
 
 def approval_payload(state: dict[str, Any]) -> dict[str, Any]:
-    """HITL ①에서 웹에 보일 내용 (web/agent_gateway.Pause의 payload와 같은 모양에 안내를 더했다)."""
+    """HITL ①에서 웹에 보일 내용 (web/agent_gateway.Pause의 payload와 같은 모양에 계획 · 안내를 더했다).
+
+    plan은 승인 카드의 칸 배치(A.4, 명세서 v0.8 REQ-AG-04)다. 만들지 못했으면 None이고 error_code(E_PLAN_RANGE 등)와
+    notice에 이유가 있다. 그때는 승인할 수 없고 고치기(edit)만 받는다.
+    """
     order = DispensingOrder.model_validate(state["order"])
     order.check_ready_for_web()
     return {
         "hitl_point": HITL_APPROVAL,
         "order": _order_dict(order),
+        "plan": state.get("plan"),
+        "error_code": state.get("error_code") if state.get("plan") is None else None,
         "ocr_lines": ocr_lines(order, state.get("ocr")),
         "ocr_size": ocr_size(state.get("ocr")),
         "notice": approval_notice(order, state),
@@ -314,12 +328,15 @@ def _pharmacist_line(item: Any) -> Any:
     return item
 
 
-def read_reply(reply: Any, current: DispensingOrder) -> tuple[str, DispensingOrder]:
+def read_reply(reply: Any, current: DispensingOrder, plan_ready: bool = True) -> tuple[str, DispensingOrder]:
     """약사 응답을 읽는다. 잘못된 응답이면 ValueError (그래프를 이어 가기 전에 api.py가 먼저 이것으로 거른다).
 
     응답 모양: {"action": "approve" | "edit" | "manual", "order": 조제지시서, "reason": 사유(manual일 때)}.
     조제지시서의 risk_check는 읽지 않는다 (고친 뒤에는 다시 대조하므로, 약을 지우면 남은 risk_check가 없는 약을 가리킬 수 있다).
-    위험(danger) 항목이 있는 조제지시서는 그대로 승인(approve)할 수 없다: 고치거나(edit) 사유를 적어 진행(manual)한다.
+    약품 줄을 그대로 둔 채 진행(approve · manual)할 수 없는 경우 (그때는 고치기 edit만 받는다):
+    - 약을 정하지 못한 줄(item_code 없음)이 있다 (기능분석서 v1.2 5.1절, 화면설계서 7장)
+    - 조제 계획을 만들지 못했다 (plan_ready=False: 3일 초과 등)
+    - 위험(danger) 항목이 있는데 approve다: 고치거나(edit) 사유를 적어 진행(manual)한다
     """
     if not isinstance(reply, dict) or reply.get("action") not in (APPROVE, EDIT, MANUAL):
         raise ValueError("약사 응답의 action은 approve · edit · manual 중 하나여야 합니다.")
@@ -334,9 +351,14 @@ def read_reply(reply: Any, current: DispensingOrder) -> tuple[str, DispensingOrd
     order = DispensingOrder.model_validate(data)
     if order.prescription_id != current.prescription_id:
         raise ValueError(f"다른 처방의 조제지시서입니다 ({order.prescription_id} != {current.prescription_id}).")
-    danger = current.risk_check is not None and current.risk_check.level == "danger"
-    if reply["action"] == APPROVE and danger and order.items == current.items:
-        raise ValueError(DANGER_NEEDS_REASON)          # 명세서 2.8절: 위험은 진행을 막고 약사 확인 필수
+    if reply["action"] in (APPROVE, MANUAL) and order.items == current.items:
+        if not order.all_matched:
+            raise ValueError(UNMATCHED_CANNOT_APPROVE)
+        if not plan_ready:
+            raise ValueError(NO_PLAN_CANNOT_APPROVE)
+        danger = current.risk_check is not None and current.risk_check.level == "danger"
+        if reply["action"] == APPROVE and danger:
+            raise ValueError(DANGER_NEEDS_REASON)      # 명세서 2.8절: 위험은 진행을 막고 약사 확인 필수
     return reply["action"], order
 
 
@@ -351,37 +373,39 @@ def _ask_pharmacist(deps: Deps, payload: dict[str, Any]) -> Any:
 def approve_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     """약사 승인 대기 (HITL ①). 여기서 그래프가 멈추고, 약사가 응답하면 이 노드가 처음부터 다시 돌며 응답을 받는다.
 
-    - 승인하고 약품 줄이 그대로면: approved → 조제 계획으로 간다. 위험(danger) 항목이 있으면 그대로 승인할 수 없고
-      사유를 적어 진행(manual)해야 한다. 사유는 notes에 남는다 (조제 기록의 승인 이력에 쓴다).
-    - 고치기(edit), 또는 약품 줄을 바꾼 채 승인하면: 고친 줄을 넣고 edited → 약품 매칭 · 위험 신호 대조를 다시 하고
-      다시 여기서 멈춘다. LLM 구조화는 다시 부르지 않는다.
+    - 승인하고 약품 줄이 그대로면: 승인 카드의 조제 계획을 그대로 확정하고 planned(트레이 대기)로 끝난다.
+      위험(danger) 항목이 있으면 그대로 승인할 수 없고 사유를 적어 진행(manual)해야 한다. 사유는 notes에 남는다
+      (조제 기록의 승인 이력에 쓴다). 약을 정하지 못한 줄이 있거나 계획이 없으면 진행할 수 없다 (read_reply).
+    - 고치기(edit), 또는 약품 줄을 바꾼 채 승인하면: 고친 줄을 넣고 edited → 약품 매칭 · 위험 신호 대조 · 조제 계획을
+      다시 하고 다시 여기서 멈춘다 (전체 재계산, 기능분석서 F-WEB-07). LLM 구조화는 다시 부르지 않는다.
     위험 신호 대조를 건너뛴 조제지시서면 ValueError (그래프를 잘못 이은 것이다).
     """
     payload = approval_payload(state)
     order = DispensingOrder.model_validate(state["order"])
     reply = _ask_pharmacist(deps, payload)
-    action, answered = read_reply(reply, order)
+    action, answered = read_reply(reply, order, plan_ready=state.get("plan") is not None)
     if action in (APPROVE, MANUAL) and answered.items == order.items:
         if action == MANUAL:
             reason = " ".join(str(reply["reason"]).split())
-            return {"status": "approved", "notice": f"{MANUAL_NOTICE} 사유: {reason}", "error_code": None,
+            return {"status": "planned", "notice": f"{MANUAL_NOTICE} 사유: {reason}", "error_code": None,
                     "notes": [f"위험 신호 확인 후 진행 사유: {reason}"]}
-        return {"status": "approved", "notice": APPROVED_NOTICE, "error_code": None}
+        return {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None}
     data = _order_dict(order)
     data["items"] = [line.model_dump(mode="json") for line in answered.items]
     data["risk_check"] = None
-    return {"order": data, "status": "edited", "notice": EDITED_NOTICE, "error_code": None}
+    return {"order": data, "plan": None, "status": "edited", "notice": EDITED_NOTICE, "error_code": None}
 
 
 def plan_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """승인된 조제지시서로 칸별 조제 계획(A.4)을 만든다 (REQ-AG-04).
+    """조제지시서로 칸별 조제 계획(A.4)을 만든다 (REQ-AG-04). 승인 전에 만들어 승인 카드에 함께 보인다 (명세서 v0.8 2.2절).
 
-    승인되지 않은 상태로 불리면 ValueError (그래프를 잘못 이은 것이다). 계획을 만들 수 없으면(3일 초과 · 칸당 2알 초과 등)
-    실패로 표시하고 이유를 남긴다. 그래프는 승인 대기로 돌아가 약사가 고쳐 다시 승인한다 (graph.after_plan).
+    위험 신호 대조를 거치지 않은 조제지시서로 불리면 ValueError (그래프를 잘못 이은 것이다).
+    계획을 만들 수 없으면(3일 초과 E_PLAN_RANGE · 약을 정하지 못한 줄) 계획 없이 이유와 코드를 남긴다. 그래프는 그대로
+    승인 대기로 가고, 약사는 고치기(edit)만 할 수 있다 (read_reply). 상태는 바꾸지 않는다 (승인 전 단계).
     """
-    if state.get("status") != "approved":
-        raise ValueError(f"승인되지 않은 조제지시서로는 조제 계획을 만들지 않습니다 (status={state.get('status')})")
     order = DispensingOrder.model_validate(state["order"])
+    if order.risk_check is None:
+        raise ValueError("위험 신호 대조를 거치지 않은 조제지시서로는 조제 계획을 만들지 않습니다")
     mcp_failure = None
     try:
         plan = None
@@ -393,14 +417,8 @@ def plan_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         if plan is None:
             plan = build_plan(order)
     except PlanError as e:
-        return {
-            "plan": None, "status": "failed", "notice": str(e), "error_code": e.code,
-            "errors": [f"[plan] {e.code or '-'} {e}"],
-        }
-    update: dict[str, Any] = {
-        "plan": plan.model_dump(mode="json"), "status": "planned",
-        "notice": f"조제 계획을 만들었습니다 ({plan.days}일, 약이 든 칸 {len(plan.plan)}개).",
-    }
+        return {"plan": None, "notice": str(e), "error_code": e.code, "errors": [f"[plan] {e.code or '-'} {e}"]}
+    update: dict[str, Any] = {"plan": plan.model_dump(mode="json"), "notice": None, "error_code": None}
     if mcp_failure is not None:
         update["notes"] = [f"{MCP_PLAN_FAILED_WARNING}: {mcp_failure}"]
     return update

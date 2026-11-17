@@ -14,13 +14,16 @@ AGENT_BACKEND=langgraph로 같은 화면이 돈다.
 
 처방 1건 = 대화 1개 = thread 1개다 (명세서 v0.8 REQ-WEB-07). 아래의 rx_id는 처방 ID이자 thread_id다.
 v0.8에서 글 입력 · 상담 · 복용 약 등록 · 재대조(HITL ③) · 사진 종류 되묻기는 범위에서 빠졌다 (11/16).
-메서드의 message_id · image_id · prescription_id는 웹이 아는 값을 넘긴다 (없으면 None).
+메서드의 image_id · prescription_id는 웹이 아는 값을 넘긴다 (없으면 None).
 멈춘 곳은 체크포인터(checkpoint.py)에 저장되므로 프로세스를 꺼도 같은 곳에서 이어 간다.
 HITL ①(rx_approval)의 응답은 {"action": "approve" | "edit" | "manual", "order": 조제지시서, "reason": 사유}다.
   manual: 위험(danger) 항목이 있을 때 사유를 적고 진행한다 (기능분석서 F-WEB-07 ③). 위험이 있으면 approve는 거절된다.
-  approve: 약품 줄이 그대로면 조제 계획을 만들고 끝난다 → None, stage는 await_tray.
-           계획을 만들 수 없으면(3일 초과 등) 이유를 안내에 담아 다시 승인 대기로 멈춘다.
-  edit (또는 줄을 바꾼 approve): 고친 값으로 약품 매칭 · 위험 신호 대조를 다시 하고 다시 승인 대기로 멈춘다. LLM은 다시 부르지 않는다.
+  승인 카드(Pause.payload)에는 조제 계획(plan, A.4)이 함께 있다 (v0.8: 계획은 승인 앞). 만들지 못했으면 plan은 None이고
+  error_code(E_PLAN_RANGE 등)와 notice에 이유가 있다.
+  approve: 약품 줄이 그대로면 승인 카드의 계획을 그대로 확정하고 끝난다 → None, stage는 await_tray.
+           약을 정하지 못한 줄이 있거나 계획이 없으면 거절된다 (ValueError, 고치기만 가능).
+  edit (또는 줄을 바꾼 approve): 고친 값으로 약품 매칭 · 위험 신호 대조 · 조제 계획을 다시 하고 다시 승인 대기로 멈춘다.
+           LLM은 다시 부르지 않는다.
 트레이 사진(조제 계획이 있는 처방에 send(rx_id, None, "tray", image_id=...))은 CV로 검수한다 (14단계).
   전 칸 일치면 None, stage는 inspected. ok가 아닌 칸이 있으면 HITL ②(inspection)에서 멈춘다 → Pause.
   HITL ② 응답은 {"action": "confirm"}(확인 완료 → inspected) 또는 {"action": "redo"}(재조제 → await_tray, 다시 찍은 사진을 기다림).
@@ -41,14 +44,14 @@ from agent.nodes import HITL_APPROVAL, read_reply
 from agent.schema import DispensingOrder
 
 # 승인된 조제지시서가 있는 단계 (approved_order가 돌려준다)
-APPROVED_STATUSES = ("approved", "planned", "inspecting", "inspected")
+APPROVED_STATUSES = ("planned", "inspecting", "inspected")
 STAGE_AFTER_PLAN = "await_tray"     # 조제 계획까지 끝나 트레이 사진을 기다리는 단계 (웹의 FakeGateway와 같은 이름)
 
 
 @dataclass(frozen=True)
 class Pause:
     hitl_point: str                 # 멈춘 지점 (rx_approval 등. 웹의 agent_gateway.HITL_POINTS)
-    payload: dict[str, Any]         # rx_approval: {"order": A.5, "ocr_lines": {line_id: {text, conf, bbox}}, "ocr_size", "notice"}
+    payload: dict[str, Any]         # rx_approval: {"order": A.5, "plan": A.4 | None, "error_code", "ocr_lines": {line_id: {text, conf, bbox}}, "ocr_size", "notice"}
 
 
 class AgentRunError(Exception):
@@ -85,16 +88,16 @@ class AgentApi:
         return self.graph.get_state(thread_config(rx_id))
 
     def start(self, rx_id: str, ocr: dict[str, Any] | None, photo_kind: str | None = "prescription", *,
-              message_id: str | None = None, image_id: str | None = None,
+              image_id: str | None = None,
               prescription_id: str | None = None) -> Pause | None:
         """처방전 사진으로 처방을 시작한다. 같은 ID로 두 번 시작하면 ValueError (새 처방전은 새 처방으로 연다)."""
         if self._snapshot(rx_id).values:
             raise ValueError(f"이미 시작한 처방입니다: {rx_id} (같은 처방의 다음 사진은 send로 보내세요)")
-        return self.send(rx_id, ocr, photo_kind, message_id=message_id, image_id=image_id,
+        return self.send(rx_id, ocr, photo_kind, image_id=image_id,
                          prescription_id=prescription_id)
 
     def send(self, rx_id: str, ocr: dict[str, Any] | None = None, photo_kind: str | None = None, *,
-             message_id: str | None = None, image_id: str | None = None,
+             image_id: str | None = None,
              prescription_id: str | None = None) -> Pause | None:
         """사진 한 장을 보낸다. 새 처방이면 시작하고, 있는 처방이면 이번 메시지 칸만 넣어 이어 간다 (승인된 조제지시서는 그대로).
 
@@ -103,7 +106,7 @@ class AgentApi:
         pause = self.pending(rx_id) if self._snapshot(rx_id).values else None
         if pause is not None:
             raise ValueError(f"약사 응답을 기다리는 처방입니다: {rx_id} ({pause.hitl_point}). resume을 쓰세요")
-        message = {"message_id": message_id, "image_id": image_id, "kind": photo_kind}
+        message = {"image_id": image_id, "kind": photo_kind}
         run_message(self.graph, rx_id, message, ocr, prescription_id)
         return self._after_run(rx_id)
 
@@ -130,7 +133,7 @@ class AgentApi:
         if pause is None or pause.hitl_point != hitl_point:
             raise ValueError(f"멈춰 있는 지점이 없거나 다릅니다: {rx_id} ({hitl_point})")
         if hitl_point == HITL_APPROVAL:
-            read_reply(reply, DispensingOrder.model_validate(pause.payload["order"]))
+            read_reply(reply, DispensingOrder.model_validate(pause.payload["order"]), plan_ready=pause.payload.get("plan") is not None)
         elif hitl_point == HITL_INSPECTION:
             read_inspection_reply(reply)
 
@@ -154,7 +157,7 @@ class AgentApi:
     def result(self, rx_id: str) -> dict[str, Any]:
         """지금 저장된 상태에서 웹이 쓰는 칸만. 멈춰 있는 동안의 조제지시서는 pending의 payload에 있다."""
         values = self._snapshot(rx_id).values
-        keys = ("conversation_id", "prescription_id", "message_id", "status", "flow", "route", "order", "plan",
+        keys = ("conversation_id", "prescription_id", "status", "flow", "route", "order", "plan",
                 "inspection", "notice", "error_code", "notes")
         return {key: values.get(key) for key in keys}
 

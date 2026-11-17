@@ -56,7 +56,9 @@ def test_it_shows_the_final_state_of_one_sample(graph):
     code, text = run([], graph)                                      # 기본은 첫 샘플(rx_001)
     assert code == 0
     assert f"[rx_001] 상태: {WAITING} | 흐름: prescription" in text
-    assert "안내: 약사 승인을 기다립니다. 확인이 필요한 약품이 2줄 있습니다." in text
+    assert ("안내: 조제 계획을 만들 수 없습니다. 약을 정하지 못한 줄이 있습니다: 2번째 약품(알모란정)"
+            " 고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다. 확인이 필요한 약품이 2줄 있습니다.") in text
+    assert "조제 계획: 만들 수 없음. 고친 뒤(edit) 승인할 수 있습니다" in text
     assert "경로: rule | 교부번호: 2026년11월03일 00012호" in text
     assert "1. [확인] 타이레놀정 5oOmg | 코드 900000011 -> 품목 202106092 (name) | 1개 x 3회 x 3일 | morning, noon, evening" in text
     assert "2. [확인] 알모란정 | 코드 900000031 -> 품목 - (none)" in text
@@ -82,27 +84,31 @@ def test_it_tells_which_drugs_could_not_be_checked(graph):
     assert "경고: 알모란정: 품목기준코드를 정하지 못해 성분 중복을 대조하지 못했습니다." in text
 
 
-def test_it_says_the_plan_comes_after_approval(graph):
-    _, text = run(["rx_004"], graph)
-    assert "조제 계획: 약사가 승인한 뒤에 만듭니다" in text
+def test_the_plan_is_shown_on_the_approval_card_before_approval(graph):
+    _, text = run(["rx8_01"], graph)
+    assert "    조제 계획: (승인 카드에 보임)\n      아침: 1일 타이레놀정 500mg 1 · 게보린정 1" in text
 
 
-def test_approve_goes_on_and_shows_the_plan(graph):
+def test_approve_confirms_the_plan_shown_on_the_card(graph):
     code, text = run(["rx8_01", "--approve"], graph)
     assert code == 0
     first, second = text.split("    -> 약사가 화면의 조제지시서를 그대로 승인합니다\n")
-    assert f"[rx8_01] 상태: {WAITING}" in first and "조제 계획: 약사가 승인한 뒤에 만듭니다" in first
-    assert second.startswith("[rx8_01] 상태: planned | 흐름: prescription | 순서: prescription\n    안내: 조제 계획을 만들었습니다 (3일, 약이 든 칸 9개).")
+    assert f"[rx8_01] 상태: {WAITING}" in first and "조제 계획: (승인 카드에 보임)" in first
+    assert second.startswith("[rx8_01] 상태: planned | 흐름: prescription | 순서: prescription\n    안내: 약사가 승인했습니다.")
     assert "    조제 계획:\n      아침: 1일 타이레놀정 500mg 1 · 게보린정 1 | 2일 타이레놀정 500mg 1 · 게보린정 1 | 3일 타이레놀정 500mg 1 · 게보린정 1" in second
-    assert "약사가 승인한 뒤에 만듭니다" not in second
 
 
-def test_approving_a_prescription_that_cannot_be_planned_stops_again_with_the_reason(graph):
-    code, text = run(["rx8_07", "--approve"], graph)
+def test_a_prescription_whose_plan_cannot_be_made_is_not_approved(graph):
+    code, text = run(["rx8_18", "--approve"], graph)                  # 투약 4일 (트레이는 3일까지)
     assert code == 0                                                  # 약사에게 돌아간 것은 실패가 아니다
-    second = text.split("그대로 승인합니다\n")[1]
-    assert second.startswith(f"[rx8_07] 상태: {WAITING}")
-    assert "안내: 조제 계획을 만들 수 없습니다. 트레이 칸당 최대 2알을 넘습니다: 1~3일 아침·점심·저녁 3알 고친 뒤" in second
+    assert "조제 계획: 만들 수 없음 (E_PLAN_RANGE). 고친 뒤(edit) 승인할 수 있습니다" in text
+    assert "-> 그대로 승인할 수 없습니다: 조제 계획을 만들지 못해 승인할 수 없습니다." in text
+    assert "그대로 승인합니다" not in text
+
+
+def test_a_line_without_an_item_code_is_not_approved(graph):
+    _, text = run(["rx_001", "--approve"], graph)
+    assert "-> 그대로 승인할 수 없습니다: 약을 정하지 못한 줄(품목기준코드 없음)이 있어 승인할 수 없습니다." in text
 
 
 def test_the_demo_prescriptions_are_matched_by_their_printed_code(graph):
@@ -234,7 +240,7 @@ def test_the_screen_output_can_be_written_in_cp949(graph):
     """윈도우 터미널(cp949)에서 글자가 깨지거나 멈추지 않는다."""
     outputs = [run(argv, graph)[1] for argv in (["--all"], ["--no-ocr"], ["--kind", "tray", "--no-ocr"], ["--kind", "receipt"])]
     outputs.append(run(["--all", "--subgraph"], build_prescription_graph(dictionary=DICT, structure=rule_only, api=None, checkpointer=memory_checkpointer()))[1])
-    outputs.append(run(["rx8_07", "--approve"], build_graph(dictionary=DICT, structure=rule_only, api=None, checkpointer=memory_checkpointer()))[1])
+    outputs.append(run(["rx8_18", "--approve"], build_graph(dictionary=DICT, structure=rule_only, api=None, checkpointer=memory_checkpointer()))[1])
     for text in outputs:
         text.encode("cp949")                                          # 못 쓰는 글자가 있으면 여기서 UnicodeEncodeError
 

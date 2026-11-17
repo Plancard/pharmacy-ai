@@ -9,15 +9,15 @@
     prescription   처방 서브그래프 (아래)
     tray           트레이 검수 (CV deps.inspect). ok가 아닌 칸이 있으면 tray_review에서 약사 확인 (14단계)
 
-처방 서브그래프: 처방전 한 장을 승인 대기까지 데려간다.
+처방 서브그래프: 처방전 한 장을 승인까지 데려간다 (명세서 v0.8 2.2절: 조제 계획은 승인 앞).
 
-    START -> structure -+-> match -> risk -> approve -+-> make_plan -+-> END        (승인 → 조제 계획)
-                        |      ^                      |              +-> approve    (계획을 못 만듦: 약사에게 돌아감)
-                        |      +----------------------+ (edited: 약사가 고침 → 다시 매칭 · 대조 → 다시 승인 대기)
-                        +-> END                                                     (구조화 실패)
+    START -> structure -+-> match -> risk -> make_plan -> approve -+-> END     (승인: 승인 카드의 계획 확정 → planned)
+                        |      ^                                   |
+                        |      +-----------------------------------+ (edited: 약사가 고침 → 다시 매칭 · 대조 · 계획 → 다시 승인 대기)
+                        +-> END                                              (구조화 실패)
 
 - 메시지 하나는 슈퍼바이저를 한 번만 지난다. 상위 그래프의 화살표는 FLOW_ORDER의 앞에서 뒤로만 간다 (되돌아가는 길이 없다).
-  처방 서브그래프에서 되돌아가는 길은 승인 대기를 거치는 두 갈래뿐이다(고치기 · 계획 실패). 승인 대기에서 멈추므로 끝없이 돌지 않는다.
+  처방 서브그래프에서 되돌아가는 길은 승인 대기에서 약사가 고칠 때 하나뿐이다. 승인 대기에서 멈추므로 끝없이 돌지 않는다.
 - 노드와 화살표는 아래 표(PRESCRIPTION_CHART · TOP_CHART)에 적혀 있고, 만드는 함수는 그 표를 LangGraph에 옮기기만 한다.
   그래서 LangGraph 없이도 표만으로 연결을 시험할 수 있다 (tests/agent/test_graph.py).
 - 처방 서브그래프는 혼자서도 돌릴 수 있다 (build_prescription_graph · run_prescription). 상위 그래프의 'prescription' 노드는
@@ -28,7 +28,8 @@
   웹은 api.py의 start · send · pending · resume · stage로 이것을 쓴다.
 - 같은 처방의 두 번째 이후 메시지(트레이 사진)는 이번 메시지 칸만 넣는다 (state.message_input).
   처음 상태를 다시 넣으면 체크포인터가 앞서 승인된 조제지시서(order)와 조제 계획(plan)을 None으로 덮어쓴다.
-- 조제 계획(make_plan)은 승인된 조제지시서로만 만든다 (정할 것 10).
+- 조제 계획(make_plan)은 승인 전에 만들어 승인 카드에 보인다 (v0.8). 만들지 못하면(E_PLAN_RANGE 등) 계획 없이 승인 대기로 가고
+  약사는 고치기만 할 수 있다. 승인하면 그 계획이 그대로 확정된다 (다시 만들지 않는다).
 - 트레이 검수는 두 노드다: tray가 CV를 한 번 부르고, tray_review가 멈춘다. interrupt에서 이어 갈 때 노드가 처음부터 다시 돌기 때문에
   한 노드에 두면 약사가 응답할 때마다 CV 추론을 다시 하고, 결과가 달라질 수도 있다.
 """
@@ -137,28 +138,23 @@ def after_structure(state: dict[str, Any]) -> str:
 
 
 def after_approve(state: dict[str, Any]) -> str:
-    """승인되면 조제 계획으로, 약사가 고쳤으면 다시 매칭으로 간다. 그 밖은 끝낸다."""
+    """약사가 고쳤으면 다시 매칭으로 간다. 승인(planned)이든 그 밖이든 끝낸다."""
     if state.get("order") is None:
         return "end"
-    return {"approved": "make_plan", "edited": "match"}.get(state.get("status"), "end")
-
-
-def after_plan(state: dict[str, Any]) -> str:
-    """계획을 만들었으면 끝, 못 만들었으면 약사에게 돌아간다 (승인 대기로)."""
-    return "end" if state.get("status") == "planned" else "approve"
+    return "match" if state.get("status") == "edited" else "end"
 
 
 PRESCRIPTION_CHART = Chart(
     entry="structure",
-    nodes=("structure", "match", "risk", "approve", "make_plan"),
+    nodes=("structure", "match", "risk", "make_plan", "approve"),
     edges=(
         ("match", "risk"),
-        ("risk", "approve"),
+        ("risk", "make_plan"),
+        ("make_plan", "approve"),
     ),
     branches={
         "structure": (after_structure, {"match": "match", "end": END}),
-        "approve": (after_approve, {"make_plan": "make_plan", "match": "match", "end": END}),
-        "make_plan": (after_plan, {"end": END, "approve": "approve"}),
+        "approve": (after_approve, {"match": "match", "end": END}),
     },
 )
 
@@ -366,7 +362,7 @@ def run_message(
     ocr: dict[str, Any] | None = None,
     prescription_id: str | None = None,
 ) -> dict[str, Any]:
-    """메시지 하나({message_id, image_id, kind})를 상위 그래프에 넣어 끝까지(또는 멈출 때까지) 돌린 상태.
+    """메시지 하나({image_id, kind})를 상위 그래프에 넣어 끝까지(또는 멈출 때까지) 돌린 상태.
 
     처방의 첫 메시지면 initial_state, 이미 있는 처방이면 이번 메시지 칸만(message_input) 넣는다.
     멈췄으면 돌려준 값에 '__interrupt__'가 들어 있다. 멈춘 내용은 api.py가 checkpointer에서 다시 읽는다.

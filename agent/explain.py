@@ -3,6 +3,7 @@
     explain_input(findings, names, passages)     LLM에 보낼 글 (항목마다 단계 · 유형 · 약 · 성분 · 금기 사유 · 규칙 문장)
     apply_explanations(findings, got, names)     LLM 결과를 거른 뒤 항목의 explanation에 담은 새 목록
     explain_findings(findings, names, explain_fn, passages) -> (새 목록, 안내)   위 둘을 합친 것. 실패해도 항목은 그대로
+    attach_evidence(findings, passages)         항목마다 관련 약의 근거 조각을 evidence(A.5)에 담는다 (설명 성공과 상관없이)
 
 규칙 (명세서 2.8절 · REQ-AG-07: 분류는 규칙, LLM은 설명만)
 - 단계(level) · 유형(type) · 관련 약(item_codes) · 규칙 문장(message)은 그대로다. 설명은 explanation 칸에만 들어간다.
@@ -19,7 +20,7 @@ from typing import Any, Callable, Sequence
 from agent.errors import StructureError
 from agent.rag import Passage
 from agent.risk import LEVEL_LABELS, TYPE_LABELS
-from agent.schema import RiskFinding
+from agent.schema import Evidence, RiskFinding
 
 ExplainFn = Callable[[str], dict[str, Any]]
 
@@ -27,6 +28,8 @@ MIN_CHARS, MAX_CHARS = 15, 300
 DOWNPLAY = ("안전합니다", "안전한", "괜찮", "문제없", "문제 없", "걱정하지", "무시해도", "해당 없음")
 _LEVEL_SAID = re.compile(r"(주의|경고|위험)\s*단계")
 FAILED_NOTE = "위험 신호 AI 설명을 만들지 못해 규칙 문장만 보였습니다"
+EXCERPT_CHARS = 200        # 근거 발췌(A.5 evidence.excerpt)로 보이는 글자 수
+EVIDENCE_PER_FINDING = 2   # 항목 하나에 붙이는 근거 수
 
 
 def explain_input(findings: Sequence[RiskFinding], names: dict[str, str], passages: Sequence[Passage] = ()) -> str:
@@ -80,17 +83,48 @@ def apply_explanations(findings: Sequence[RiskFinding], got: dict[str, Any], nam
     return out
 
 
+def evidence_item(title: str, source: str, url: str | None, text: str) -> Evidence:
+    """근거 하나 (명세서 v0.8 A.5: 제목 · 출처 · 발췌). 출처에는 사람이 열어 볼 수 있는 주소를 함께 적는다."""
+    excerpt = " ".join(str(text).split())
+    if len(excerpt) > EXCERPT_CHARS:
+        excerpt = excerpt[:EXCERPT_CHARS].rstrip() + "…"
+    return Evidence(title=title, source=f"{source} ({url})" if url else source, excerpt=excerpt or "-")
+
+
+def passage_evidence(p: Passage) -> Evidence:
+    return evidence_item(f"{p.chunk.item_name or p.chunk.item_code} · {p.chunk.section}", p.chunk.source or "허가정보",
+                         p.chunk.url or None, p.chunk.text)
+
+
+def attach_evidence(findings: Sequence[RiskFinding], passages: Sequence[Passage]) -> list[RiskFinding]:
+    """근거가 아직 없는 항목에 그 항목의 약들에서 찾은 조각을 담는다 (항목당 최대 EVIDENCE_PER_FINDING개).
+
+    다른 약에서 찾은 조각(focused False)은 담지 않는다. 담을 것이 없으면 빈 목록 그대로 (화면은 '근거 없음').
+    단계 · 유형 · 규칙 문장 · 설명은 그대로다 (근거는 덧붙이기만 한다).
+    """
+    out = []
+    for f in findings:
+        if f.evidence:
+            out.append(f)
+            continue
+        mine = [p for p in passages if p.focused and p.chunk.item_code in f.item_codes][:EVIDENCE_PER_FINDING]
+        out.append(f.model_copy(update={"evidence": [passage_evidence(p) for p in mine]}) if mine else f)
+    return out
+
+
 def explain_findings(findings: Sequence[RiskFinding], names: dict[str, str], explain_fn: ExplainFn | None,
                      passages: Sequence[Passage] = ()) -> tuple[list[RiskFinding], str | None]:
-    """(설명을 붙인 항목들, 안내). 항목이 없거나 explain_fn이 없으면 그대로. 실패하면 그대로 + 안내."""
+    """(설명 · 근거를 붙인 항목들, 안내). explain_fn이 없거나 실패해도 근거(passages)는 붙인다. 실패하면 + 안내."""
     findings = list(findings)
-    if not findings or explain_fn is None:
+    if not findings:
         return findings, None
+    if explain_fn is None:
+        return attach_evidence(findings, passages), None
     try:
         got = explain_fn(explain_input(findings, names, passages))
     except StructureError as e:
-        return findings, f"{FAILED_NOTE} ({e})."
-    return apply_explanations(findings, got, names), None
+        return attach_evidence(findings, passages), f"{FAILED_NOTE} ({e})."
+    return attach_evidence(apply_explanations(findings, got, names), passages), None
 
 
 def passages_for(rag, findings: Sequence[RiskFinding], names: dict[str, str], per_finding: int = 2, limit: int = 6):

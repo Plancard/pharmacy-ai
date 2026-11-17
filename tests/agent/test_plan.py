@@ -6,7 +6,7 @@ import pytest
 
 from agent.config import RESOURCES_DIR
 from agent.errors import E_PLAN_RANGE
-from agent.plan import MAX_PER_CELL, TIME_LABELS, PlanError, build_plan, plan_lines
+from agent.plan import TIME_LABELS, PlanError, build_plan, plan_lines
 from agent.schema import TIME_SLOTS, TRAY_DAYS, DispensingOrder, DrugLine, Plan
 
 SAMPLES = RESOURCES_DIR / "samples"
@@ -51,23 +51,18 @@ def test_every_plannable_sample_gives_what_its_order_asks_for(name):
     Plan.model_validate(plan.model_dump(mode="json"))                # A.4 검사를 통과한다
 
 
-def test_the_flagged_sample_cannot_be_planned_for_two_reasons():
-    """s04는 알모탄정의 약을 정하지 못했고, 아침 · 저녁 칸에 세 약이 1알씩 들어가 칸당 2알도 넘는다."""
+def test_the_flagged_sample_cannot_be_planned_because_a_drug_is_not_decided():
+    """s04는 알모탄정의 약을 정하지 못했다 (칸당 알 수는 제한이 없어 세 약이 한 칸에 들어가도 된다)."""
     with pytest.raises(PlanError) as error:
         build_plan(DispensingOrder.model_validate(load("a5_order", "s04_flagged")))
-    assert error.value.code == E_PLAN_RANGE
-    assert str(error.value).endswith("/ 약을 정하지 못한 줄이 있습니다: 4번째 약품(알모탄정)")
-    assert "트레이 칸당 최대 2알을 넘습니다: 1~3일 아침·저녁 3알" in str(error.value)
+    assert error.value.code is None
+    assert str(error.value) == "조제 계획을 만들 수 없습니다. 약을 정하지 못한 줄이 있습니다: 4번째 약품(알모탄정)"
 
 
-def test_sample_s03_cannot_be_planned_because_three_pills_go_in_a_cell():
-    """s03은 프론크논 1알 + 뮤코다인 2알이 아침 · 저녁 칸에 함께 들어가 칸당 2알(명세서 2.7절)을 넘는다."""
-    with pytest.raises(PlanError) as error:
-        build_plan(DispensingOrder.model_validate(load("a5_order", "s03_no_risk")))
-    assert error.value.code == E_PLAN_RANGE
-    assert str(error.value) == (
-        "조제 계획을 만들 수 없습니다. 트레이 칸당 최대 2알을 넘습니다: 1~3일 아침·저녁 3알"
-    )
+def test_sample_s03_puts_three_pills_in_a_cell():
+    """s03은 프론크논 1알 + 뮤코다인 2알이 아침 · 저녁 칸에 함께 들어간다 (칸당 알 수 제한 없음, 명세서 2.7절 11/12)."""
+    plan = build_plan(DispensingOrder.model_validate(load("a5_order", "s03_no_risk")))
+    assert max(sum(i.count for i in c.items) for c in plan.plan) == 3
 
 
 # ------------------------------------------------------------ 펼치기
@@ -143,72 +138,17 @@ def test_every_problem_is_listed_and_the_range_code_wins():
     assert error.value.code == E_PLAN_RANGE
     assert str(error.value) == (
         "조제 계획을 만들 수 없습니다. 투약 일수가 트레이(3일)를 넘습니다: 2번째 약품(타이레놀정500mg) 5일, 3번째 약품(라마바정) 4일"
-        " / 트레이 칸당 최대 2알을 넘습니다: 1~3일 아침 3알"
         " / 약을 정하지 못한 줄이 있습니다: 1번째 약품(가나다정), 3번째 약품(라마바정)"
     )
 
 
-# ------------------------------------------------------------ 칸당 알 수 (명세서 2.7절)
+# ------------------------------------------------------------ 칸당 알 수: 제한 없음 (명세서 2.7절, 11/12 삭제)
 
 
-def test_two_pills_in_a_cell_is_the_most_a_cell_holds():
-    assert MAX_PER_CELL == 2
-    plan = build_plan(order_of(line(days=1), line(GEVORIN, "게보린정", days=1)))
-    assert cells(plan) == [(1, "morning", [(TYLENOL, 1), (GEVORIN, 1)])]
-    assert cells(build_plan(order_of(line(MUCODYNE, "뮤코다인캡슐200mg", count=2, days=1)))) == [(1, "morning", [(MUCODYNE, 2)])]
-
-
-def test_three_pills_of_one_drug_in_a_cell_is_the_range_error():
-    with pytest.raises(PlanError) as error:
-        build_plan(order_of(line(count=3, times=("morning", "bedtime"), days=1)))
-    assert error.value.code == E_PLAN_RANGE
-    assert str(error.value) == "조제 계획을 만들 수 없습니다. 트레이 칸당 최대 2알을 넘습니다: 1일 아침·취침 전 3알"
-
-
-def test_pills_of_different_drugs_in_the_same_cell_are_added_up():
-    with pytest.raises(PlanError, match="1일 아침 3알"):
-        build_plan(order_of(line(days=1), line(GEVORIN, "게보린정", days=1), line(MUCODYNE, "뮤코다인캡슐200mg", days=1)))
-
-
-def test_only_the_shared_cells_are_too_full():
-    with pytest.raises(PlanError) as error:
-        build_plan(order_of(line(count=2, times=("morning", "noon"), days=2), line(GEVORIN, "게보린정", times=("noon",), days=1)))
-    assert str(error.value).endswith("트레이 칸당 최대 2알을 넘습니다: 1일 점심 3알")
-
-
-def test_a_full_cell_from_an_unknown_drug_still_counts():
-    with pytest.raises(PlanError) as error:
-        build_plan(order_of(line(count=2, days=1), line(None, "가나다정", days=1)))
-    assert error.value.code == E_PLAN_RANGE
-    assert str(error.value) == (
-        "조제 계획을 만들 수 없습니다. 트레이 칸당 최대 2알을 넘습니다: 1일 아침 3알"
-        " / 약을 정하지 못한 줄이 있습니다: 2번째 약품(가나다정)"
-    )
-
-
-def test_days_beyond_the_tray_are_not_counted_as_full_cells():
-    with pytest.raises(PlanError) as error:
-        build_plan(order_of(line(days=5)))
-    assert "칸당" not in str(error.value)
-
-
-@pytest.mark.parametrize("lines, said", [
-    ((("morning", 3, 3), ("evening", 3, 3)), "1~3일 아침·저녁 3알"),
-    ((("morning", 3, 1),), "1일 아침 3알"),
-    ((("morning", 3, 2), ("noon", 4, 3)), "1~2일 아침 3알, 1~3일 점심 4알"),
-    ((("noon", 3, 3), ("morning", 3, 3)), "1~3일 아침·점심 3알"),          # 시점 순서로
-])
-def test_crowded_cells_are_grouped_by_days_and_pills(lines, said):
-    order = order_of(*(line(count=count, times=(time,), days=days) for time, count, days in lines))
-    with pytest.raises(PlanError) as error:
-        build_plan(order)
-    assert str(error.value).endswith(f"트레이 칸당 최대 2알을 넘습니다: {said}")
-
-
-def test_days_that_do_not_follow_each_other_are_listed():
-    from agent.plan import _days_text
-
-    assert (_days_text([1, 3]), _days_text([2]), _days_text([1, 2, 3]), _days_text([2, 3])) == ("1·3일", "2일", "1~3일", "2~3일")
+@pytest.mark.parametrize("count", [3, 5])
+def test_a_cell_can_hold_any_number_of_pills(count):
+    plan = build_plan(order_of(line(count=count, times=("morning", "bedtime"), days=1), line(GEVORIN, "게보린정", days=1)))
+    assert cells(plan) == [(1, "morning", [(TYLENOL, count), (GEVORIN, 1)]), (1, "bedtime", [(TYLENOL, count)])]
 
 
 # ------------------------------------------------------------ 값의 성질

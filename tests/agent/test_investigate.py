@@ -137,7 +137,9 @@ def test_the_evidence_tool_searches_only_the_flagged_drugs_and_numbers_the_resul
     (found, note) = investigate_risks([DUP], NAMES, local_evidence(INDEX), chat, PROMPT)
     results = json.loads(chat.seen[1][0][-1]["content"])["results"]
     assert [r["drug"] for r in results] == ["타이레놀정500mg"] and results[0]["id"] == "E1"   # 걸리지 않은 약(999999999)은 찾지 않는다
-    assert found[0].explanation == f"{GOOD} (근거: 타이레놀정500mg · 상호작용)"                   # 없는 번호(E9)는 버린다
+    assert found[0].explanation == GOOD                                                       # 근거는 설명 뒤가 아니라 evidence 칸에 (A.5)
+    assert [e.title for e in found[0].evidence] == ["타이레놀정500mg · 상호작용"]                # 없는 번호(E9)는 버린다
+    assert "아세트아미노펜 과량" in found[0].evidence[0].excerpt
     assert (found[0].level, found[0].message) == (DUP.level, DUP.message)
     assert note == "AI 위험 신호 조사: search_evidence(성공)"
     assert "[1] 단계: 경고" in chat.seen[0][0][1]["content"]
@@ -200,7 +202,7 @@ def test_the_risk_node_uses_the_investigation_and_falls_back_to_the_one_shot_exp
                     answer({"items": [{"index": 1, "text": GOOD, "evidence": ["E1"]}]}))
     update = risk_node({"order": order}, deps(rag=INDEX, react=chat, explain=lambda t: pytest.fail("조사가 끝났으면 부르지 않는다")))
     finding = update["order"]["risk_check"]["findings"][0]
-    assert finding["explanation"].startswith(GOOD) and "(근거: " in finding["explanation"]
+    assert finding["explanation"] == GOOD and finding["evidence"] and set(finding["evidence"][0]) == {"title", "source", "excerpt"}
     assert finding["level"] == "warning" and update["notes"] == ["AI 위험 신호 조사: search_evidence(성공)"]
 
     broken = Scripted({"content": None, "tool_calls": []})
@@ -260,7 +262,7 @@ def test_the_risk_node_searches_evidence_on_the_mcp_server():
         update = risk_node({"order": order}, deps(tools=tools, react=chat))      # deps.rag 없이 서버의 색인으로
     results = json.loads(chat.seen[1][0][-1]["content"])["results"]
     assert results and {r["drug"] for r in results} <= {"타이레놀정500mg", "게보린정"} and results[0]["id"] == "E1"
-    assert "(근거: " in update["order"]["risk_check"]["findings"][0]["explanation"]
+    assert update["order"]["risk_check"]["findings"][0]["evidence"]                    # 서버에서 찾은 근거가 A.5 evidence에 담긴다
 
 
 def test_an_old_mcp_server_without_the_tools_falls_back_to_direct_calls():

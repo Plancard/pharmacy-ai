@@ -31,7 +31,6 @@ from agent.graph import (
     TOP_CHART,
     _subgraph_step,
     after_approve,
-    after_plan,
     after_structure,
     after_supervisor,
     build_graph,
@@ -125,11 +124,10 @@ def test_every_node_leads_to_the_end(chart):
 
 
 def without_the_ways_back_through_the_approval(chart):
-    """승인 대기로 돌아가는 두 갈래(고치기: approve -> match, 계획 실패: make_plan -> approve)를 뺀 다음 노드 표."""
+    """승인 대기에서 돌아가는 한 갈래(고치기: approve -> match)를 뺀 다음 노드 표."""
     nxt = chart.successors()
     if "approve" in nxt:
         nxt["approve"] = nxt["approve"] - {"match"}
-        nxt["make_plan"] = nxt["make_plan"] - {"approve"}
     return nxt
 
 
@@ -151,9 +149,9 @@ def test_the_only_ways_back_go_through_the_approval_so_the_supervisor_runs_once_
     visit(chart.entry)
 
 
-def test_the_ways_back_are_exactly_the_edit_and_the_failed_plan():
+def test_the_only_way_back_is_the_edit():
     nxt = PRESCRIPTION_CHART.successors()
-    assert "match" in nxt["approve"] and "approve" in nxt["make_plan"]
+    assert nxt["approve"] == {"match", END} and nxt["make_plan"] == {"approve"}   # 계획 실패도 그대로 승인 대기로 간다
 
 
 def test_every_node_function_belongs_to_one_graph_and_the_subgraph_node_has_none():
@@ -182,49 +180,36 @@ def test_the_supervisor_can_start_any_flow_and_the_flows_only_go_forward():
     assert TOP_CHART.nodes == ("supervisor", "prescription", "tray", "tray_review")   # v0.8: 처방 · 트레이 흐름만
 
 
-def test_the_prescription_flow_is_a_subgraph_that_goes_structure_match_risk_approve_plan():
+def test_the_prescription_flow_is_a_subgraph_that_goes_structure_match_risk_plan_approve():
     assert "prescription" in TOP_CHART.nodes and TOP_CHART.edges == ()
     assert PRESCRIPTION_CHART.branches["structure"][1] == {"match": "match", "end": END}
-    assert PRESCRIPTION_CHART.branches["approve"][1] == {"make_plan": "make_plan", "match": "match", "end": END}
-    assert PRESCRIPTION_CHART.branches["make_plan"][1] == {"end": END, "approve": "approve"}
-    assert PRESCRIPTION_CHART.edges == (("match", "risk"), ("risk", "approve"))
-    assert PRESCRIPTION_CHART.nodes == ("structure", "match", "risk", "approve", "make_plan")
+    assert PRESCRIPTION_CHART.branches["approve"][1] == {"match": "match", "end": END}
+    assert PRESCRIPTION_CHART.edges == (("match", "risk"), ("risk", "make_plan"), ("make_plan", "approve"))
+    assert PRESCRIPTION_CHART.nodes == ("structure", "match", "risk", "make_plan", "approve")
 
 
-def test_the_plan_can_only_be_reached_through_the_approval():
-    nxt = PRESCRIPTION_CHART.successors()
-    assert [name for name, targets in nxt.items() if "make_plan" in targets] == ["approve"]
+def test_the_plan_is_made_right_before_the_approval():
+    nxt = PRESCRIPTION_CHART.successors()                              # 명세서 v0.8 2.2절: 계획은 승인 카드에 함께 보인다
+    assert [name for name, targets in nxt.items() if "make_plan" in targets] == ["risk"]
+    assert [name for name, targets in nxt.items() if "approve" in targets] == ["make_plan"]
 
 
 @pytest.mark.parametrize("state, step", [
-    ({"status": "approved", "order": {"items": []}}, "make_plan"),
-    ({"status": "edited", "order": {"items": []}}, "match"),            # 약사가 고쳤으면 다시 매칭 · 대조
+    ({"status": "edited", "order": {"items": []}}, "match"),            # 약사가 고쳤으면 다시 매칭 · 대조 · 계획
+    ({"status": "planned", "order": {"items": []}}, "end"),             # 승인: 승인 카드의 계획을 확정하고 끝
     ({"status": "checked", "order": {"items": []}}, "end"),
-    ({"status": "approved", "order": None}, "end"),
     ({"status": "edited", "order": None}, "end"),
-    ({"status": "approved"}, "end"),
-    ({"status": "planned", "order": {"items": []}}, "end"),
+    ({"status": "planned"}, "end"),
     ({}, "end"),
 ])
-def test_after_approve_goes_to_the_plan_when_approved_and_back_to_matching_when_edited(state, step):
+def test_after_approve_ends_when_approved_and_goes_back_to_matching_when_edited(state, step):
     assert after_approve(state) == step
     assert step in PRESCRIPTION_CHART.branches["approve"][1]
 
 
-@pytest.mark.parametrize("state, step", [
-    ({"status": "planned"}, "end"),
-    ({"status": "failed"}, "approve"),                                  # 계획을 못 만들면 약사에게 돌아간다
-    ({"status": "approved"}, "approve"),
-    ({}, "approve"),
-])
-def test_after_the_plan_it_ends_only_when_the_plan_was_made(state, step):
-    assert after_plan(state) == step
-    assert step in PRESCRIPTION_CHART.branches["make_plan"][1]
-
-
 def test_the_risk_check_sits_between_matching_and_approval():
     nxt = PRESCRIPTION_CHART.successors()
-    assert nxt["match"] == {"risk"} and nxt["risk"] == {"approve"}      # 매칭을 거친 약만 대조하고, 대조를 거친 것만 승인 자리로 간다
+    assert nxt["match"] == {"risk"} and nxt["risk"] == {"make_plan"}    # 매칭을 거친 약만 대조하고, 대조 · 계획을 거친 것만 승인 자리로 간다
 
 
 @pytest.mark.parametrize("route, step", [
@@ -334,7 +319,7 @@ def approve(compiled, prescription_id, state):
 def test_a_sample_prescription_stops_at_the_approval(backend, calls, sample_id):
     compiled = make()
     state = send(compiled, f"P-{sample_id}", load("cv_a1", sample_id))
-    assert calls == ["supervisor", "structure", "match", "risk", "approve"]
+    assert calls == ["supervisor", "structure", "match", "risk", "make_plan", "approve"]
     shown = paused(state)
     assert shown["hitl_point"] == "rx_approval"
     order = DispensingOrder.model_validate(shown["order"])
@@ -343,9 +328,10 @@ def test_a_sample_prescription_stops_at_the_approval(backend, calls, sample_id):
     # 가상 처방전의 인쇄 코드(9000000xx)는 품목기준코드가 아니라서, 모든 줄이 이름 단계로 가고 약사 확인이 붙는다
     assert len(order.flagged_indices) == len(order.items)
     assert order.risk_check is not None and order.risk_check.scope == "rx_only"
-    assert shown["notice"].startswith(f"약사 승인을 기다립니다. 확인이 필요한 약품이 {len(order.items)}줄 있습니다.")
+    assert f"약사 승인을 기다립니다. 확인이 필요한 약품이 {len(order.items)}줄 있습니다." in shown["notice"]
+    assert (shown["plan"] is not None) is order.all_matched              # 약을 정하지 못한 줄이 있으면 계획 없이 이유만
     order.check_ready_for_web()                                         # 승인 화면에 넘겨도 되는 조제지시서다
-    # 멈춘 동안의 상태는 처방 서브그래프에 들어가기 전이다 (진짜 LangGraph의 규칙). 계획은 아직 없다
+    # 멈춘 동안의 상위 상태는 처방 서브그래프에 들어가기 전이다 (진짜 LangGraph의 규칙). 계획은 승인 카드(shown)에 있다
     assert (state["flow"], state["status"], state["order"], state["plan"]) == ("prescription", "received", None, None)
     snapshot = compiled.get_state(thread_config(f"P-{sample_id}"))
     assert [i.value for i in snapshot.interrupts] == [shown]
@@ -453,17 +439,19 @@ def test_a_drug_that_could_not_be_checked_is_told_to_the_pharmacist(backend):
 # ------------------------------------------------------------ 승인 · 고치기 · 조제 계획 (HITL ①)
 
 
-def test_approving_goes_on_to_the_plan(backend, calls):
+def test_approving_confirms_the_plan_shown_on_the_approval(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
     state = send(compiled, "P0001", load("cv_a1", "rx_001"))
+    shown = paused(state)
     calls.clear()
     final = approve(compiled, "P0001", state)
-    assert calls == ["approve", "make_plan"]                            # 구조화 · 매칭 · 대조는 다시 돌지 않는다
+    assert calls == ["approve"]                                          # 구조화 · 매칭 · 대조 · 계획은 다시 돌지 않는다
     assert paused(final) is None
     assert (final["status"], final["error_code"], final["errors"]) == ("planned", None, [])
     plan = Plan.model_validate(final["plan"])
     assert (plan.prescription_id, plan.days, len(plan.plan)) == ("P0001", 3, 3)
-    assert final["notice"] == "조제 계획을 만들었습니다 (3일, 약이 든 칸 3개)."
+    assert final["plan"] == shown["plan"]                                # 승인 카드에 보인 계획을 그대로 확정
+    assert final["notice"] == "약사가 승인했습니다."
     assert final["order"]["risk_check"]["level"] == "warning"           # 승인한 조제지시서가 상태에 남는다
     snapshot = compiled.get_state(thread_config("P0001"))
     assert snapshot.interrupts == () and snapshot.values["status"] == "planned"
@@ -485,36 +473,35 @@ def test_editing_runs_matching_and_checking_again_and_stops_again(backend, calls
     order["items"] = order["items"][:1]                                # 게보린을 지운다
     calls.clear()
     state = resume_run(compiled, "P0001", {"action": "edit", "order": order})
-    assert calls == ["approve", "match", "risk", "approve"]            # 구조화(LLM)는 다시 부르지 않는다
+    assert calls == ["approve", "match", "risk", "make_plan", "approve"]   # 구조화(LLM)는 다시 부르지 않는다
     again = paused(state)
     assert again["hitl_point"] == "rx_approval"
     assert [i["name"] for i in again["order"]["items"]] == ["타이레놀정500mg"]
     assert again["order"]["risk_check"]["level"] == "none"              # 다시 대조했다: 중복이 사라졌다
+    assert [c["items"] for c in again["plan"]["plan"]][0] == [{"item_code": "202106092", "count": 1}]   # 계획도 다시 만들었다
     final = approve(compiled, "P0001", state)
     assert final["status"] == "planned" and [c["items"] for c in final["plan"]["plan"]][0] == [{"item_code": "202106092", "count": 1}]
 
 
-def test_a_plan_that_cannot_be_made_goes_back_to_the_approval_with_the_reason(backend, calls):
-    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정", "뮤코다인캡슐200mg"))   # 아침 칸에 3알
+def test_a_plan_that_cannot_be_made_shows_the_reason_on_the_approval_and_only_edits_go_on(backend, calls):
+    compiled = make(structure=structure_of("타이레놀정500mg", "게보린정", days=5))          # 트레이(3일)를 넘는다
     state = send(compiled, "P0001", load("cv_a1", "rx_001"))
+    shown = paused(state)
+    assert shown["plan"] is None and shown["error_code"] == E_PLAN_RANGE   # 승인 전에 알린다 (명세서 v0.8 A.7)
+    assert shown["notice"].startswith("조제 계획을 만들 수 없습니다. 투약 일수가 트레이(3일)를 넘습니다")
+    assert "고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다." in shown["notice"]
+    with pytest.raises(ValueError, match="조제 계획을 만들지 못해 승인할 수 없습니다"):
+        approve(compiled, "P0001", state)                                # 계획 없이는 승인할 수 없다
+    order = json.loads(json.dumps(shown["order"]))
+    for item in order["items"]:
+        item["days"] = 3
     calls.clear()
-    state = approve(compiled, "P0001", state)
-    assert calls == ["approve", "make_plan", "approve"]
-    back = paused(state)
-    assert back["notice"].startswith("조제 계획을 만들 수 없습니다. 트레이 칸당 최대 2알을 넘습니다: 1~3일 아침 3알 고친 뒤")
-    assert "고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다." in back["notice"]
-    order = json.loads(json.dumps(back["order"]))
-    order["items"] = order["items"][:2]                                # 뮤코다인을 뺀다
-    state = resume_run(compiled, "P0001", {"action": "edit", "order": order})
-    final = approve(compiled, "P0001", state)
+    again = paused(resume_run(compiled, "P0001", {"action": "edit", "order": order}))
+    assert calls == ["approve", "match", "risk", "make_plan", "approve"]
+    assert again["plan"] is not None and again["error_code"] is None
+    final = resume_run(compiled, "P0001", {"action": "approve", "order": again["order"]})
     assert (final["status"], final["error_code"]) == ("planned", None)
-    assert final["errors"] == [f"[plan] {E_PLAN_RANGE} {back['notice'].split(' 고친 뒤')[0]}"]   # 실패 기록은 남는다
-
-
-def test_a_plan_beyond_the_tray_days_goes_back_to_the_approval(backend):
-    compiled = make(structure=structure_of("타이레놀정500mg", days=5))
-    state = approve(compiled, "P0001", send(compiled, "P0001", load("cv_a1", "rx_001")))
-    assert "투약 일수가 트레이(3일)를 넘습니다" in paused(state)["notice"]
+    assert final["errors"] == [f"[plan] {E_PLAN_RANGE} {shown['notice'].split(' 고친 뒤')[0]}"]   # 실패 기록은 남는다
 
 
 def test_a_new_graph_with_the_same_checkpointer_resumes_where_it_stopped(backend, calls):
@@ -537,9 +524,9 @@ def test_prescriptions_are_kept_apart_by_their_id(backend):
     assert compiled.get_state(thread_config("P-B")).interrupts                   # B는 그대로 멈춰 있다
 
 
-def test_without_approval_the_plan_node_is_never_called(backend, calls):
-    send(make(structure=structure_of("타이레놀정500mg", "게보린정")), "P0001", load("cv_a1", "rx_001"))
-    assert "make_plan" not in calls
+def test_the_plan_is_made_before_the_approval(backend, calls):
+    state = send(make(structure=structure_of("타이레놀정500mg", "게보린정")), "P0001", load("cv_a1", "rx_001"))
+    assert calls[-2:] == ["make_plan", "approve"] and paused(state)["plan"] is not None
 
 
 # ------------------------------------------------------------ 서브그래프만 단독으로
@@ -567,7 +554,7 @@ def test_the_subgraph_alone_gives_the_same_plan_as_the_top_graph(backend, names)
 
 def test_the_subgraph_alone_does_not_pass_the_supervisor(backend, calls):
     state = run_prescription(make_sub(), "P0001", load("cv_a1", "rx_004"))
-    assert calls == ["structure", "match", "risk", "approve"]
+    assert calls == ["structure", "match", "risk", "make_plan", "approve"]
     assert paused(state)["hitl_point"] == "rx_approval"
     assert state["flow"] is None                                        # 흐름을 정하는 일은 슈퍼바이저의 몫이다
 
@@ -887,15 +874,15 @@ def test_the_next_message_in_the_same_conversation_keeps_the_approved_order_and_
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
     planned = approve(compiled, "P0001", send(compiled, "P0001", load("cv_a1", "rx_001")))
     assert planned["status"] == "planned" and planned["plan"] is not None
-    tray = run_message(compiled, "P0001", {"message_id": "m2", "kind": "tray", "image_id": "img2"})
+    tray = run_message(compiled, "P0001", {"kind": "tray", "image_id": "img2"})
     assert (tray["order"], tray["plan"], tray["status"]) == (planned["order"], planned["plan"], "planned")
-    assert (tray["route"], tray["message_id"], tray["image_id"], tray["prescription_id"]) == (["tray"], "m2", "img2", "P0001")
+    assert (tray["route"], tray["image_id"], tray["prescription_id"]) == (["tray"], "img2", "P0001")
     assert compiled.get_state(thread_config("P0001")).values["order"] == planned["order"]
 
 
 def test_the_first_message_in_a_conversation_starts_from_the_first_state(backend):
-    state = run_message(make(), "C0001", {"message_id": "m1"})
-    assert (state["conversation_id"], state["prescription_id"], state["message_id"]) == ("C0001", None, "m1")
+    state = run_message(make(), "C0001", {"image_id": "img1"})
+    assert (state["conversation_id"], state["prescription_id"], state["image_id"]) == ("C0001", None, "img1")
     assert (state["route"], state["flow"]) == ([], None)
     assert state["order"] is None and state["status"] == "noted"              # 처방전 사진이 와야 시작한다
     assert "처방전 사진" in state["notice"]
