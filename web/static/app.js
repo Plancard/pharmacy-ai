@@ -1,9 +1,10 @@
-// 메인 화면: 처방전 업로드 → 2초마다 상태 확인 → 조제지시서 승인 카드 (REQ-WEB-01·02·03·07)
+// 메인 화면: 처방전 업로드 → 2초마다 상태 확인 → 처방 타임라인(접수·승인·트레이 검수·완료) (REQ-WEB-01·02·03·07)
 (() => {
   const app = document.getElementById("app");
   if (!app) return;
   const CSRF = app.dataset.csrf;
   const LABELS = JSON.parse(app.dataset.labels);
+  const TZ = app.dataset.tz || "Asia/Seoul";
   const TIMES = { morning: "아침", noon: "점심", evening: "저녁", bedtime: "취침 전" };
   const TIME_ORDER = ["morning", "noon", "evening", "bedtime"];
   const RISK = { none: "해당 없음", caution: "주의", warning: "경고", danger: "위험" };
@@ -126,29 +127,82 @@
       h("span", { class: `badge ${rx.status}` }, LABELS[rx.status] || rx.status));
   }
 
+  function fmtTime(iso) {
+    return iso ? new Date(iso).toLocaleString("ko-KR", {
+      timeZone: TZ, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "";
+  }
+
+  // 처방 타임라인 (REQ-WEB-07): 접수 → 조제지시서 승인 → 트레이 검수 → 완료가 위에서 아래로 쌓인다.
+  // 색만으로 구분하지 않도록 단계마다 상태 글자(완료·진행 중·대기·실패·취소됨)를 함께 적는다.
+  const STEP_STATE = { done: "완료", active: "진행 중", pending: "대기", error: "실패", cancelled: "취소됨" };
+
+  function step(state, title, at, ...body) {
+    return h("li", { class: `tl-item ${state}`, "aria-current": state === "active" ? "step" : null },
+      h("span", { class: "tl-dot", "aria-hidden": "true" }),
+      h("div", { class: "tl-main" },
+        h("div", { class: "tl-head" }, h("strong", {}, title),
+          at ? h("time", { class: "muted", datetime: at }, fmtTime(at)) : null,
+          h("span", { class: "tl-state" }, STEP_STATE[state])),
+        ...body.filter(Boolean)));
+  }
+
+  function spinner(text) {
+    return h("p", { class: "processing" }, h("span", { class: "spinner", "aria-hidden": "true" }), text);
+  }
+
+  function failure(rx) {
+    return [h("p", { class: "form-error" }, rx.error_message || "처리 중 오류가 났습니다."),
+      rx.error_code ? h("p", { class: "muted mono" }, rx.error_code) : null];
+  }
+
   function view(rx) {
-    const wrap = h("div", {}, header(rx));
-    if (rx.status === "failed") {
-      wrap.append(h("p", { class: "form-error" }, rx.error_message),
-        rx.error_code ? h("p", { class: "muted mono" }, rx.error_code) : null);
-      return wrap;
+    const events = rx.timeline || [];
+    const received = events.find((e) => e.event === "received");
+    const approval = events.filter((e) => e.event === "response" && e.hitl_point === "rx_approval").pop();
+    const order = rx.card && rx.card.order;
+    const s = rx.status;
+    const steps = [step("done", "처방전 접수", received && received.at,
+      h("p", { class: "muted" }, "처방전 사진을 올렸습니다."))];
+
+    // 조제지시서 (HITL ①)
+    if (approval) {
+      steps.push(step("done", "조제지시서 승인", approval.at,
+        order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null));
+    } else if (s === "waiting_approval" && rx.hitl_point === "rx_approval" && rx.card) {
+      steps.push(step("active", "조제지시서 확인·승인", null, approvalCard(rx)));
+    } else if (s === "failed") {
+      steps.push(step("error", "조제지시서 작성", rx.updated_at, ...failure(rx)));
+    } else if (s === "cancelled") {
+      steps.push(step("cancelled", "조제지시서 확인·승인", rx.updated_at));
+    } else {
+      steps.push(step("active", "조제지시서 작성", null, spinner("처방전을 읽고 조제지시서와 조제 계획을 만드는 중입니다…")));
     }
-    if (rx.status === "waiting_tray" && rx.card && rx.card.order) {
-      wrap.append(h("p", { class: "ok-note" }, "조제지시서를 승인했습니다. 조제 후 트레이 사진을 올려 주세요 (트레이 검수는 준비 중)."),
-        itemsTable(rx.card.order, {}));
-      return wrap;
+    const flowOpen = !["failed", "cancelled"].includes(s);
+
+    // 트레이 검수 (트레이 사진 업로드·검수 결과 카드는 11/18에 연결)
+    if (!approval) {
+      steps.push(step(flowOpen ? "pending" : (s === "failed" ? "pending" : "cancelled"), "트레이 검수", null,
+        flowOpen ? h("p", { class: "muted" }, "조제지시서를 승인하면 조제 후 트레이 사진을 올릴 수 있습니다.") : null));
+    } else if (s === "waiting_tray") {
+      steps.push(step("active", "트레이 검수", null,
+        h("p", { class: "ok-note" }, "조제지시서를 승인했습니다. 조제 후 트레이 사진을 올려 주세요 (트레이 검수는 준비 중)."),
+        order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null));
+    } else if (s === "processing") {
+      steps.push(step("active", "승인 내용 반영", null, spinner("승인한 내용으로 조제 계획을 확정하는 중입니다…")));
+    } else if (s === "done") {
+      steps.push(step("done", "트레이 검수", null));
+    } else if (s === "failed") {
+      steps.push(step("error", "승인 이후 처리", rx.updated_at, ...failure(rx)));
+    } else if (s === "cancelled") {
+      steps.push(step("cancelled", "트레이 검수", null));
     }
-    if (rx.status === "processing") {
-      wrap.append(h("p", { class: "processing" }, h("span", { class: "spinner", "aria-hidden": "true" }),
-        "처방전을 읽고 조제지시서를 만드는 중입니다…"));
-      return wrap;
-    }
-    if (rx.status === "waiting_approval" && rx.hitl_point === "rx_approval" && rx.card) {
-      wrap.append(approvalCard(rx));
-      return wrap;
-    }
-    wrap.append(h("p", { class: "muted" }, "이 단계의 카드는 아직 준비 중입니다."));
-    return wrap;
+
+    // 마무리
+    if (s === "done") steps.push(step("done", "조제 완료", rx.updated_at));
+    else if (s === "cancelled") steps.push(step("cancelled", "취소됨", rx.updated_at));
+    else if (s !== "failed") steps.push(step("pending", "조제 완료", null));
+
+    return h("div", {}, header(rx), h("ol", { class: "timeline" }, steps));
   }
 
   // onSelect가 있으면 줄을 누르거나 Enter로 고를 수 있다 (F-WEB-06 원문 위치 표시)
@@ -192,8 +246,24 @@
     return box;
   }
 
+  // 조제 계획(A.4): 일수별로 시간대마다 넣을 약과 알 수. plan이 없으면 이유(notice)만 보여 준다.
+  function planPanel(order, plan, notice) {
+    if (!plan) {
+      return h("div", { class: "risk", role: "status" }, h("strong", {}, "조제 계획"),
+        h("p", { class: "form-error" }, notice || "조제 계획을 만들지 못했습니다."),
+        h("p", { class: "muted" }, "항목을 수정해 다시 계산하기 전에는 승인할 수 없습니다."));
+    }
+    const names = Object.fromEntries(order.items.map((it) => [it.item_code, it.name]));
+    const rows = plan.plan.map((c) => h("tr", {},
+      h("td", {}, `${c.day}일차`), h("td", {}, TIMES[c.time] || c.time),
+      h("td", {}, c.items.map((i) => `${names[i.item_code] || i.item_code} ${i.count}정`).join(", "))));
+    return h("div", { class: "risk" }, h("strong", {}, `조제 계획 (${plan.days}일)`),
+      h("table", { class: "items" }, h("thead", {}, h("tr", {}, h("th", {}, "일"), h("th", {}, "시간"), h("th", {}, "넣을 약"))),
+        h("tbody", {}, rows)));
+  }
+
   function approvalCard(rx) {
-    const { order, ocr_lines: lines, ocr_size: size, blockers, needs_confirm: needsConfirm } = rx.card;
+    const { order, plan, notice, ocr_lines: lines, ocr_size: size, blockers, needs_confirm: needsConfirm } = rx.card;
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const confirm = needsConfirm
       ? h("label", { class: "confirm" }, h("input", { type: "checkbox", id: "confirm-risk" }),
@@ -247,6 +317,7 @@
             ? "항목을 누르면 원본에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."
             : "원본과 대조한 뒤 승인하세요."),
           itemsTable(order, lines, canLocate && rx.image_url ? select : null),
+          planPanel(order, plan, notice),
           riskPanel(order.risk_check || {}))),
       blockers.map((b) => h("p", { class: "form-error" }, b)),
       h("div", { class: "actions" }, confirm, btn),
@@ -254,6 +325,9 @@
   }
 
   // 새로고침해도 보던 처방을 다시 연다 (REQ-WEB-03)
+  // 주소에 처방이 없으면 가장 최근 처방을 연다
   const m = location.hash.match(/^#rx=([0-9a-f-]{36})$/);
+  const latest = list.querySelector(".rx-item");
   if (m) open(m[1]);
+  else if (latest) open(latest.dataset.id);
 })();

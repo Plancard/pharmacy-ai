@@ -31,7 +31,7 @@ from typing import Any
 
 from flask import Flask, current_app
 
-HITL_POINTS = ("type_select", "rx_approval", "inspection", "risk")
+HITL_POINTS = ("rx_approval", "inspection")   # 11/17: type_select(종류 선택)·risk(HITL ③) 삭제
 
 
 class AgentError(Exception):
@@ -43,8 +43,10 @@ class AgentError(Exception):
 @dataclass(frozen=True)
 class Pause:
     hitl_point: str
-    payload: dict[str, Any]     # rx_approval: {"order": A.5, "ocr_lines": {line_id: {text, conf, bbox}},
-                                #               "ocr_size": {width, height} | None}  (F-WEB-06 원문 위치 표시)
+    payload: dict[str, Any]     # rx_approval: {"order": A.2, "plan": A.4 | None, "error_code": str | None,
+                                #               "notice": str | None, "ocr_lines": {line_id: {text, conf, bbox}},
+                                #               "ocr_size": {width, height} | None}
+                                #   plan이 None이면(3일 초과·약을 정하지 못한 줄) 승인은 막고 edit만 받는다 (11/17)
 
 
 WAIT_STATUSES = ("waiting_tray",)
@@ -91,7 +93,8 @@ _DUP = {"type": "ingredient_dup", "item_codes": ["202106092", "197900277"], "lev
         "message": "타이레놀정500mg과 게보린정에 아세트아미노펜이 함께 들어 있습니다. 하루 총량을 확인하세요."}
 _DANGER = {"type": "contraindication", "item_codes": ["202106092", "200200099"], "level": "danger",
            "message": "(가짜 데이터) 병용금기 조합입니다. 처방 의사에게 확인한 뒤 진행하세요."}
-SCENARIOS = ("warning", "none", "danger", "flagged", "fail")
+SCENARIOS = ("warning", "none", "danger", "flagged", "fail", "range")
+_TIMES = ("morning", "noon", "evening")
 
 
 class FakeGateway:
@@ -128,6 +131,23 @@ class FakeGateway:
         return {"prescription_id": rx_id, "items": items,
                 "risk_check": {"scope": "rx_only", "level": level, "findings": findings}}
 
+    def _plan(self, rx_id: str, order: dict[str, Any]) -> tuple[dict | None, str | None, str | None]:
+        """조제 계획(A.4)과, 못 만들었을 때의 (error_code, 이유). 실제 Agent는 HITL ① 앞에서 계획을 만든다 (11/17)."""
+        items = order["items"]
+        if any(it["days"] > 3 for it in items):
+            return None, "E_PLAN_RANGE", "복용 일수가 3일을 넘어 조제 계획을 만들지 못했습니다."
+        if any(not it.get("item_code") for it in items):
+            return None, None, "약을 정하지 못한 줄이 있어 조제 계획을 만들지 못했습니다."
+        days = max(it["days"] for it in items)
+        cells = []
+        for d in range(1, days + 1):
+            for t in _TIMES:
+                its = [{"item_code": it["item_code"], "count": it["count_per_dose"]}
+                       for it in items if d <= it["days"] and t in it["times"]]
+                if its:
+                    cells.append({"day": d, "time": t, "items": its})
+        return {"prescription_id": rx_id, "days": days, "plan": cells}, None, None
+
     def start(self, rx_id: str, image_path: Path) -> Pause | Wait | None:
         from cv import stub   # CV 가짜 모듈. 실제 모듈이 나오면 cv.pipeline으로 바꾼다
 
@@ -135,11 +155,16 @@ class FakeGateway:
             raise stub.OcrEmpty(Path(image_path).name)
         a1 = stub.ocr(Path(image_path).with_name("rx_004.jpg"))   # 업로드 파일 이름과 무관하게 rx_004 샘플
         order = self._order(rx_id)
+        if self.scenario == "range":
+            for it in order["items"]:
+                it["days"] = 4
+        plan, plan_error, why = self._plan(rx_id, order)
         used = {i for it in order["items"] for i in it["source_line_ids"]}
         lines = {str(l["line_id"]): {"text": l["text"], "conf": l["conf"], "bbox": l.get("bbox")}
                  for l in a1["lines"] if l["line_id"] in used}
         size = {"width": a1["width"], "height": a1["height"]} if a1.get("width") and a1.get("height") else None
-        pause = Pause("rx_approval", {"order": order, "ocr_lines": lines, "ocr_size": size})
+        pause = Pause("rx_approval", {"order": order, "plan": plan, "error_code": plan_error, "notice": why,
+                                      "ocr_lines": lines, "ocr_size": size})
         self._save(rx_id, {"pause": {"hitl_point": pause.hitl_point, "payload": pause.payload},
                            "approved_order": None})
         return pause

@@ -1,7 +1,7 @@
 """JSON API. 메인 화면의 스크립트(static/app.js)가 부른다.
 
     POST /api/prescriptions                       처방전 이미지 업로드 (multipart, 필드 image)
-    GET  /api/prescriptions/<id>                  상태와 카드 내용 (화면이 2초마다 다시 읽음)
+    GET  /api/prescriptions/<id>                  상태·카드 내용·타임라인 사건 (화면이 2초마다 다시 읽음)
     GET  /api/prescriptions/<id>/images/<img_id>  원본 이미지
     POST /api/prescriptions/<id>/approve          HITL ① 조제지시서 승인
 
@@ -86,6 +86,15 @@ def upload():
     return jsonify(id=str(row["id"]), display_no=row["display_no"], status=row["status"]), 202
 
 
+def _timeline(row: dict) -> list[dict]:
+    """처방 타임라인에 시각을 붙일 사건: 접수와 약사의 HITL 응답. 오래된 것부터 (검수 결과는 11/18에 더한다)."""
+    events = [{"event": "received", "at": row["created_at"].isoformat()}]
+    for h in rx.history(row["id"]):
+        events.append({"event": "response", "hitl_point": h["hitl_point"], "action": h["action"],
+                       "at": h["created_at"].isoformat()})
+    return events
+
+
 @bp.get("/prescriptions/<rx_id>")
 @api_login_required
 def detail(rx_id: str):
@@ -99,6 +108,8 @@ def detail(rx_id: str):
         "hitl_point": row["hitl_point"],
         "error_code": row["error_code"],
         "created_at": row["created_at"].isoformat(),
+        "updated_at": row["updated_at"].isoformat(),
+        "timeline": _timeline(row),
         "image_url": f"/api/prescriptions/{sid}/images/{img['id']}" if img else None,
         "card": None,
     }
@@ -109,7 +120,7 @@ def detail(rx_id: str):
         if pause is not None and pause.hitl_point == row["hitl_point"]:
             order = pause.payload["order"]
             body["card"] = {**pause.payload,
-                            "blockers": workflow.approval_blockers(order),
+                            "blockers": workflow.approval_blockers(order, pause.payload.get("plan")),
                             "needs_confirm": workflow.needs_confirm(order)}
     elif row["status"] == "waiting_tray":
         body["card"] = {"order": gateway().approved_order(sid)}
@@ -136,7 +147,7 @@ def approve(rx_id: str):
     if pause is None or pause.hitl_point != "rx_approval":
         return _error(409, "승인할 조제지시서를 찾지 못했습니다. 화면을 새로고침해 주세요.")
     order = pause.payload["order"]
-    blockers = workflow.approval_blockers(order)
+    blockers = workflow.approval_blockers(order, pause.payload.get("plan"))
     if blockers:
         return _error(409, blockers[0])
     body = request.get_json(silent=True) or {}
@@ -146,5 +157,6 @@ def approve(rx_id: str):
     if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
                       "approve", before=order, after=order):
         return _error(409, "이미 처리된 승인입니다. 화면을 새로고침해 주세요.")
-    workflow.jobs.submit(workflow.run_resume, row["id"], "rx_approval", {"action": "approve", "order": order})
+    workflow.jobs.submit(workflow.run_resume, row["id"], "rx_approval", {"action": "approve", "order": order,
+                                                                       "plan": pause.payload.get("plan")})
     return jsonify(id=str(row["id"]), status="processing"), 202

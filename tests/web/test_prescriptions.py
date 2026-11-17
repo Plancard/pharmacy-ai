@@ -35,7 +35,8 @@ class FakeRx:
             raise RuntimeError("db down")
         n = sum(1 for r in self.rows.values() if r["pharmacy_id"] == pharmacy_id) + 1
         row = {"id": rx_id, "pharmacy_id": pharmacy_id, "display_no": f"P{n:04d}", "status": "processing",
-               "hitl_point": None, "error_code": None, "created_at": datetime.now(timezone.utc)}
+               "hitl_point": None, "error_code": None, "created_at": datetime.now(timezone.utc),
+               "updated_at": datetime.now(timezone.utc)}
         self.rows[rx_id] = row
         img_id = uuid.uuid4()
         self.images[img_id] = {"id": img_id, "rx": rx_id, "kind": kind, "storage_key": storage_key}
@@ -53,6 +54,10 @@ class FakeRx:
         if i and i["rx"] == rx_id and self.rows[rx_id]["pharmacy_id"] == pharmacy_id:
             return i
         return None
+
+    def history(self, rx_id):
+        return [{"hitl_point": a["hitl_point"], "action": a["action"], "created_at": datetime.now(timezone.utc)}
+                for a in self.approvals if a["rx"] == rx_id]
 
     def set_waiting(self, rx_id, hitl_point):
         r = self.rows[rx_id]
@@ -88,7 +93,7 @@ class FakeRx:
 @pytest.fixture
 def fake_rx(monkeypatch):
     f = FakeRx()
-    for name in ("create", "get", "first_image", "image", "set_waiting", "set_waiting_tray", "set_failed", "respond"):
+    for name in ("create", "get", "first_image", "image", "history", "set_waiting", "set_waiting_tray", "set_failed", "respond"):
         monkeypatch.setattr(rx, name, getattr(f, name))
     return f
 
@@ -313,3 +318,59 @@ def test_interrupted_shows_message(client, fake_rx):
     fake_rx.rows[uuid.UUID(rx_id)].update(status="failed", hitl_point=None, error_code="E_INTERRUPTED")
     d = client.get(f"/api/prescriptions/{rx_id}").get_json()
     assert d["status"] == "failed" and "서버가 다시 시작" in d["error_message"]
+
+
+# ------------------------------------------------------------ 처방 타임라인 (REQ-WEB-07)
+def test_timeline_events_follow_the_flow(client, fake_rx):
+    """접수 → 승인 응답 순으로 사건이 쌓이고, 새로고침(다시 읽기)해도 같다."""
+    rx_id = upload(client).get_json()["id"]
+    d = client.get(f"/api/prescriptions/{rx_id}").get_json()
+    assert d["status"] == "waiting_approval"
+    assert [e["event"] for e in d["timeline"]] == ["received"] and d["updated_at"]
+    assert client.get(f"/api/prescriptions/{rx_id}").get_json()["timeline"] == d["timeline"]   # 새로고침해도 유지
+
+    assert approve(client, rx_id, confirmed=True).status_code == 202
+    d = client.get(f"/api/prescriptions/{rx_id}").get_json()
+    ev = d["timeline"]
+    assert [e["event"] for e in ev] == ["received", "response"]
+    assert ev[1]["hitl_point"] == "rx_approval" and ev[1]["action"] == "approve"
+
+
+def test_cancelled_status_has_label_and_page_carries_labels(client):
+    from web import STATUS_LABELS
+    assert STATUS_LABELS["cancelled"] == "취소됨"
+    html = client.get("/").get_data(as_text=True)
+    assert "cancelled" in html and 'data-tz="Asia/Seoul"' in html
+
+
+# ------------------------------------------------------------ 조제 계획 (11/17: HITL ① 앞에서 만들어 카드에 함께 보인다)
+def test_card_has_plan_for_approval(client):
+    rx_id = upload(client).get_json()["id"]
+    card = client.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    plan = card["plan"]
+    assert plan["days"] == 3 and card["error_code"] is None and card["notice"] is None
+    first = plan["plan"][0]
+    assert (first["day"], first["time"]) == (1, "morning") and len(first["items"]) == 3
+    assert {i["item_code"] for i in first["items"]} == {"202106092", "197900277", "200200099"}
+
+
+def test_plan_range_blocks_approval(monkeypatch, tmp_path, fake_rx):
+    c = make_client(monkeypatch, tmp_path, scenario="range")
+    rx_id = upload(c).get_json()["id"]
+    card = c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert card["plan"] is None and card["error_code"] == "E_PLAN_RANGE" and "3일" in card["notice"]
+    assert card["blockers"]
+    r = approve(c, rx_id, confirmed=True)
+    assert r.status_code == 409 and fake_rx.approvals == []
+
+
+def test_unmatched_item_has_no_plan_and_blocks(monkeypatch, tmp_path, fake_rx):
+    c = make_client(monkeypatch, tmp_path, scenario="flagged")
+    rx_id = upload(c).get_json()["id"]
+    card = c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert card["plan"] is None and card["error_code"] is None and "정하지 못한" in card["notice"]
+
+
+def test_hitl_points_dropped_type_select_and_risk():
+    from web.agent_gateway import HITL_POINTS
+    assert HITL_POINTS == ("rx_approval", "inspection")

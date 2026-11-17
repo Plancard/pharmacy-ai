@@ -19,6 +19,7 @@ STATUS_LABELS = {
     "waiting_tray": "트레이 대기",
     "done": "완료",
     "failed": "실패",
+    "cancelled": "취소됨",
 }
 
 

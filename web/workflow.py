@@ -97,11 +97,17 @@ def run_resume(rx_id: uuid.UUID, hitl_point: str, reply: dict[str, Any]) -> None
 
 
 # ------------------------------------------------------------ HITL ① 승인 규칙
-def approval_blockers(order: dict[str, Any]) -> list[str]:
-    """승인할 수 없는 이유. 비어 있으면 승인할 수 있다."""
+def approval_blockers(order: dict[str, Any], plan: dict[str, Any] | None = ...) -> list[str]:
+    """승인할 수 없는 이유. 비어 있으면 승인할 수 있다.
+
+    plan을 넘겼는데 None이면(조제 계획을 못 만든 경우: 3일 초과·약을 정하지 못한 줄) 승인·직접 처리는
+    거절하고 수정(edit)만 받는다 (11/17). plan을 안 넘기면 계획 검사는 건너뛴다.
+    """
     missing = [it["name"] for it in order.get("items", []) if not it.get("item_code")]
     if missing:
         return [f"품목을 찾지 못한 약품이 있습니다: {', '.join(missing)}. 항목을 수정한 뒤 승인하세요."]
+    if plan is None:
+        return ["조제 계획을 만들지 못해 승인할 수 없습니다. 항목을 수정한 뒤 다시 확인하세요."]
     return []
 
 
