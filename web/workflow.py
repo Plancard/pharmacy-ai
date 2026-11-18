@@ -196,9 +196,11 @@ def build_edited_order(order: dict[str, Any], edits: Any) -> dict[str, Any]:
             raise ValueError(f"{name}: 복용 시간을 하나 이상 고르세요.")
         item = dict(base) if base else {"item_code": None, "source_line_ids": []}
         if base is None or name != base.get("name"):
+            # 이름을 바꾸면 약을 새로 찾는다. Agent 조제지시서 규칙(match_method가 있으면 item_code도 있어야 함)에 맞게
+            # 매칭 결과(방법·후보)와 인쇄 코드(printed_code: 남기면 Agent가 예전 약을 코드로 다시 찾음)도 함께 비운다
             item["item_code"] = None
-            item.pop("needs_pharmacist_check", None)
-            item.pop("check_reasons", None)
+            for key in ("needs_pharmacist_check", "check_reasons", "match_method", "match_candidates", "printed_code"):
+                item.pop(key, None)
         item.update(name=name,
                     count_per_dose=_int_in(e.get("count_per_dose"), 1, 10, f"{name}의 1회 알 수"),
                     days=_int_in(e.get("days"), 1, MAX_DAYS_INPUT, f"{name}의 복용 일수"),
