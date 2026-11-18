@@ -4,10 +4,15 @@
     pending(rx_id)                    지금 멈춰 있는 지점과 화면에 보여 줄 내용 (없으면 None)
     resume(rx_id, hitl_point, reply)  약사 응답으로 이어 간다. 다시 멈추면 Pause
     approved_order(rx_id)             승인된 조제지시서 (트레이 대기 카드에 보여 줌)
+    tray(rx_id, image_id, image_path) 트레이 사진 검수 (11/18). 불일치·확인 필요 칸이 있으면 HITL ②(inspection)에서 멈춘다
+    inspection(rx_id)                 마지막 검수 결과 A.3 (없으면 None)
+    tray_error(rx_id)                 트레이 대기로 돌아온 이유 {code, notice} (트레이 못 찾음 등, 없으면 None)
 
-start·resume은 셋 중 하나를 돌려준다.
+start·resume·tray는 셋 중 하나를 돌려준다.
     Pause  HITL에서 멈춤 → 처방 상태 waiting_approval
-    Wait   이번 실행이 끝났고 약사의 다음 사진을 기다림 → 처방 상태 Wait.status (지금은 waiting_tray뿐)
+    Wait   이번 실행이 끝남 → 처방 상태 Wait.status
+           waiting_tray: 약사가 트레이 사진을 올리기를 기다림 (승인 끝, 또는 HITL ② 재조제)
+           done: 트레이 검수 끝 (전 칸 일치, 또는 HITL ② 확인 완료)
     None   아직 처리 중 (상태를 바꾸지 않음)
 
 실패는 code 속성(명세서 A.7 오류 코드)이 있는 예외로 올린다 (cv.stub.CVError, AgentError).
@@ -49,12 +54,12 @@ class Pause:
                                 #   plan이 None이면(3일 초과·약을 정하지 못한 줄) 승인은 막고 edit만 받는다 (11/17)
 
 
-WAIT_STATUSES = ("waiting_tray",)
+WAIT_STATUSES = ("waiting_tray", "done")
 
 
 @dataclass(frozen=True)
 class Wait:
-    """그래프가 멈추지 않고 이번 실행을 끝냈고, 약사의 다음 입력(사진)을 기다린다."""
+    """그래프가 멈추지 않고 이번 실행을 끝냈다. 다음 사진을 기다리거나(waiting_tray) 처방 흐름이 끝났다(done)."""
     status: str                 # DB 처방 상태. WAIT_STATUSES 중 하나
 
     def __post_init__(self):
@@ -99,6 +104,35 @@ _DANGER = {"type": "contraindication", "item_codes": ["202106092", "200200099"],
            "message": "(가짜 데이터) 병용금기 조합입니다. 처방 의사에게 확인한 뒤 진행하세요."}
 SCENARIOS = ("warning", "none", "danger", "flagged", "fail", "range")
 _TIMES = ("morning", "noon", "evening")
+_TIME_LABELS = {"morning": "아침", "noon": "점심", "evening": "저녁", "bedtime": "취침 전"}
+_STATUS_LABELS = {"ok": "일치", "mismatch": "불일치", "need_review": "확인 필요"}
+_REASON_LABELS = {"boundary": "칸 경계에 걸침", "overlap": "알약 겹침", "rotated": "트레이가 뒤집혀 찍힘"}
+INSPECTION_ACTIONS = ("confirm", "redo")   # HITL ② 응답 (기능분석서 F-WEB-09)
+
+
+def inspection_payload(a3: dict[str, Any], plan: dict[str, Any], names: dict[str, str]) -> dict[str, Any]:
+    """HITL ② 카드 내용. 진짜 Agent의 agent.inspection.inspection_payload와 같은 칸 (가짜 연결부용, agent 패키지 없이)."""
+    def content(counts: dict[str, int]) -> str:
+        shown = [f"{names.get(code, code)} {n}" for code, n in counts.items() if n]
+        return " · ".join(shown) if shown else "없음"
+
+    lines = []
+    for c in a3["cells"]:
+        if c["status"] == "ok":
+            continue
+        line = (f"{c['day']}일 {_TIME_LABELS[c['time']]} {_STATUS_LABELS[c['status']]}: "
+                f"예상 {content(c['expected'])} / 실제 {content(c['actual'])}")
+        if c["reasons"]:
+            line += f" ({', '.join(_REASON_LABELS.get(r, r) for r in c['reasons'])})"
+        lines.append(line)
+    s = a3["summary"]
+    if any("rotated" in c["reasons"] for c in a3["cells"]):
+        notice = "트레이가 180° 뒤집혀 찍힌 것 같습니다. 아침 줄이 위로 오게 다시 찍어 주세요."
+    else:
+        notice = (f"트레이 검수: 불일치 {s['mismatch']}칸, 확인 필요 {s['need_review']}칸. "
+                  "약사가 확인해 주세요 (확인 완료 또는 재조제).")
+    return {"inspection": a3, "plan": plan, "names": names, "cells": lines, "notice": notice,
+            "choices": list(INSPECTION_ACTIONS)}
 
 
 class FakeGateway:
@@ -214,14 +248,57 @@ class FakeGateway:
             data.update(pause=None, approved_order=reply["order"])
             self._save(rx_id, data)
             return Wait("waiting_tray")
+        # HITL ② 검수 확인: confirm → 완료(inspected), redo → 재조제(planned, 다시 찍은 트레이 사진을 기다림)
+        data.update(pause=None)
         self._save(rx_id, data)
-        return None
+        return Wait("done") if reply.get("action") == "confirm" else Wait("waiting_tray")
 
     def check_reply(self, rx_id: str, hitl_point: str, reply: dict[str, Any]) -> None:
-        """응답이 지금 멈춘 지점에 맞는지만 본다 (가짜는 지점만 확인. 응답 모양 검사는 진짜 Agent가 한다)."""
+        """응답이 지금 멈춘 지점에 맞는지 본다 (가짜는 지점과 HITL ②의 action만 확인. 응답 모양 검사는 진짜 Agent가 한다)."""
         data = self._load(rx_id)
         if not data or not data.get("pause") or data["pause"]["hitl_point"] != hitl_point:
             raise ValueError(f"멈춰 있는 지점이 없거나 다릅니다: {rx_id} ({hitl_point})")
+        if hitl_point == "inspection" and (not isinstance(reply, dict) or reply.get("action") not in INSPECTION_ACTIONS):
+            raise ValueError("검수 확인 응답의 action은 confirm(확인 완료) · redo(재조제) 중 하나여야 합니다.")
+
+    def tray(self, rx_id: str, image_id: str, image_path: Path) -> Pause | Wait | None:
+        """트레이 사진 검수의 가짜 버전: cv/stub.py inspect(시나리오는 .env CV_STUB_SCENARIO, 기본 ok)로 A.3을 만든다.
+
+        진짜 그래프와 같이 검수하지 못하면(E_TRAY_NOT_FOUND 등) 코드가 있는 예외를 올리고 트레이 대기에 머문다.
+        """
+        from cv import stub
+
+        data = self._load(rx_id)
+        order = (data or {}).get("approved_order")
+        if not order:
+            raise AgentError("E_CV_INFER", "조제 계획이 아직 없습니다. 조제지시서를 승인한 뒤에 트레이 사진을 올려 주세요.")
+        plan, _, why = self._plan(rx_id, order)
+        if plan is None:
+            raise AgentError("E_CV_INFER", why or "조제 계획이 없습니다.")
+        try:
+            a3 = stub.inspect(Path(image_path), plan)
+        except stub.CVError as e:
+            data["tray_error"] = {"code": e.code, "notice": str(e)}
+            self._save(rx_id, data)
+            raise
+        a3["image_id"] = image_id                    # stub은 파일 이름을 쓴다. 진짜 Agent처럼 웹의 이미지 ID로 맞춘다
+        data.update(inspection=a3, tray_error=None)
+        if a3["summary"]["hitl_required"]:
+            names = {it["item_code"]: it["name"] for it in order["items"] if it.get("item_code")}
+            pause = Pause("inspection", inspection_payload(a3, plan, names))
+            data["pause"] = {"hitl_point": pause.hitl_point, "payload": pause.payload}
+            self._save(rx_id, data)
+            return pause
+        self._save(rx_id, data)
+        return Wait("done")                          # 전 칸 일치: HITL ②를 건너뛰고 바로 완료 (E-1)
+
+    def inspection(self, rx_id: str) -> dict[str, Any] | None:
+        data = self._load(rx_id)
+        return data.get("inspection") if data else None
+
+    def tray_error(self, rx_id: str) -> dict[str, Any] | None:
+        data = self._load(rx_id)
+        return data.get("tray_error") if data else None
 
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         data = self._load(rx_id)

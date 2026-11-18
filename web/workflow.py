@@ -1,4 +1,5 @@
-"""처방 처리 흐름: 업로드 → (백그라운드) Agent → HITL에서 멈춤 → 약사 응답 → 다시 Agent → 트레이 대기.
+"""처방 처리 흐름: 업로드 → (백그라운드) Agent → HITL에서 멈춤 → 약사 응답 → 다시 Agent → 트레이 대기
+→ 트레이 사진 → 검수 → 완료 또는 HITL ②(불일치·확인 필요).
 
 라우트(web/api)는 요청을 검사하고 이 함수들을 부른다. DB 상태 바꾸기는 web/rx.py, Agent 호출은
 web/agent_gateway.py가 맡는다.
@@ -21,6 +22,7 @@ ERROR_CODES = {"E_OCR_EMPTY", "E_TRAY_NOT_FOUND", "E_CV_INFER", "E_PLAN_RANGE",
 # 화면 안내 문구 (기능분석서 6장과 맞춘다)
 ERROR_MESSAGES = {
     "E_OCR_EMPTY": "처방전에서 글자를 찾지 못했습니다. 처방전 전체가 보이게 다시 찍어 올려 주세요.",
+    "E_TRAY_NOT_FOUND": "트레이를 찾지 못했습니다. 트레이 전체가 보이고 아침 줄이 위로 오게 다시 찍어 올려 주세요.",
     "E_CV_INFER": "이미지 분석 중 오류가 났습니다. 다시 올려 주세요.",
     "E_LLM": "AI 응답을 받지 못했습니다. 잠시 뒤 다시 올려 주세요.",
     "E_EXT_API": "의약품 정보 조회에 실패했습니다. 잠시 뒤 다시 올려 주세요.",
@@ -28,6 +30,9 @@ ERROR_MESSAGES = {
     "E_INTERRUPTED": "처리 중에 서버가 다시 시작되어 중단되었습니다. 처방전을 다시 올려 주세요.",
 }
 UNKNOWN_ERROR = "처리 중 알 수 없는 오류가 났습니다. 다시 올려 주세요."
+
+# 트레이 검수가 이 코드로 실패하면 처방을 실패로 두지 않고 트레이 대기로 돌려 다시 찍게 한다 (Agent도 planned에 머문다)
+TRAY_RETRY_CODES = {"E_TRAY_NOT_FOUND", "E_CV_INFER"}
 
 
 STALE_MINUTES = 10   # 처방 1장 처리 목표는 1분(REQ-NF-01). 이보다 오래 '처리 중'이면 끊긴 것으로 본다
@@ -59,6 +64,24 @@ def receive(pharmacy_id: int, user_id: int, data: bytes, ext: str) -> dict:
     return row
 
 
+def receive_tray(rx_id: uuid.UUID, pharmacy_id: int, data: bytes, ext: str) -> uuid.UUID | None:
+    """트레이 사진을 저장하고 승인된(트레이 대기) 처방에 붙인 뒤 검수를 백그라운드로 넘긴다. → 이미지 ID
+
+    처방이 트레이 대기가 아니면(이미 다른 사진이 처리 중 등) 파일을 지우고 None.
+    """
+    key = storage.save(str(rx_id), data, ext)
+    try:
+        image_id = rx.attach_tray(rx_id, pharmacy_id, key)
+    except Exception:
+        storage.path_of(key).unlink(missing_ok=True)
+        raise
+    if image_id is None:
+        storage.path_of(key).unlink(missing_ok=True)
+        return None
+    jobs.submit(run_tray, rx_id, image_id, key)
+    return image_id
+
+
 def _apply(rx_id: uuid.UUID, outcome: Pause | Wait | None) -> None:
     """Agent 실행 결과를 처방 상태에 옮긴다. None이면 아직 처리 중이라 그대로 둔다."""
     if isinstance(outcome, Pause):
@@ -66,6 +89,8 @@ def _apply(rx_id: uuid.UUID, outcome: Pause | Wait | None) -> None:
     elif isinstance(outcome, Wait):
         if outcome.status == "waiting_tray":
             rx.set_waiting_tray(rx_id)
+        elif outcome.status == "done":
+            rx.set_done(rx_id)
 
 
 def _fail(rx_id: uuid.UUID, e: Exception) -> None:
@@ -85,6 +110,26 @@ def run_start(rx_id: uuid.UUID, key: str) -> None:
         _fail(rx_id, e)
         return
     _apply(rx_id, pause)
+
+
+def run_tray(rx_id: uuid.UUID, image_id: uuid.UUID, key: str) -> None:
+    """트레이 검수 (F-WEB-09). 검수 결과(A.3)는 inspections에 남기고, 전 칸 일치면 완료, 아니면 HITL ②에서 멈춘다.
+
+    트레이를 못 찾는 등 다시 찍으면 되는 실패는 트레이 대기로 돌린다 (이유는 gateway().tray_error로 화면에 보인다).
+    """
+    try:
+        outcome = gateway().tray(str(rx_id), str(image_id), storage.path_of(key))
+    except Exception as e:
+        if getattr(e, "code", None) in TRAY_RETRY_CODES:
+            current_app.logger.warning("처방 %s 트레이 검수 실패, 다시 찍기: %s", rx_id, e)
+            rx.set_waiting_tray(rx_id)
+            return
+        _fail(rx_id, e)
+        return
+    a3 = gateway().inspection(str(rx_id))
+    if a3 and str(a3.get("image_id")) == str(image_id):
+        rx.add_inspection(rx_id, image_id, a3)
+    _apply(rx_id, outcome)
 
 
 def run_resume(rx_id: uuid.UUID, hitl_point: str, reply: dict[str, Any]) -> None:

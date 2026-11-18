@@ -28,6 +28,7 @@ class FakeRx:
         self.rows: dict[uuid.UUID, dict] = {}
         self.images: dict[uuid.UUID, dict] = {}
         self.approvals: list[dict] = []
+        self.inspection_rows: list[dict] = []
         self.fail_create = False
 
     def create(self, pharmacy_id, user_id, rx_id, storage_key, kind="prescription"):
@@ -56,7 +57,7 @@ class FakeRx:
         return None
 
     def history(self, rx_id):
-        return [{"hitl_point": a["hitl_point"], "action": a["action"], "created_at": datetime.now(timezone.utc)}
+        return [{"hitl_point": a["hitl_point"], "action": a["action"], "created_at": a["created_at"]}
                 for a in self.approvals if a["rx"] == rx_id]
 
     def set_waiting(self, rx_id, hitl_point):
@@ -80,20 +81,45 @@ class FakeRx:
         r.update(status="failed", hitl_point=None, error_code=error_code)
         return True
 
+    def attach_tray(self, rx_id, pharmacy_id, storage_key):
+        r = self.rows.get(rx_id)
+        if not r or r["pharmacy_id"] != pharmacy_id or r["status"] != "waiting_tray":
+            return None
+        r.update(status="processing")
+        img_id = uuid.uuid4()
+        self.images[img_id] = {"id": img_id, "rx": rx_id, "kind": "tray", "storage_key": storage_key}
+        return img_id
+
+    def set_done(self, rx_id):
+        r = self.rows[rx_id]
+        if r["status"] != "processing":
+            return False
+        r.update(status="done", hitl_point=None)
+        return True
+
+    def add_inspection(self, rx_id, image_id, result):
+        self.inspection_rows.append({"rx": rx_id, "image_id": image_id, "result_json": result,
+                                     "hitl_required": bool(result["summary"]["hitl_required"]),
+                                     "created_at": datetime.now(timezone.utc)})
+
+    def inspections(self, rx_id):
+        return [dict(i) for i in self.inspection_rows if i["rx"] == rx_id]
+
     def respond(self, rx_id, pharmacy_id, user_id, hitl_point, action, before, after, reason=None):
         r = self.rows.get(rx_id)
         if not r or r["pharmacy_id"] != pharmacy_id or r["status"] != "waiting_approval" or r["hitl_point"] != hitl_point:
             return False
         r.update(status="processing", hitl_point=None)
         self.approvals.append({"rx": rx_id, "hitl_point": hitl_point, "action": action, "user_id": user_id,
-                               "before": before, "after": after})
+                               "before": before, "after": after, "created_at": datetime.now(timezone.utc)})
         return True
 
 
 @pytest.fixture
 def fake_rx(monkeypatch):
     f = FakeRx()
-    for name in ("create", "get", "first_image", "image", "history", "set_waiting", "set_waiting_tray", "set_failed", "respond"):
+    for name in ("create", "get", "first_image", "image", "history", "set_waiting", "set_waiting_tray", "set_failed", "respond",
+                 "attach_tray", "set_done", "add_inspection", "inspections"):
         monkeypatch.setattr(rx, name, getattr(f, name))
     return f
 
