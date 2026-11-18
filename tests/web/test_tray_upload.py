@@ -139,6 +139,84 @@ def test_tray_of_other_pharmacy_is_404(client, fake_rx):
     assert tray(client, rx_id).status_code == 404
 
 
+def inspect_reply(client, rx_id, **body):
+    return client.post(f"/api/prescriptions/{rx_id}/inspection", json=body, headers={"X-CSRF-Token": client.token})
+
+
+def at_hitl_2(client, monkeypatch):
+    rx_id = waiting_tray(client)
+    monkeypatch.setenv("CV_STUB_SCENARIO", "mismatch")
+    tray(client, rx_id)
+    assert detail(client, rx_id)["hitl_point"] == "inspection"
+    return rx_id
+
+
+def test_confirm_finishes_and_is_recorded(client, fake_rx, monkeypatch):
+    rx_id = at_hitl_2(client, monkeypatch)
+    r = inspect_reply(client, rx_id, action="confirm")
+    assert r.status_code == 202
+    d = detail(client, rx_id)
+    assert d["status"] == "done" and d["card"]["inspection"]["summary"]["hitl_required"] is True
+    last = fake_rx.approvals[-1]
+    assert (last["hitl_point"], last["action"], last["after"]) == ("inspection", "confirm", {"action": "confirm"})
+    assert last["before"]["summary"]["mismatch"] == 1 and last["warning_ack"] is None
+    assert [e["action"] for e in d["timeline"] if e["event"] == "response"] == ["approve", "confirm"]
+
+
+def test_redo_goes_back_to_waiting_tray_and_a_new_photo_is_checked(client, fake_rx, monkeypatch):
+    rx_id = at_hitl_2(client, monkeypatch)
+    assert inspect_reply(client, rx_id, action="redo").status_code == 202
+    d = detail(client, rx_id)
+    assert d["status"] == "waiting_tray" and d["card"]["retake"] is None
+    monkeypatch.setenv("CV_STUB_SCENARIO", "ok")
+    assert tray(client, rx_id).status_code == 202
+    d = detail(client, rx_id)
+    assert d["status"] == "done" and len(fake_rx.inspection_rows) == 2
+    assert [e["event"] for e in d["timeline"]].count("tray_uploaded") == 2
+
+
+@pytest.mark.parametrize("body", [{}, {"action": "approve"}, {"action": "fly"}])
+def test_inspection_reply_needs_confirm_or_redo(client, fake_rx, monkeypatch, body):
+    rx_id = at_hitl_2(client, monkeypatch)
+    r = inspect_reply(client, rx_id, **body)
+    assert r.status_code == 400 and len(fake_rx.approvals) == 1           # 승인 기록만 있다
+    assert detail(client, rx_id)["hitl_point"] == "inspection"
+
+
+def test_inspection_reply_only_while_waiting_hitl_2(client, fake_rx, monkeypatch):
+    rx_id = waiting_tray(client)
+    assert inspect_reply(client, rx_id, action="confirm").status_code == 409
+    rx_id = at_hitl_2(client, monkeypatch)
+    assert inspect_reply(client, rx_id, action="confirm").status_code == 202
+    assert inspect_reply(client, rx_id, action="confirm").status_code == 409   # 두 번 누름
+
+
+def test_approve_records_the_warning_check(client, fake_rx):
+    """Q11: 경고·확인 필요가 있는 승인은 체크 여부를 승인 기록에 남긴다 (warning 시나리오: 성분 중복 경고)."""
+    waiting_tray(client)
+    assert fake_rx.approvals[0]["action"] == "approve" and fake_rx.approvals[0]["warning_ack"] is True
+
+
+def test_approve_without_warnings_records_false(monkeypatch, tmp_path, fake_rx):
+    c = make_client(monkeypatch, tmp_path, scenario="none")
+    rx_id = upload(c).get_json()["id"]
+    # none 시나리오도 샘플의 프론크논에 '확인 필요' 표시가 있어 체크가 필요하다 → 표시를 지운 조제지시서로 본다
+    gw = c.application.extensions["agent"]
+    data = gw._load(rx_id)
+    for it in data["pause"]["payload"]["order"]["items"]:
+        it.pop("needs_pharmacist_check", None)
+    gw._save(rx_id, data)
+    assert approve(c, rx_id).status_code == 202
+    assert fake_rx.approvals[0]["warning_ack"] is False
+
+
+def test_manual_records_no_warning_check(monkeypatch, tmp_path, fake_rx):
+    c = make_client(monkeypatch, tmp_path, scenario="danger")
+    rx_id = upload(c).get_json()["id"]
+    assert approve(c, rx_id, action="manual", reason="의사 확인").status_code == 202
+    assert fake_rx.approvals[0]["warning_ack"] is None
+
+
 def test_fake_gateway_hitl_2_replies(tmp_path, monkeypatch):
     """HITL ② 응답(라우트는 다음 작업): confirm → 완료, redo → 트레이 대기. 다른 action은 check_reply가 거절한다."""
     gw = FakeGateway(tmp_path)

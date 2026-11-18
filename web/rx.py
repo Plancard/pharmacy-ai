@@ -190,8 +190,10 @@ def fail_stale(min_age_minutes: int) -> list[str]:
 
 
 def respond(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, hitl_point: str, action: str,
-            before: Any, after: Any, reason: str | None = None) -> bool:
+            before: Any, after: Any, reason: str | None = None, warning_ack: bool | None = None) -> bool:
     """HITL 응답: 승인 대기 → 처리 중으로 되돌리고 approvals에 이력을 남긴다 (한 트랜잭션).
+
+    warning_ack: HITL ① 승인 때 약사가 경고 확인란을 체크했는지 (11/17 Q11). 그 밖의 응답은 None.
 
     이미 다른 요청이 응답했거나 다른 지점에서 기다리는 중이면 False (아무것도 바꾸지 않음).
     """
@@ -205,8 +207,8 @@ def respond(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, hitl_point: str, a
         if row is None:
             return False
         conn.execute(
-            "INSERT INTO approvals (prescription_id, hitl_point, action, user_id, before_json, after_json, reason) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (rx_id, hitl_point, action, user_id, _jsonb(before), _jsonb(after), reason),
+            "INSERT INTO approvals (prescription_id, hitl_point, action, user_id, before_json, after_json, reason, "
+            "warning_ack) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (rx_id, hitl_point, action, user_id, _jsonb(before), _jsonb(after), reason, warning_ack),
         )
     return True

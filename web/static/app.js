@@ -195,7 +195,9 @@
       steps.push(step(flowOpen ? "pending" : (s === "failed" ? "pending" : "cancelled"), "트레이 검수", null,
         flowOpen ? h("p", { class: "muted" }, "조제지시서를 승인하면 조제 후 트레이 사진을 올릴 수 있습니다.") : null));
     } else if (s === "waiting_tray") {
-      steps.push(step("active", "트레이 검수", null, trayUpload(rx, order)));
+      const redone = events.filter((e) => e.event === "response" && e.hitl_point === "inspection" && e.action === "redo");
+      steps.push(step("active", `트레이 검수${redone.length ? ` (재조제 ${redone.length}회)` : ""}`, null,
+        trayUpload(rx, order, redone.length > 0)));
     } else if (trayChecking) {
       steps.push(step("active", `트레이 검수${attempt}`, lastTray.at, spinner("트레이 사진에서 칸별 알약을 확인하는 중입니다…")));
     } else if (s === "processing") {
@@ -419,7 +421,7 @@
   }
 
   // 트레이 사진 올리기 (승인된 처방에만). 트레이를 못 찾았으면 이유를 보이고 다시 올리게 한다
-  function trayUpload(rx, order) {
+  function trayUpload(rx, order, redone) {
     const retake = rx.card && rx.card.retake;
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const file = h("input", { type: "file", name: "image", accept: "image/jpeg,image/png", required: true,
@@ -447,7 +449,9 @@
       retake
         ? h("div", { class: "retake", role: "alert" }, h("strong", {}, "다시 찍어 주세요"), h("p", {}, retake.message),
           retake.code ? h("p", { class: "muted mono" }, retake.code) : null)
-        : h("p", { class: "ok-note" }, "조제지시서를 승인했습니다. 조제 계획대로 트레이를 채운 뒤 사진을 올려 주세요."),
+        : h("p", { class: "ok-note" }, redone
+          ? "재조제: 조제 계획대로 트레이를 다시 채운 뒤 사진을 올려 주세요."
+          : "조제지시서를 승인했습니다. 조제 계획대로 트레이를 채운 뒤 사진을 올려 주세요."),
       retake ? null : h("p", { class: "muted", id: "tray-help" }, "트레이 전체가 보이고 아침 줄이 위로 오게 찍어 주세요."),
       form,
       order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null);
@@ -513,17 +517,35 @@
   function inspectionCard(rx) {
     const { inspection: a3, names, notice } = rx.card;
     const extra = [notice ? h("p", { class: "retake", role: "status" }, notice) : null];
-    // 확인 완료 · 재조제 응답(POST …/inspection)은 다음 작업에서 연결한다
-    const actions = h("div", { class: "actions" },
-      h("span", { class: "muted" }, "확인 완료 · 재조제 버튼은 준비 중입니다."),
-      h("button", { type: "button", class: "secondary", disabled: true }, "재조제 (트레이 다시 채우기)"),
-      h("button", { type: "button", disabled: true }, "확인 완료"));
-    return h("div", { class: "approval" }, trayLayout(rx, a3, names || {}, extra), actions);
+    // HITL ② 응답 (F-WEB-09 ③): 확인 완료 → 완료, 재조제 → 트레이를 다시 채워 사진을 다시 올린다
+    const err = h("p", { class: "form-error", role: "alert", hidden: true });
+    const redo = h("button", { type: "button", class: "secondary" }, "재조제 (트레이 다시 채우기)");
+    const ok = h("button", { type: "button" }, "확인 완료");
+    async function reply(action) {
+      err.hidden = true;
+      redo.disabled = ok.disabled = true;
+      try {
+        await api(`/api/prescriptions/${rx.id}/inspection`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+        await refresh();
+      } catch (e) {
+        err.textContent = e.message;
+        err.hidden = false;
+        redo.disabled = ok.disabled = false;
+      }
+    }
+    redo.addEventListener("click", () => reply("redo"));
+    ok.addEventListener("click", () => reply("confirm"));
+    return h("div", { class: "approval" }, trayLayout(rx, a3, names || {}, extra),
+      h("div", { class: "actions" }, redo, ok), err);
   }
 
   function doneInspection(rx) {
     const a3 = rx.card.inspection;
-    const allOk = !(a3.summary && a3.summary.hitl_required);
+    const allOk = !(a3.summary && a3.summary.hitl_required);   // 아니면 HITL ②에서 약사가 확인 완료를 누른 것
     return h("div", { class: "approval" },
       h("p", { class: "ok-note" }, allOk ? "전 칸 일치 — 약사 확인 없이 완료했습니다." : "약사가 검수 결과를 확인했습니다."),
       h("details", {}, h("summary", {}, "검수 결과 보기"), trayLayout(rx, a3, drugNames(rx.card.order))));

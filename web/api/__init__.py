@@ -5,6 +5,7 @@
     GET  /api/prescriptions/<id>/images/<img_id>  원본 이미지
     POST /api/prescriptions/<id>/approve          HITL ① 조제지시서 승인
     POST /api/prescriptions/<id>/tray             트레이 사진 업로드 (multipart, 필드 image. 트레이 대기 처방에만)
+    POST /api/prescriptions/<id>/inspection       HITL ② 검수 확인 {action: confirm | redo}
 
 로그인 안 됨은 401, 다른 약국의 처방은 404, 상태가 맞지 않으면 409로 답한다.
 """
@@ -244,13 +245,41 @@ def approve(rx_id: str):
         if workflow.needs_confirm(order) and body.get("confirmed") is not True:
             return _error(409, "위험 신호와 확인 필요 항목을 확인했다는 칸에 체크해 주세요.")
         action, reason = "approve", None
+    # 경고 확인 체크 여부 (Q11): 확인할 것이 있던 승인이면 체크해야만 여기까지 온다. manual(위험)은 사유로 대신한다
+    warning_ack = None if action == "manual" else (workflow.needs_confirm(order) and body.get("confirmed") is True)
 
     try:   # 응답이 Agent가 받을 모양인지 미리 본다: 잘못된 응답이 백그라운드에서 처방을 실패로 만들지 않게
         gateway().check_reply(str(row["id"]), "rx_approval", {"action": action, **reply})
     except ValueError as e:
         return _error(400, str(e))
     if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
-                      action, before=order, after=order, reason=reason):
+                      action, before=order, after=order, reason=reason, warning_ack=warning_ack):
         return _error(409, "이미 처리된 승인입니다. 화면을 새로고침해 주세요.")
     workflow.jobs.submit(workflow.run_resume, row["id"], "rx_approval", {"action": action, **reply})
+    return jsonify(id=str(row["id"]), status="processing"), 202
+
+
+@bp.post("/prescriptions/<rx_id>/inspection")
+@api_login_required
+def inspection_reply(rx_id: str):
+    """HITL ② 검수 확인 (F-WEB-09, REQ-WEB-04). confirm이면 완료(done), redo(재조제)면 트레이 대기로 돌아가 다시 찍는다."""
+    row = _load(rx_id)
+    if row["status"] != "waiting_approval" or row["hitl_point"] != "inspection":
+        return _error(409, "검수 확인을 기다리는 처방이 아닙니다. 화면을 새로고침해 주세요.")
+    pause = gateway().pending(str(row["id"]))
+    if pause is None or pause.hitl_point != "inspection":
+        return _error(409, "확인할 검수 결과를 찾지 못했습니다. 화면을 새로고침해 주세요.")
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action not in ("confirm", "redo"):
+        return _error(400, "확인 완료(confirm) 또는 재조제(redo)를 골라 주세요.")
+    reply = {"action": action}
+    try:
+        gateway().check_reply(str(row["id"]), "inspection", reply)
+    except ValueError as e:
+        return _error(400, str(e))
+    if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "inspection", action,
+                      before=pause.payload.get("inspection"), after=reply):
+        return _error(409, "이미 처리된 검수 확인입니다. 화면을 새로고침해 주세요.")
+    workflow.jobs.submit(workflow.run_resume, row["id"], "inspection", reply)
     return jsonify(id=str(row["id"]), status="processing"), 202

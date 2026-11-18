@@ -111,13 +111,14 @@ class FakeRx:
     def inspections(self, rx_id):
         return [dict(i) for i in self.inspection_rows if i["rx"] == rx_id]
 
-    def respond(self, rx_id, pharmacy_id, user_id, hitl_point, action, before, after, reason=None):
+    def respond(self, rx_id, pharmacy_id, user_id, hitl_point, action, before, after, reason=None, warning_ack=None):
         r = self.rows.get(rx_id)
         if not r or r["pharmacy_id"] != pharmacy_id or r["status"] != "waiting_approval" or r["hitl_point"] != hitl_point:
             return False
         r.update(status="processing", hitl_point=None)
         self.approvals.append({"rx": rx_id, "hitl_point": hitl_point, "action": action, "user_id": user_id,
-                               "before": before, "after": after, "created_at": datetime.now(timezone.utc)})
+                               "before": before, "after": after, "reason": reason, "warning_ack": warning_ack,
+                               "created_at": datetime.now(timezone.utc)})
         return True
 
 
