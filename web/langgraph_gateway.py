@@ -23,6 +23,7 @@ FakeGateway(web/agent_gateway.py)와 메서드 · 돌려주는 값이 같다. �
 체크포인트는 AgentApi.from_settings가 .env DATABASE_URL(웹과 같은 PostgreSQL)에 붙인다 (PostgresSaver).
 그래서 서버를 껐다 켜도 승인 대기 처방은 같은 곳에서 이어진다 (REQ-WEB-03). Agent는 웹 테이블을 직접 쓰지 않는다.
 OCR은 .env CV_USE_STUB=1이면 cv/stub.py(시연용 고정 결과), 0이면 cv/ocr.py(EasyOCR)다.
+트레이 검수도 같다: 1이면 agent.cv_adapter.stub_inspect(CV_STUB_SCENARIO), 0이면 cv/tray_inspect.py(보정 → 검출 → 판정).
 """
 from __future__ import annotations
 
@@ -67,6 +68,33 @@ def real_ocr(image_path: Path, image_id: str) -> dict[str, Any]:
     from cv.ocr import extract_text
 
     return extract_text(Path(image_path), "prescription", image_id)
+
+
+def tray_path(image_id: str) -> Path:
+    """트레이 사진 ID(웹 images.id) → 저장된 파일 경로. 백그라운드 작업(앱 컨텍스트 안)에서 부른다."""
+    import uuid
+
+    from cv.stub import CVError
+    from web import rx, storage
+
+    try:
+        key = rx.tray_image_key(uuid.UUID(str(image_id)))
+    except ValueError:
+        key = None
+    if key is None:
+        raise CVError(f"트레이 사진을 찾지 못했습니다: {image_id}")
+    return storage.path_of(key)
+
+
+def real_inspect(image_id: str, plan: dict[str, Any]) -> dict[str, Any]:
+    """cv/tray_inspect.py로 검수한다 (Agent 그래프가 받는 모양: (사진 ID, A.4) -> A.3). A.3 image_id는 웹의 사진 ID다.
+
+    agent.cv_adapter.file_inspect와 같은 일인데, A.3 image_id를 파일 이름이 아니라 웹의 사진 ID로 맞추기 위해 따로 둔다
+    (웹이 검수 결과를 inspections에 남길 때 이 ID로 사진과 잇는다). 처음 부를 때 모델 두 개를 읽어 몇 초 걸린다.
+    """
+    from cv.tray_inspect import inspect_tray
+
+    return inspect_tray(tray_path(image_id), plan, image_id=image_id)
 
 
 class LangGraphGateway:
@@ -138,9 +166,7 @@ def from_settings() -> LangGraphGateway:
     from agent.cv_adapter import stub_inspect
 
     use_stub = os.getenv("CV_USE_STUB", "1").strip() != "0"
-    kwargs: dict[str, Any] = {}
-    if use_stub:
-        kwargs["inspect"] = stub_inspect()   # 트레이 사진 흐름이 웹에 붙으면 실제 CV(file_inspect)로 바꾼다
+    kwargs: dict[str, Any] = {"inspect": stub_inspect() if use_stub else real_inspect}
     gateway = LangGraphGateway(AgentApi.from_settings(**kwargs), stub_ocr if use_stub else real_ocr)
     atexit.register(gateway.close)
     return gateway

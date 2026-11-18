@@ -92,6 +92,10 @@ class FakeRx:
                                "created_at": datetime.now(timezone.utc)}
         return img_id
 
+    def tray_image_key(self, image_id):
+        i = self.images.get(image_id)
+        return i["storage_key"] if i and i["kind"] == "tray" else None
+
     def tray_images(self, rx_id):
         return [{"id": i["id"], "created_at": i["created_at"]} for i in self.images.values()
                 if i["rx"] == rx_id and i["kind"] == "tray"]
@@ -126,7 +130,7 @@ class FakeRx:
 def fake_rx(monkeypatch):
     f = FakeRx()
     for name in ("create", "get", "first_image", "image", "history", "set_waiting", "set_waiting_tray", "set_failed", "respond",
-                 "attach_tray", "set_done", "add_inspection", "inspections", "tray_images"):
+                 "attach_tray", "set_done", "add_inspection", "inspections", "tray_images", "tray_image_key"):
         monkeypatch.setattr(rx, name, getattr(f, name))
     return f
 

@@ -335,3 +335,47 @@ def test_web_tray_flow_on_the_agent(backend, monkeypatch, tmp_path, fake_rx):
     assert (d["status"], d["hitl_point"]) == ("waiting_approval", "inspection")
     assert d["card"]["inspection"]["image_id"] == image_id and d["card"]["inspection"]["prescription_id"] == rx_id
     assert len(fake_rx.inspection_rows) == 1
+
+
+def test_real_cv_gets_the_saved_tray_file_and_the_web_image_id(backend, monkeypatch, tmp_path, fake_rx):
+    """CV_USE_STUB=0 경로: Agent가 사진 ID로 부르면 웹이 저장한 트레이 파일을 찾아 cv.tray_inspect.inspect_tray에 넘긴다."""
+    from agent.api import AgentApi
+    from agent.checkpoint import memory_checkpointer
+    from agent.drug_dictionary import load_dictionary
+    from agent.graph import build_graph
+    from agent.pipeline import structure_prescription
+    from cv import stub
+    from web.langgraph_gateway import LangGraphGateway, real_inspect, stub_ocr
+
+    seen = []
+
+    def fake_inspect_tray(path, plan, *, image_id=None):
+        seen.append((Path(path), image_id))
+        return {**stub.inspect(path, plan, scenario="mismatch"), "image_id": image_id}
+
+    monkeypatch.setattr("cv.tray_inspect.inspect_tray", fake_inspect_tray)
+    dictionary = load_dictionary()
+    graph = build_graph(dictionary=dictionary, api=None, checkpointer=memory_checkpointer(), inspect=real_inspect,
+                        structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=lambda *a: pytest.fail("LLM")))
+    c = make_client(monkeypatch, tmp_path)
+    c.application.extensions["agent"] = LangGraphGateway(AgentApi(graph, dictionary), stub_ocr)
+    rx_id = upload(c).get_json()["id"]
+    assert approve(c, rx_id, confirmed=True).status_code == 202
+    image_id = tray(c, rx_id, PNG, "t.png").get_json()["image_id"]
+
+    (path, got_id), = seen
+    assert got_id == image_id and path.read_bytes() == PNG and path.is_relative_to(tmp_path / "uploads")
+    d = detail(c, rx_id)
+    assert (d["status"], d["hitl_point"]) == ("waiting_approval", "inspection")
+    assert d["card"]["inspection"]["image_id"] == image_id and len(fake_rx.inspection_rows) == 1
+
+
+def test_real_cv_with_an_unknown_photo_goes_back_to_waiting_tray(backend, fake_rx, monkeypatch, tmp_path):
+    from web.langgraph_gateway import tray_path
+
+    c = make_client(monkeypatch, tmp_path)
+    with c.application.app_context():
+        for bad in ("not-a-uuid", str(uuid.uuid4())):
+            with pytest.raises(Exception) as e:
+                tray_path(bad)
+            assert e.value.code == "E_CV_INFER"      # web.workflow.TRAY_RETRY_CODES: 실패가 아니라 다시 찍기

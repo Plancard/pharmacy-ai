@@ -147,6 +147,12 @@ def add_inspection(rx_id: uuid.UUID, image_id: uuid.UUID, result: dict) -> None:
     )
 
 
+def tray_image_key(image_id: uuid.UUID) -> str | None:
+    """트레이 사진 ID → storage_key (CV 검수가 사진 파일을 찾을 때). 없거나 트레이 사진이 아니면 None."""
+    row = db.query_one("SELECT storage_key FROM images WHERE id = %s AND kind = 'tray'", (image_id,))
+    return row["storage_key"] if row else None
+
+
 def tray_images(rx_id: uuid.UUID) -> list[dict]:
     """처방에 올린 트레이 사진을 오래된 것부터 (타임라인: 다시 찍은 사진도 하나씩)."""
     return db.query_all(
