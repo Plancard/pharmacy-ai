@@ -47,7 +47,8 @@ def test_all_ok_goes_straight_to_done_and_keeps_the_inspection(client, fake_rx, 
     assert a3["image_id"] == image_id and a3["summary"]["hitl_required"] is False and len(a3["cells"]) == 12
     assert d["card"]["tray_image_url"].endswith(f"/images/{image_id}")
     assert client.get(d["card"]["tray_image_url"]).data == JPG           # 트레이 사진도 같은 약국만 받는다
-    assert [e["event"] for e in d["timeline"]] == ["received", "response", "inspected"]
+    assert [e["event"] for e in d["timeline"]] == ["received", "response", "tray_uploaded", "inspected"]
+    assert d["card"]["order"]["prescription_id"] == rx_id                # 완료 카드도 약 이름을 보일 수 있다
     assert len(fake_rx.inspection_rows) == 1
     assert len(list((tmp_path / "uploads").rglob("*.jpg"))) == 2         # 처방전 + 트레이
 
@@ -78,6 +79,7 @@ def test_tray_not_found_goes_back_to_waiting_tray_and_a_retake_works(client, fak
     assert d["status"] == "waiting_tray" and d["error_code"] is None     # 실패가 아니라 다시 찍기
     assert d["card"]["retake"]["code"] == "E_TRAY_NOT_FOUND" and "다시 찍어" in d["card"]["retake"]["message"]
     assert d["card"]["order"]["prescription_id"] == rx_id and fake_rx.inspection_rows == []
+    assert [e["event"] for e in d["timeline"]][-1] == "tray_uploaded"     # 올렸지만 검수 결과가 없는 사진
 
     monkeypatch.setenv("CV_STUB_SCENARIO", "ok")
     assert tray(client, rx_id).status_code == 202

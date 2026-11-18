@@ -147,6 +147,14 @@ def add_inspection(rx_id: uuid.UUID, image_id: uuid.UUID, result: dict) -> None:
     )
 
 
+def tray_images(rx_id: uuid.UUID) -> list[dict]:
+    """처방에 올린 트레이 사진을 오래된 것부터 (타임라인: 다시 찍은 사진도 하나씩)."""
+    return db.query_all(
+        "SELECT id, created_at FROM images WHERE prescription_id = %s AND kind = 'tray' ORDER BY created_at, id",
+        (rx_id,),
+    )
+
+
 def inspections(rx_id: uuid.UUID) -> list[dict]:
     """처방의 검수 결과를 오래된 것부터 (타임라인·완료 카드)."""
     return db.query_all(

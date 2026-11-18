@@ -126,8 +126,13 @@ def _image_url(rx_id: str, image_id: Any) -> str | None:
 
 
 def _timeline(row: dict, inspections: list[dict]) -> list[dict]:
-    """처방 타임라인에 시각을 붙일 사건: 접수, 약사의 HITL 응답, 트레이 검수 결과. 오래된 것부터."""
+    """처방 타임라인에 시각을 붙일 사건: 접수, 약사의 HITL 응답, 트레이 사진 업로드, 트레이 검수 결과. 오래된 것부터.
+
+    트레이 사진은 올렸는데 검수 결과가 없으면 검수 중이거나 다시 찍어야 하는 사진이다 (화면이 구분해 보인다).
+    """
     events = [{"event": "received", "at": row["created_at"]}]
+    for t in rx.tray_images(row["id"]):
+        events.append({"event": "tray_uploaded", "image_id": str(t["id"]), "at": t["created_at"]})
     for h in rx.history(row["id"]):
         events.append({"event": "response", "hitl_point": h["hitl_point"], "action": h["action"],
                        "at": h["created_at"]})
@@ -180,7 +185,8 @@ def detail(rx_id: str):
         body["card"] = card
     elif row["status"] == "done" and inspections:
         last = inspections[-1]
-        body["card"] = {"inspection": last["result_json"], "tray_image_url": _image_url(sid, last["image_id"])}
+        body["card"] = {"inspection": last["result_json"], "tray_image_url": _image_url(sid, last["image_id"]),
+                        "order": gateway().approved_order(sid)}
     return jsonify(body)
 
 

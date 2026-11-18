@@ -40,7 +40,8 @@ class FakeRx:
                "updated_at": datetime.now(timezone.utc)}
         self.rows[rx_id] = row
         img_id = uuid.uuid4()
-        self.images[img_id] = {"id": img_id, "rx": rx_id, "kind": kind, "storage_key": storage_key}
+        self.images[img_id] = {"id": img_id, "rx": rx_id, "kind": kind, "storage_key": storage_key,
+                               "created_at": datetime.now(timezone.utc)}
         return {**row, "image_id": img_id}
 
     def get(self, rx_id, pharmacy_id):
@@ -87,8 +88,13 @@ class FakeRx:
             return None
         r.update(status="processing")
         img_id = uuid.uuid4()
-        self.images[img_id] = {"id": img_id, "rx": rx_id, "kind": "tray", "storage_key": storage_key}
+        self.images[img_id] = {"id": img_id, "rx": rx_id, "kind": "tray", "storage_key": storage_key,
+                               "created_at": datetime.now(timezone.utc)}
         return img_id
+
+    def tray_images(self, rx_id):
+        return [{"id": i["id"], "created_at": i["created_at"]} for i in self.images.values()
+                if i["rx"] == rx_id and i["kind"] == "tray"]
 
     def set_done(self, rx_id):
         r = self.rows[rx_id]
@@ -119,7 +125,7 @@ class FakeRx:
 def fake_rx(monkeypatch):
     f = FakeRx()
     for name in ("create", "get", "first_image", "image", "history", "set_waiting", "set_waiting_tray", "set_failed", "respond",
-                 "attach_tray", "set_done", "add_inspection", "inspections"):
+                 "attach_tray", "set_done", "add_inspection", "inspections", "tray_images"):
         monkeypatch.setattr(rx, name, getattr(f, name))
     return f
 

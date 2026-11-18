@@ -8,6 +8,9 @@
   const TIMES = { morning: "아침", noon: "점심", evening: "저녁", bedtime: "취침 전" };
   const TIME_ORDER = ["morning", "noon", "evening", "bedtime"];
   const RISK = { none: "해당 없음", caution: "주의", warning: "경고", danger: "위험" };
+  const CELL = { ok: "일치", mismatch: "불일치", need_review: "확인 필요" };
+  const CELL_REASON = { boundary: "칸 경계에 걸침", overlap: "알약 겹침", rotated: "트레이가 뒤집혀 찍힘" };
+  const DAYS = [1, 2, 3];   // 트레이 3열 (1~3일), 4행은 TIME_ORDER
   const POLL_MS = 2000;
   const LOW_CONF = 0.5;
 
@@ -182,18 +185,28 @@
     }
     const flowOpen = !["failed", "cancelled"].includes(s);
 
-    // 트레이 검수 (트레이 사진 업로드·검수 결과 카드는 11/18에 연결)
+    // 트레이 검수 (F-WEB-02 ④ · F-WEB-09): 승인 뒤 트레이 사진을 올리면 검수 → 전 칸 일치면 완료, 아니면 HITL ②
+    const trays = events.filter((e) => e.event === "tray_uploaded");
+    const lastTray = trays[trays.length - 1];
+    const inspected = events.filter((e) => e.event === "inspected");
+    const trayChecking = s === "processing" && lastTray && !inspected.some((e) => e.image_id === lastTray.image_id);
+    const attempt = trays.length > 1 ? ` (${trays.length}번째 사진)` : "";
     if (!approval) {
       steps.push(step(flowOpen ? "pending" : (s === "failed" ? "pending" : "cancelled"), "트레이 검수", null,
         flowOpen ? h("p", { class: "muted" }, "조제지시서를 승인하면 조제 후 트레이 사진을 올릴 수 있습니다.") : null));
     } else if (s === "waiting_tray") {
-      steps.push(step("active", "트레이 검수", null,
-        h("p", { class: "ok-note" }, "조제지시서를 승인했습니다. 조제 후 트레이 사진을 올려 주세요 (트레이 검수는 준비 중)."),
-        order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null));
+      steps.push(step("active", "트레이 검수", null, trayUpload(rx, order)));
+    } else if (trayChecking) {
+      steps.push(step("active", `트레이 검수${attempt}`, lastTray.at, spinner("트레이 사진에서 칸별 알약을 확인하는 중입니다…")));
     } else if (s === "processing") {
       steps.push(step("active", "승인 내용 반영", null, spinner("승인한 내용으로 조제 계획을 확정하는 중입니다…")));
+    } else if (s === "waiting_approval" && rx.hitl_point === "inspection" && rx.card) {
+      steps.push(step("active", `트레이 검수 확인${attempt}`, inspected.length ? inspected[inspected.length - 1].at : null,
+        inspectionCard(rx)));
     } else if (s === "done") {
-      steps.push(step("done", "트레이 검수", null));
+      const last = inspected[inspected.length - 1];
+      steps.push(step("done", `트레이 검수${attempt}`, last && last.at, rx.card && rx.card.inspection
+        ? doneInspection(rx) : null));
     } else if (s === "failed") {
       steps.push(step("error", "승인 이후 처리", rx.updated_at, ...failure(rx)));
     } else if (s === "cancelled") {
@@ -393,6 +406,127 @@
           f.querySelector("input").focus();
         } }, "항목 수정")),
       err, form);
+  }
+
+  // ---------------------------------------------------------- 트레이 검수
+  function drugNames(order) {
+    return Object.fromEntries(((order && order.items) || []).filter((it) => it.item_code).map((it) => [it.item_code, it.name]));
+  }
+
+  function counts(c, names) {
+    const shown = Object.entries(c || {}).filter(([, n]) => n).map(([code, n]) => `${names[code] || code} ${n}정`);
+    return shown.length ? shown.join(", ") : "없음";
+  }
+
+  // 트레이 사진 올리기 (승인된 처방에만). 트레이를 못 찾았으면 이유를 보이고 다시 올리게 한다
+  function trayUpload(rx, order) {
+    const retake = rx.card && rx.card.retake;
+    const err = h("p", { class: "form-error", role: "alert", hidden: true });
+    const file = h("input", { type: "file", name: "image", accept: "image/jpeg,image/png", required: true,
+      id: "tray-image", "aria-describedby": retake ? null : "tray-help" });
+    const btn = h("button", { type: "submit" }, retake ? "다시 올리기" : "트레이 사진 올리기");
+    const form = h("form", { class: "upload" },
+      h("label", { for: "tray-image" }, "트레이 사진 (JPG·PNG)"),
+      h("div", { class: "upload-row" }, file, btn), err);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      btn.disabled = true;
+      btn.textContent = "올리는 중…";
+      try {
+        await api(`/api/prescriptions/${rx.id}/tray`, { method: "POST", body: new FormData(form) });
+        await refresh();
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+        btn.disabled = false;
+        btn.textContent = retake ? "다시 올리기" : "트레이 사진 올리기";
+      }
+    });
+    return h("div", { class: "tray-upload" },
+      retake
+        ? h("div", { class: "retake", role: "alert" }, h("strong", {}, "다시 찍어 주세요"), h("p", {}, retake.message),
+          retake.code ? h("p", { class: "muted mono" }, retake.code) : null)
+        : h("p", { class: "ok-note" }, "조제지시서를 승인했습니다. 조제 계획대로 트레이를 채운 뒤 사진을 올려 주세요."),
+      retake ? null : h("p", { class: "muted", id: "tray-help" }, "트레이 전체가 보이고 아침 줄이 위로 오게 찍어 주세요."),
+      form,
+      order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null);
+  }
+
+  // 4행(아침·점심·저녁·취침 전) × 3열(1~3일) 격자. 칸마다 판정 글자를 함께 써서 색만으로 구분하지 않는다.
+  // 칸을 누르면 예상·실제 약과 확인 필요 사유를 아래에 보인다 (F-WEB-09 ②)
+  function trayGrid(a3, names, detail) {
+    const byKey = Object.fromEntries((a3.cells || []).map((c) => [`${c.day}-${c.time}`, c]));
+    function show(c, btn) {
+      for (const b of btn.closest("table").querySelectorAll(".cell")) b.toggleAttribute("aria-pressed", b === btn);
+      detail.replaceChildren(
+        h("strong", {}, `${c.day}일 ${TIMES[c.time]} — ${CELL[c.status] || c.status}`),
+        h("dl", {},
+          h("dt", {}, "예상"), h("dd", {}, counts(c.expected, names)),
+          h("dt", {}, "실제"), h("dd", {}, counts(c.actual, names)),
+          c.reasons && c.reasons.length ? [h("dt", {}, "사유"), h("dd", {}, c.reasons.map((r) => CELL_REASON[r] || r).join(", "))] : null));
+    }
+    const body = TIME_ORDER.map((t) => h("tr", {}, h("th", { scope: "row" }, TIMES[t]), DAYS.map((d) => {
+      const c = byKey[`${d}-${t}`];
+      if (!c) return h("td", {}, h("span", { class: "muted" }, "-"));
+      const empty = !Object.values(c.expected || {}).some(Boolean) && !Object.values(c.actual || {}).some(Boolean);
+      const btn = h("button", { type: "button", class: `cell cell-${c.status}${empty ? " cell-empty" : ""}`,
+        "aria-label": `${d}일 ${TIMES[t]} ${CELL[c.status]}` },
+        h("span", { class: "cell-state" }, empty && c.status === "ok" ? "빈 칸" : CELL[c.status]),
+        h("span", { class: "cell-items" }, empty ? "" : counts(c.actual, names)));
+      btn.addEventListener("click", () => show(c, btn));
+      return h("td", {}, btn);
+    })));
+    const grid = h("table", { class: "tray-grid" },
+      h("thead", {}, h("tr", {}, h("th", {}, ""), DAYS.map((d) => h("th", { scope: "col" }, `${d}일`)))),
+      h("tbody", {}, body));
+    const first = (a3.cells || []).find((c) => c.status !== "ok");
+    if (first) {   // 문제가 있는 첫 칸을 미리 펼쳐 둔다
+      const btn = grid.querySelector(`tbody tr:nth-child(${TIME_ORDER.indexOf(first.time) + 1}) td:nth-child(${first.day + 1}) .cell`);
+      if (btn) show(first, btn);
+    } else {
+      detail.replaceChildren(h("span", { class: "muted" }, "칸을 누르면 예상·실제 약을 보여 줍니다."));
+    }
+    return grid;
+  }
+
+  function summaryLine(a3) {
+    const s = a3.summary || {};
+    return h("p", { class: "tray-summary" },
+      h("span", { class: "chip ok" }, `일치 ${s.ok || 0}`), " ",
+      h("span", { class: "chip danger" }, `불일치 ${s.mismatch || 0}`), " ",
+      h("span", { class: "chip warning" }, `확인 필요 ${s.need_review || 0}`));
+  }
+
+  function trayLayout(rx, a3, names, extra) {
+    const detail = h("div", { class: "cell-detail", "aria-live": "polite" });
+    const url = rx.card.tray_image_url;
+    return h("div", { class: "approval-grid" },
+      url ? h("figure", { class: "rx-image" },
+        h("a", { href: url, target: "_blank", rel: "noopener", class: "img-wrap" },
+          h("img", { src: url, alt: `처방 ${rx.display_no} 트레이 사진` })),
+        h("figcaption", { class: "muted" }, "올린 트레이 사진 (누르면 크게 보기)")) : null,
+      h("div", { class: "approval-body" }, summaryLine(a3), trayGrid(a3, names, detail), detail, ...(extra || [])));
+  }
+
+  // HITL ② 검수 결과 카드: 불일치·확인 필요 칸이 있을 때만 온다 (전 칸 일치면 바로 완료)
+  function inspectionCard(rx) {
+    const { inspection: a3, names, notice } = rx.card;
+    const extra = [notice ? h("p", { class: "retake", role: "status" }, notice) : null];
+    // 확인 완료 · 재조제 응답(POST …/inspection)은 다음 작업에서 연결한다
+    const actions = h("div", { class: "actions" },
+      h("span", { class: "muted" }, "확인 완료 · 재조제 버튼은 준비 중입니다."),
+      h("button", { type: "button", class: "secondary", disabled: true }, "재조제 (트레이 다시 채우기)"),
+      h("button", { type: "button", disabled: true }, "확인 완료"));
+    return h("div", { class: "approval" }, trayLayout(rx, a3, names || {}, extra), actions);
+  }
+
+  function doneInspection(rx) {
+    const a3 = rx.card.inspection;
+    const allOk = !(a3.summary && a3.summary.hitl_required);
+    return h("div", { class: "approval" },
+      h("p", { class: "ok-note" }, allOk ? "전 칸 일치 — 약사 확인 없이 완료했습니다." : "약사가 검수 결과를 확인했습니다."),
+      h("details", {}, h("summary", {}, "검수 결과 보기"), trayLayout(rx, a3, drugNames(rx.card.order))));
   }
 
   // 새로고침해도 보던 처방을 다시 연다 (REQ-WEB-03)
