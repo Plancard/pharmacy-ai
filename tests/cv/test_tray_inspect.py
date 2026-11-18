@@ -204,30 +204,31 @@ def test_a_bad_plan_fails_before_the_model_runs(monkeypatch, tmp_path):
 
 
 # ------------------------------------------------------------ 정답표 평가
-CELLS_CSV = """group,day,time,expected,actual,flags
-g01,1,morning,0:1;1:1,0:1;1:1,
-g01,1,noon,0:1;1:1,1:1,
-g01,1,evening,0:1;1:1,0:1;1:1,boundary
-g01,1,bedtime,,,
-g01,2,morning,0:1,0:1,
-g01,2,noon,0:1,0:1,
-g01,2,evening,0:1,0:1,
-g01,2,bedtime,,,
-g01,3,morning,,,
-g01,3,noon,,,
-g01,3,evening,,,
-g01,3,bedtime,,,
+CELLS_CSV = """group,day,time,planned,actual,error,flags
+g01,1,morning,0:1;1:1,0:1;1:1,,
+g01,1,noon,0:1;1:1,1:1,missing,
+g01,1,evening,0:1;1:1,0:1;1:1,,boundary
+g01,1,bedtime,,,,
+g01,2,morning,0:1,0:1,,
+g01,2,noon,0:1,0:1,,
+g01,2,evening,0:1,0:1,,
+g01,2,bedtime,,,,
+g01,3,morning,,,,
+g01,3,noon,,,,
+g01,3,evening,,,,
+g01,3,bedtime,,,,
 """
 
 
 def test_load_truth_and_plan_from_counts(tmp_path):
     (tmp_path / "cells.csv").write_text(CELLS_CSV + "".join(
-        f"g21,{d},{t},,{'3:1' if (d, t) == (1, 'morning') else ''},\n" for d in (1, 2, 3) for t in TIMES),
+        f"g21,{d},{t},,{'3:1' if (d, t) == (1, 'morning') else ''},,\n" for d in (1, 2, 3) for t in TIMES),
         encoding="utf-8")
     truth = ti.load_truth(tmp_path / "cells.csv")
     assert truth["g01"][(1, "noon")]["expected"] == Counter({0: 1, 1: 1})
     assert truth["g01"][(1, "noon")]["actual"] == Counter({1: 1})
     assert truth["g01"][(1, "evening")]["flags"] == {"boundary"}
+    assert (truth["g01"][(1, "noon")]["error"], truth["g01"][(1, "morning")]["error"]) == ("missing", "")
     assert truth["g21"][(1, "morning")]["expected"] == Counter({3: 1})       # 추가 촬영분: expected = actual
 
     plan = ti.plan_from_counts({k: v["expected"] for k, v in truth["g01"].items()}, "g01")
@@ -250,3 +251,18 @@ def test_evaluate_counts_misses_and_false_alarms(tmp_path):
     assert (stat["wrong_cells"], stat["wrong_missed"]) == (3, 1)
     assert (stat["normal_cells"], stat["normal_false_alarm"]) == (30, 1)
     assert stat["flagged_cells"] == 3 and len(rows) == 36
+    assert stat["truth_conflict"] == 0 and rows[1]["error"] == "missing"
+
+
+def test_old_expected_column_still_reads(tmp_path):
+    (tmp_path / "cells.csv").write_text(CELLS_CSV.replace("planned", "expected", 1), encoding="utf-8")
+    assert ti.load_truth(tmp_path / "cells.csv")["g01"][(1, "noon")]["expected"] == Counter({0: 1, 1: 1})
+
+
+def test_truth_conflict_is_counted(tmp_path):
+    """error 열은 비었는데 planned ≠ actual이면(또는 반대) 정답표 확인용으로 센다."""
+    (tmp_path / "cells.csv").write_text(CELLS_CSV.replace("1:1,missing,", "1:1,,"), encoding="utf-8")
+    truth = ti.load_truth(tmp_path / "cells.csv")
+    plan = ti.plan_from_counts({k: v["expected"] for k, v in truth["g01"].items()}, "g01")
+    stat, _ = ti.evaluate([("a.jpg", "g01", ti.judge(filled(plan), plan))], truth)
+    assert stat["truth_conflict"] == 1

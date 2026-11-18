@@ -24,7 +24,7 @@
 
 정답표 평가 (저장소 루트에서, 모델 필요. test 그룹은 11/20 1회 원칙이라 기본으로 막는다)
   python -m cv.tray_inspect --list data/splits/pose_val.txt --csv data/tray/inspect_check.csv
-  → 사진 × 칸마다 판정을 cells.csv(계획 expected · 실제 actual · flags)와 대조해
+  → 사진 × 칸마다 판정을 cells.csv(계획 planned · 실제 actual · error · flags)와 대조해
     '일부러 잘못 담은 칸을 놓치지 않았는지'(수용 기준: 모두 mismatch 또는 need_review)와
     '정상 칸 오판정 비율'(수용 기준 5% 이하)을 출력한다.
 """
@@ -155,18 +155,21 @@ def _parse(s):
 
 
 def load_truth(path):
-    """cells.csv → {group: {(day, time): {"expected": Counter, "actual": Counter, "flags": set}}}.
+    """cells.csv(group,day,time,planned,actual,error,flags) → {group: {(day, time): {"expected", "actual", "error", "flags"}}}.
 
-    expected 열이 없거나 그룹의 expected가 모두 비어 있으면(추가 촬영분: 일부러 틀린 칸 없음) expected = actual.
+    expected = planned(계획한 배치), actual = 실제로 담은 것, error = 일부러 틀린 종류(wrong · missing · extra, 정상은 빈칸).
+    그룹의 planned가 모두 비어 있으면(추가 촬영분 cells_add: planned 없이 actual만 적음, 틀린 칸 없음) expected = actual.
     """
     groups = {}
     with open(path, newline="", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
             g = r["group"].strip()
+            planned = r.get("planned", r.get("expected"))
             groups.setdefault(g, {})[(int(r["day"]), r["time"].strip())] = {
-                "expected": _parse(r.get("expected")), "actual": _parse(r.get("actual")),
-                "flags": set((r.get("flags") or "").replace(";", " ").replace(",", " ").split()),
-                "has_expected": bool((r.get("expected") or "").strip())}
+                "expected": _parse(planned), "actual": _parse(r.get("actual")),
+                "error": (r.get("error") or "").strip(),
+                "flags": set((r.get("flags") or "").replace(";", " ").replace(",", " ").replace("|", " ").split()),
+                "has_expected": bool((planned or "").strip())}
     for cells in groups.values():
         if not any(c["has_expected"] for c in cells.values()):
             for c in cells.values():
@@ -178,6 +181,7 @@ def evaluate(results, truth):
     """results: [(사진, group, A.3 | None)] → 집계 dict와 칸별 행.
 
     정답 칸 분류: wrong(계획 ≠ 실제, 일부러 잘못 담음) · flagged(정답표에 boundary·overlap 표시) · normal(그 밖)
+    정답표 error 열과 계획 ≠ 실제가 어긋나는 칸은 stat["truth_conflict"]로 센다 (정답표 확인용)
     수용 기준(F-CV-05): wrong 칸은 모두 ok가 아니어야 하고, normal 칸의 오판정(ok가 아님)은 5% 이하.
     """
     rows, stat = [], Counter()
@@ -190,6 +194,8 @@ def evaluate(results, truth):
             stat["rotated_photos"] += 1
         for c in a3["cells"]:
             t = truth[group][(c["day"], c["time"])]
+            if bool(t.get("error")) != (t["expected"] != t["actual"]):
+                stat["truth_conflict"] += 1
             kind = ("wrong" if t["expected"] != t["actual"] else
                     "flagged" if t["flags"] & set(REASON_ORDER) else "normal")
             stat[f"{kind}_cells"] += 1
@@ -199,6 +205,7 @@ def evaluate(results, truth):
             if kind == "normal" and bad:
                 stat["normal_false_alarm"] += 1
             rows.append({"file": name, "group": group, "day": c["day"], "time": c["time"], "truth": kind,
+                         "error": t.get("error", ""),
                          "status": c["status"], "reasons": " ".join(c["reasons"]),
                          "expected": ";".join(f"{k}:{v}" for k, v in sorted(c["expected"].items())),
                          "detected": ";".join(f"{k}:{v}" for k, v in sorted(c["actual"].items()))})
@@ -246,7 +253,7 @@ def main(argv=None):
     stat, rows = evaluate(results, truth)
     Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
     with open(args.csv, "w", newline="", encoding="utf-8-sig") as f:
-        wr = csv.DictWriter(f, fieldnames=["file", "group", "day", "time", "truth", "status", "reasons",
+        wr = csv.DictWriter(f, fieldnames=["file", "group", "day", "time", "truth", "error", "status", "reasons",
                                            "expected", "detected"])
         wr.writeheader()
         wr.writerows(rows)
@@ -257,6 +264,8 @@ def main(argv=None):
     print(f"  잘못 담은 칸 {stat['wrong_cells']}개 중 놓침 {stat['wrong_missed']}개 (기준: 0)")
     print(f"  정상 칸 {normal}개 중 오판정 {stat['normal_false_alarm']}개 = {rate:.1%} (기준: 5% 이하)")
     print(f"  정답표에 경계·겹침 표시된 칸 {stat['flagged_cells']}개 (참고)")
+    if stat["truth_conflict"]:
+        print(f"  주의: 정답표 error 열과 planned ≠ actual이 어긋나는 칸 {stat['truth_conflict']}개 (cells.csv 확인)")
     print(f"  칸별 결과 → {args.csv}")
     return 0 if stat["wrong_missed"] == 0 and rate <= 0.05 else 1
 
