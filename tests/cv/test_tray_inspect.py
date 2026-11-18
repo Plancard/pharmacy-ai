@@ -265,6 +265,15 @@ def test_group_of_photo_names(path, group):
     assert ti.group_of(path, photos, {"g07": {}, "g13": {}}) == group
 
 
+def test_evaluate_rotated(tmp_path):
+    plan = plan_3days()
+    up = ti.judge(filled(plan), plan)
+    down = ti.judge(ti.flip_180(filled(plan)), plan)
+    stat, rows = ti.evaluate_rotated([("rot_s01.jpg", "g20", down), ("rot_s02.jpg", "g20", up), ("rot_s03.jpg", "g20", None)])
+    assert (stat["rotated_hit"], stat["rotated_missed"], stat["retake"]) == (1, 1, 1)
+    assert [r["rotated"] for r in rows] == ["yes", "no", ""] and rows[1]["result"] == "놓침: 전 칸 일치로 봄"
+
+
 def test_old_expected_column_still_reads(tmp_path):
     (tmp_path / "cells.csv").write_text(CELLS_CSV.replace("planned", "expected", 1), encoding="utf-8")
     assert ti.load_truth(tmp_path / "cells.csv")["g01"][(1, "noon")]["expected"] == Counter({0: 1, 1: 1})

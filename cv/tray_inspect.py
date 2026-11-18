@@ -27,6 +27,10 @@
   → 사진 × 칸마다 판정을 cells.csv(계획 planned · 실제 actual · error · flags)와 대조해
     '일부러 잘못 담은 칸을 놓치지 않았는지'(수용 기준: 모두 mismatch 또는 need_review)와
     '정상 칸 오판정 비율'(수용 기준 5% 이하)을 출력한다.
+
+뒤집힘 확인 (rot_s01~05 = g20 배치를 180° 돌려 찍은 사진. 꼭짓점 test라 --allow-test가 있어야 돈다)
+  python -m cv.tray_inspect --list rot.txt --group g20 --rotated --allow-test --csv data/tray/inspect_rot.csv
+  → 사진마다 12칸 모두 rotated로 판정됐는지 (수용 기준: 전부)
 """
 import argparse
 import csv
@@ -228,6 +232,23 @@ def group_of(path, photo_group, groups):
     return m.group(1) if m and m.group(1) in groups else None
 
 
+def evaluate_rotated(results):
+    """뒤집어 찍은 사진: 12칸 모두 rotated로 판정됐는지. → (집계, 사진별 행)"""
+    stat, rows = Counter(), []
+    for name, group, a3 in results:
+        if a3 is None:
+            stat["retake"] += 1
+            rows.append({"file": name, "group": group, "rotated": "", "result": "재촬영(트레이 못 찾음)"})
+            continue
+        stat["photos"] += 1
+        hit = all(c["reasons"] == ["rotated"] for c in a3["cells"])
+        stat["rotated_hit" if hit else "rotated_missed"] += 1
+        bad = [f"{c['day']}일 {c['time']} {c['status']}" for c in a3["cells"] if c["status"] != "ok"]
+        rows.append({"file": name, "group": group, "rotated": "yes" if hit else "no",
+                     "result": "뒤집힘 판정" if hit else ("놓침: " + ", ".join(bad) if bad else "놓침: 전 칸 일치로 봄")})
+    return stat, rows
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="검수 판정 평가: 사진마다 inspect_tray를 돌려 cells.csv 정답과 대조")
     ap.add_argument("--list", required=True, help="사진 경로 목록 (data/splits/*.txt 형식, 원본 트레이 사진)")
@@ -236,13 +257,17 @@ def main(argv=None):
     ap.add_argument("--seg-model", default=None, help="트레이 분할 가중치 (기본 cv.tray.SEG_MODEL)")
     ap.add_argument("--csv", default="data/tray/inspect_check.csv")
     ap.add_argument("--allow-test", action="store_true", help="test 그룹도 돌린다 (11/20 최종 1회에만)")
+    ap.add_argument("--group", help="목록의 모든 사진을 이 그룹 배치로 본다 (예: rot 사진은 g20)")
+    ap.add_argument("--rotated", action="store_true", help="목록이 180° 뒤집어 찍은 사진: 전부 rotated로 판정됐는지만 본다")
     args = ap.parse_args(argv)
+
+    TEST_GROUPS = {"g03", "g06", "g08", "g10", "g11", "g20"}     # 11/11 확정 분할 (rot 사진은 꼭짓점 test)
+    if args.group and args.group in TEST_GROUPS | {"rot"} and not args.allow_test:
+        sys.exit(f"{args.group}는 test 그룹입니다 (rot 사진도 꼭짓점 test). 11/20 1회 평가 때만 --allow-test로 돌리세요.")
 
     from ultralytics import YOLO
     from cv import detect, tray
     from cv.stub import TrayNotFound
-
-    TEST_GROUPS = {"g03", "g06", "g08", "g10", "g11", "g20"}     # 11/11 확정 분할
     truth = load_truth(Path(args.tray) / "cells.csv")
     with open(Path(args.tray) / "photos.csv", newline="", encoding="utf-8-sig") as f:
         photo_group = {Path(r["file"].strip()).stem: r["group"].strip() for r in csv.DictReader(f)}
@@ -252,7 +277,12 @@ def main(argv=None):
     results, skipped, no_truth = [], Counter(), []
     for p in Path(args.list).read_text(encoding="utf-8").split():
         p = Path(p)
-        group = group_of(p, photo_group, truth)
+        if p.stem.startswith("rot_") and not args.allow_test:
+            skipped["rot 사진(꼭짓점 test)"] += 1
+            continue
+        group = args.group if args.group in truth else group_of(p, photo_group, truth)
+        if args.group and args.group not in truth:
+            sys.exit(f"cells.csv에 {args.group} 그룹이 없습니다")
         if group is None:
             skipped["정답표 없음(빈 트레이·꼭짓점 전용·회전 등)"] += 1
             no_truth.append(p.name)
@@ -266,6 +296,19 @@ def main(argv=None):
         except TrayNotFound:
             a3 = None
         results.append((p.name, group, a3))
+
+    if args.rotated:
+        stat, rows = evaluate_rotated(results)
+        Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.csv, "w", newline="", encoding="utf-8-sig") as f:
+            wr = csv.DictWriter(f, fieldnames=["file", "group", "rotated", "result"])
+            wr.writeheader()
+            wr.writerows(rows)
+        print(f"뒤집어 찍은 사진 {stat['photos'] + stat['retake']}장: 뒤집힘 판정 {stat['rotated_hit']}장, "
+              f"놓침 {stat['rotated_missed']}장, 재촬영 {stat['retake']}장 (기준: 전부 뒤집힘 판정)")
+        for r in rows:
+            print(f"  {r['file']}: {r['result']}")
+        return 0 if stat["rotated_missed"] == 0 and stat["retake"] == 0 else 1
 
     stat, rows = evaluate(results, truth)
     Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
