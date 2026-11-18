@@ -62,7 +62,7 @@ class FakeModel:
 
 
 # ---------------------------------------------------------------- rectify
-@pytest.mark.parametrize("angle", [0, 8, -8, 25, -25])
+@pytest.mark.parametrize("angle", [0, 8, -8, 25, -25, 55, -55])     # 55°: 긴 변이 가로에서 35° → 눕힘(30° 이내)이 아니라 그대로 보정
 def test_rectify_restores_template(angle):
     quad = tray_quad(angle)
     model = FakeModel([dense(quad)], [0.93])
@@ -92,22 +92,13 @@ def test_upside_down_photo_follows_screen_top():
     assert diff.mean() < 4
 
 
-def test_sideways_tray_is_upright():
-    quad = tray_quad(90)                      # 트레이를 옆으로 놓고 찍음 (긴 변이 가로)
-    r = tray.rectify_image(photo_of(quad), FakeModel([dense(quad)], [0.9]))
-    assert r.image.shape == (1280, 960, 3) and r.ratio == pytest.approx(0.75, abs=0.01)
-    # 어느 쪽이 위가 되든 템플릿의 가로·세로 기울기는 유지된다 (0° 또는 180°만 남는다)
-    d0 = np.abs(r.image[60:-60, 60:-60].astype(int) - TEMPLATE[60:-60, 60:-60].astype(int)).mean()
-    d180 = np.abs(r.image[60:-60, 60:-60].astype(int) - TEMPLATE[::-1, ::-1][60:-60, 60:-60].astype(int)).mean()
-    assert min(d0, d180) < 4
-
-
-def test_upright_rolls_wide_quad():
-    wide = np.array([[0, 0], [800, 0], [800, 600], [0, 600]], float)
-    assert tray._ratio(wide) == pytest.approx(4 / 3)
-    assert tray._ratio(tray._upright(wide)) == pytest.approx(0.75)
-    tall = wide[:, ::-1].copy()[[0, 3, 2, 1]]   # 이미 세로
-    assert np.array_equal(tray._upright(tall), tall)
+@pytest.mark.parametrize("angle", [90, -90, 70, -70, 110, -110])
+def test_sideways_tray_asks_retake(angle):
+    """트레이를 눕혀 찍으면(긴 변이 화면 가로에서 30° 이내) 재촬영: 어느 짧은 변이 위인지가 노이즈로 갈려 방향을 믿을 수 없다"""
+    quad = tray_quad(angle)
+    with pytest.raises(TrayNotFound) as e:
+        tray.rectify_image(photo_of(quad), FakeModel([dense(quad)], [0.9]))
+    assert e.value.code == "E_TRAY_NOT_FOUND" and "눕혀" in str(e.value)
 
 
 def test_no_tray_or_low_conf():

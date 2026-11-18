@@ -82,11 +82,33 @@ def order_corners(q):
     return np.roll(q, -k, axis=0)
 
 
-def corners_from_polygon(poly):
+def quad_from_polygon(poly):
+    """윤곽선 → 꼭짓점 4개. 윤곽선을 따라 도는 순서이고 시작점은 임의다 (order_corners로 정리하기 전). 못 찾으면 None."""
     quad = rough_quad(poly)
-    if quad is None:
-        return None
-    return order_corners(refine(poly, quad))
+    return None if quad is None else refine(poly, quad)
+
+
+def long_axis(q):
+    """4점(윤곽선 순서) → 긴 변 두 개의 평균 방향 벡터 (부호는 의미 없음)"""
+    a = (q[1] - q[0]) + (q[2] - q[3])      # 변 q0→q1 과 변 q3→q2
+    b = (q[2] - q[1]) + (q[3] - q[0])      # 변 q1→q2 와 변 q0→q3
+    return a if np.linalg.norm(a) >= np.linalg.norm(b) else b
+
+
+def is_sideways(q, max_deg=30.0):
+    """긴 변이 화면 가로에서 max_deg 이내면 True (트레이를 옆으로 눕혀 찍음). 4점은 순서를 정리하기 전이어도 된다.
+
+    order_corners는 짧은 변을 항상 위쪽에 놓기 때문에 순서를 정리한 뒤에는 가로세로 비율이 늘 0.75라서
+    눕힘을 비율로 알 수 없다. 그래서 정리하기 전의 네 점에서 긴 변의 방향으로 판정한다.
+    긴 변이 가로에 가까울수록 어느 짧은 변이 위인지가 노이즈로 갈려 방향이 불안정해진다.
+    """
+    vx, vy = long_axis(np.asarray(q, dtype=float))
+    return bool(np.degrees(np.arctan2(abs(vy), abs(vx))) < max_deg)
+
+
+def corners_from_polygon(poly):
+    quad = quad_from_polygon(poly)
+    return None if quad is None else order_corners(quad)
 
 
 def main():

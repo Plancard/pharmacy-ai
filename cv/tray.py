@@ -7,11 +7,13 @@
 rectify 처리 절차 (기능분석서 F-CV-02)
   1. 트레이 영역 분할 (YOLO26n-seg, imgsz 960, 분할 신뢰도 0.70)
   2. 마스크 윤곽선의 네 변을 직선으로 맞추고 이웃한 두 직선의 교점을 꼭짓점으로 (cv/seg_corners.py)
-     순서는 사진 기준 좌상·우상·우하·좌하 (위쪽 짧은 변이 좌상→우상, 시계 방향)
-  3. 호모그래피로 960×1280 정면 이미지 (3열 × 4행, 칸 320×320). 긴 변이 세로가 되도록 90° 회전을 바로잡는다
+  3. 긴 변이 화면 가로에서 30° 이내이면 트레이를 눕혀 찍은 것으로 보고 재촬영 (꼭짓점 순서를 정리하기 전에 판정:
+     정리하면 짧은 변이 늘 위가 되어 비율로는 눕힘을 알 수 없고, 긴 변이 가로에 가까울수록 방향이 노이즈로 갈린다)
+  4. 순서는 사진 기준 좌상·우상·우하·좌하 (위쪽 짧은 변이 좌상→우상, 시계 방향)
+  5. 호모그래피로 960×1280 정면 이미지 (3열 × 4행, 칸 320×320).
      (180°는 모양이 같아 여기서 알 수 없다 → 촬영 규칙 + 검수 단계 rotated 판정)
   아래 경우는 모두 TrayNotFound(E_TRAY_NOT_FOUND) → 재촬영 요청
-    트레이를 못 찾음 / 분할 신뢰도 0.70 미만 / 윤곽선에서 네 변을 못 찾음 /
+    트레이를 못 찾음 / 분할 신뢰도 0.70 미만 / 윤곽선에서 네 변을 못 찾음 / 트레이를 옆으로 눕혀 찍음 /
     꼭짓점이 사진 밖(트레이 일부만 찍힘) / 꼭짓점 순서가 꼬임 / 가로세로 비율이 3:4에서 15% 이상 벗어남
 
 assign_cells 처리 절차 (기능분석서 F-CV-04)
@@ -36,7 +38,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from cv.seg_corners import corners_from_polygon
+from cv.seg_corners import is_sideways, order_corners, quad_from_polygon
 from cv.stub import DAYS, TIMES, TrayNotFound
 from cv.warp import OUT_H, OUT_W, check_corners, warp
 
@@ -46,6 +48,7 @@ SEG_IMGSZ = 960
 SEG_CONF = 0.70         # 분할 신뢰도 기준 (11/17 확정: 검증 32장 conf 0.949~0.976 — 기능분석서 7장)
 ASPECT = OUT_W / OUT_H  # 3:4 = 0.75
 ASPECT_TOL = 0.15       # 꼭짓점 사각형의 가로세로 비율이 3:4에서 이 비율 이상 벗어나면 재촬영 (11/17 ±10%→±15%, 검증 32장 비율 0.68~0.773)
+SIDEWAYS_DEG = 30.0     # 긴 변이 화면 가로에서 이 각도 이내면 눕혀 찍은 것 → 재촬영 (11/18, 45°로 하면 기울기 45~60°도 재촬영)
 BOUNDARY_FRAC = 0.20    # 자기 칸 밖으로 나간 박스 면적 비율 (11/17 확정)
 OVERLAP_IOU = 0.5       # 같은 칸 안 두 박스의 IoU (11/17 확정)
 
@@ -68,7 +71,7 @@ def get_model():
 class RectifyResult:
     image: np.ndarray       # 보정 이미지 (BGR, 1280×960)
     matrix: np.ndarray      # 원본 픽셀 → 보정 이미지 픽셀 3×3 호모그래피
-    corners: np.ndarray     # 원본 이미지의 꼭짓점 (4,2), 좌상·우상·우하·좌하 (90° 바로잡은 뒤의 순서)
+    corners: np.ndarray     # 원본 이미지의 꼭짓점 (4,2), 좌상·우상·우하·좌하 (위쪽 짧은 변이 좌상→우상)
     conf: float             # 분할 신뢰도
     ratio: float            # (위+아래 변)/(왼+오른 변), 정상 0.75
     area: float             # 트레이 면적 / 사진 면적
@@ -84,29 +87,19 @@ def find_corners(img, model=None):
     if r.masks is None or len(r.boxes) == 0:
         raise TrayNotFound(f"트레이를 찾지 못함 (분할 신뢰도 {SEG_CONF} 미만)")
     i = int(r.boxes.conf.argmax())
-    quad = corners_from_polygon(r.masks.xy[i])
+    quad = quad_from_polygon(r.masks.xy[i])
     if quad is None:
         raise TrayNotFound("마스크 윤곽선에서 네 변을 찾지 못함")
-    return quad, float(r.boxes.conf[i])
-
-
-def _ratio(pts):
-    top, right = np.linalg.norm(pts[1] - pts[0]), np.linalg.norm(pts[2] - pts[1])
-    bottom, left = np.linalg.norm(pts[2] - pts[3]), np.linalg.norm(pts[3] - pts[0])
-    return (top + bottom) / (left + right)
-
-
-def _upright(pts):
-    """위·아래 변이 긴 변이면(가로로 놓인 트레이) 꼭짓점 순서를 한 칸 돌려 긴 변이 세로가 되게 한다."""
-    return np.roll(pts, -1, axis=0) if _ratio(pts) > 1.0 else pts
+    if is_sideways(quad, SIDEWAYS_DEG):     # 순서를 정리하기 전에 판정한다 (정리하면 비율로는 알 수 없다)
+        raise TrayNotFound("트레이가 옆으로 눕혀진 채 찍힘 (긴 변이 가로 방향)")
+    return order_corners(quad), float(r.boxes.conf[i])
 
 
 def rectify_image(img, model=None):
     """BGR 이미지 → RectifyResult. 재촬영이 필요하면 TrayNotFound."""
     h, w = img.shape[:2]
     pts, conf = find_corners(img, model)
-    pts = _upright(pts)
-    # sideways 판정은 위에서 직접 돌렸으므로 여기서는 끈다 (cut·order·small만 본다)
+    # 눕힘(sideways)은 find_corners가 이미 걸렀고, 순서를 정리한 뒤에는 비율이 늘 0.75라 여기서는 끈다 (cut·order·small만 본다)
     status, info = check_corners(pts, w, h, sideways_ratio=float("inf"))
     if status == "cut":
         raise TrayNotFound("트레이 일부가 사진 밖으로 나감")

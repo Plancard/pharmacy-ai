@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "cv"))
-from seg_corners import corners_from_polygon  # noqa: E402
+from seg_corners import corners_from_polygon, is_sideways, quad_from_polygon  # noqa: E402
 
 
 def tray_polygon(angle_deg, w=600, h=800, cx=1000, cy=1000, radius=20):
@@ -35,6 +35,25 @@ def test_corners_and_order(angle):
     err = np.linalg.norm(q - gt, axis=1)
     # 순서가 맞으면 오차는 몇 px, 틀리면 수백 px
     assert err.max() < 6, (angle, q.round(1), gt.round(1))
+
+
+def test_is_sideways_ignores_start_point_and_direction():
+    """순서를 정리하기 전의 네 점이므로 시작점·도는 방향과 상관없이 긴 변 방향만 본다"""
+    wide = np.array([[0, 0], [800, 0], [800, 600], [0, 600]], float)
+    tall = np.array([[0, 0], [600, 0], [600, 800], [0, 800]], float)
+    for k in range(4):
+        for q in (np.roll(wide, k, axis=0), np.roll(wide, k, axis=0)[::-1]):
+            assert is_sideways(q)
+        for q in (np.roll(tall, k, axis=0), np.roll(tall, k, axis=0)[::-1]):
+            assert not is_sideways(q)
+
+
+@pytest.mark.parametrize("angle,expect", [(0, False), (25, False), (-35, False), (-55, False), (180, False),
+                                          (-65, True), (70, True), (90, True), (115, True)])
+def test_is_sideways_by_long_axis(angle, expect):
+    """긴 변이 화면 가로에서 30° 이내(= 세로에서 60° 넘게 기울어짐)이면 눕힘. 180°(뒤집힘)는 눕힘이 아니다"""
+    poly, _ = tray_polygon(angle)
+    assert is_sideways(quad_from_polygon(poly)) is expect
 
 
 def test_pose2seg(tmp_path):
