@@ -254,6 +254,17 @@ def test_evaluate_counts_misses_and_false_alarms(tmp_path):
     assert stat["truth_conflict"] == 0 and rows[1]["error"] == "missing"
 
 
+@pytest.mark.parametrize("path, group", [
+    ("data/tray/fixed/g07_s03.jpg", "g07"),                                             # photos.csv 이름 그대로
+    ("data/tray/rf/corners_v3/x/valid/images/g07_s03_jpg.rf.4f9a0c1b2d.jpg", "g07"),     # Roboflow 내보내기 이름
+    ("data/tray/fixed/g13_s01.jpg", "g13"),                                             # photos.csv에 없어도 이름 앞 그룹
+    ("data/tray/fixed/pose_s05.jpg", None), ("data/tray/fixed/empty_s01.jpg", None), ("rot_s01.jpg", None),
+])
+def test_group_of_photo_names(path, group):
+    photos = {"g07_s03": "g07", "empty_s01": "empty", "pose_s05": "pose"}
+    assert ti.group_of(path, photos, {"g07": {}, "g13": {}}) == group
+
+
 def test_old_expected_column_still_reads(tmp_path):
     (tmp_path / "cells.csv").write_text(CELLS_CSV.replace("planned", "expected", 1), encoding="utf-8")
     assert ti.load_truth(tmp_path / "cells.csv")["g01"][(1, "noon")]["expected"] == Counter({0: 1, 1: 1})

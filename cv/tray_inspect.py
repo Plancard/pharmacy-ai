@@ -30,6 +30,7 @@
 """
 import argparse
 import csv
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -212,6 +213,20 @@ def evaluate(results, truth):
     return stat, rows
 
 
+_RF_SUFFIX = re.compile(r"_(jpe?g|png)\.rf\.[0-9a-zA-Z]+$")    # Roboflow 내보내기: g07_s01_jpg.rf.<해시>
+_GROUP = re.compile(r"^(g\d+)_")
+
+
+def group_of(path, photo_group, groups):
+    """사진 경로 → 정답표 그룹. photos.csv 이름 → Roboflow 이름을 원래 이름으로 되돌려서 → 이름 앞 gNN_ 순으로 찾는다."""
+    stem = Path(path).stem
+    for name in (stem, _RF_SUFFIX.sub("", stem)):
+        if photo_group.get(name) in groups:
+            return photo_group[name]
+    m = _GROUP.match(_RF_SUFFIX.sub("", stem))
+    return m.group(1) if m and m.group(1) in groups else None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="검수 판정 평가: 사진마다 inspect_tray를 돌려 cells.csv 정답과 대조")
     ap.add_argument("--list", required=True, help="사진 경로 목록 (data/splits/*.txt 형식, 원본 트레이 사진)")
@@ -233,12 +248,13 @@ def main(argv=None):
 
     det_model = YOLO(args.model or detect.DET_MODEL)
     seg_model = YOLO(args.seg_model or tray.SEG_MODEL)
-    results, skipped = [], Counter()
+    results, skipped, no_truth = [], Counter(), []
     for p in Path(args.list).read_text(encoding="utf-8").split():
         p = Path(p)
-        group = photo_group.get(p.stem)
-        if group not in truth:
-            skipped["정답표 없음(빈 트레이·회전 등)"] += 1
+        group = group_of(p, photo_group, truth)
+        if group is None:
+            skipped["정답표 없음(빈 트레이·꼭짓점 전용·회전 등)"] += 1
+            no_truth.append(p.name)
             continue
         if group in TEST_GROUPS and not args.allow_test:
             skipped["test 그룹(11/20 1회)"] += 1
@@ -267,6 +283,8 @@ def main(argv=None):
     if stat["truth_conflict"]:
         print(f"  주의: 정답표 error 열과 planned ≠ actual이 어긋나는 칸 {stat['truth_conflict']}개 (cells.csv 확인)")
     print(f"  칸별 결과 → {args.csv}")
+    if no_truth:
+        print(f"  정답표 없는 사진 예: {', '.join(no_truth[:5])}")
     return 0 if stat["wrong_missed"] == 0 and rate <= 0.05 else 1
 
 
