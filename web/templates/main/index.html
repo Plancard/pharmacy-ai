@@ -2,7 +2,10 @@
 {% block content %}
 <div class="layout" id="app" data-csrf="{{ csrf_token() }}" data-labels='{{ status_labels | tojson }}' data-tz="{{ config.DISPLAY_TZ }}">
   <aside class="card">
-    <h2>처방 목록</h2>
+    <div class="list-head">
+      <h2>처방 목록</h2>
+      <button type="button" id="new-rx">+ 새 처방</button>
+    </div>
     <ul class="rx-list" id="rx-list">
       {% for rx in recent %}
       <li>
@@ -18,18 +21,21 @@
   </aside>
 
   <section class="card chat">
-    <h2>처방 접수</h2>
-    <form id="upload-form" class="upload">
-      <label for="rx-image">처방전 사진 (JPG·PNG)</label>
-      <div class="upload-row">
-        <input id="rx-image" name="image" type="file" accept="image/jpeg,image/png" required>
-        <button type="submit" id="upload-btn">올리기</button>
-      </div>
-      <p class="form-error" id="upload-error" role="alert" hidden></p>
-    </form>
+    {# 새 처방 접수 화면: 처방을 고르지 않았을 때만 보인다. 처방을 고르면 그 처방의 카드만 보인다 #}
+    <div id="intake" class="intake">
+      <h2>새 처방 접수</h2>
+      <form id="upload-form" class="upload">
+        <label for="rx-image">처방전 사진 (JPG·PNG)</label>
+        <div class="upload-row">
+          <input id="rx-image" name="image" type="file" accept="image/jpeg,image/png" required>
+          <button type="submit" id="upload-btn">올리기</button>
+        </div>
+        <p class="form-error" id="upload-error" role="alert" hidden></p>
+      </form>
+      <p class="muted" id="card-empty">사진을 올리면 새 처방으로 접수됩니다. 이전 처방은 왼쪽 목록에서 고르세요.</p>
+    </div>
 
     <div id="card" class="rx-card" aria-live="polite" hidden></div>
-    <p class="muted" id="card-empty">처방전을 올리거나 왼쪽 목록에서 처방을 고르세요.</p>
   </section>
 </div>
 <script src="{{ url_for('static', filename='app.js') }}"></script>

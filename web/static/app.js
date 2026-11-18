@@ -15,7 +15,7 @@
   const LOW_CONF = 0.5;
 
   const card = document.getElementById("card");
-  const cardEmpty = document.getElementById("card-empty");
+  const intake = document.getElementById("intake");   // 새 처방 접수 (처방을 고르지 않았을 때만 보인다)
   const list = document.getElementById("rx-list");
   let current = null;   // 지금 카드에 보이는 처방 ID
   let timer = null;
@@ -60,8 +60,26 @@
     const badge = btn.querySelector(".badge");
     badge.className = `badge ${rx.status}`;
     badge.textContent = LABELS[rx.status] || rx.status;
+    markCurrent();
+  }
+
+  function markCurrent() {
     for (const b of list.querySelectorAll(".rx-item")) b.toggleAttribute("aria-current", b.dataset.id === current);
   }
+
+  // 새 처방 접수 화면: 고른 처방을 풀고 접수 칸만 보인다. 주소의 #rx=도 지운다 (새로고침하면 다시 접수 화면)
+  function showIntake() {
+    clearTimeout(timer);
+    current = null;
+    history.replaceState(null, "", location.pathname + location.search);
+    card.replaceChildren();
+    card.hidden = true;
+    intake.hidden = false;
+    markCurrent();
+    document.getElementById("rx-image").focus();
+  }
+
+  document.getElementById("new-rx").addEventListener("click", showIntake);
 
   list.addEventListener("click", (e) => {
     const btn = e.target.closest(".rx-item");
@@ -121,7 +139,7 @@
   function render(node) {
     card.replaceChildren(node);
     card.hidden = false;
-    cardEmpty.hidden = true;
+    intake.hidden = true;
   }
 
   function header(rx) {
@@ -552,9 +570,7 @@
   }
 
   // 새로고침해도 보던 처방을 다시 연다 (REQ-WEB-03)
-  // 주소에 처방이 없으면 가장 최근 처방을 연다
+  // 주소에 처방이 없으면 새 처방 접수 화면으로 시작한다 (예전처럼 최근 처방을 열면 올린 사진이 그 처방에 붙는 것처럼 보였다)
   const m = location.hash.match(/^#rx=([0-9a-f-]{36})$/);
-  const latest = list.querySelector(".rx-item");
   if (m) open(m[1]);
-  else if (latest) open(latest.dataset.id);
 })();

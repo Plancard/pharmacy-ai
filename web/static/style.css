@@ -23,6 +23,12 @@ button { padding: 10px; border: 0; border-radius: 6px; background: var(--accent)
 button.link { background: none; color: var(--accent); padding: 0; font-size: 14px; }
 .flash { background: #fef2f2; color: var(--bad); border: 1px solid #fecaca; border-radius: 6px; padding: 10px 12px; }
 .layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.list-head h2 { margin: 0; }
+#new-rx { padding: 6px 12px; font-size: 14px; }
+.intake { display: grid; gap: 12px; }
+.intake h2 { margin: 0; }
+[hidden] { display: none !important; }
 .rx-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .rx-item { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: none; color: var(--ink);
   border: 1px solid transparent; border-radius: 6px; font-size: 14px; text-align: left; }
@@ -47,7 +53,7 @@ button:focus-visible, .rx-item:focus-visible { outline: 2px solid var(--accent);
 .upload-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .upload-row input[type=file] { flex: 1 1 240px; min-width: 0; }
 .form-error { color: var(--bad); margin: 0; }
-.rx-card { border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 12px; min-width: 0; }
+.rx-card { display: grid; gap: 12px; min-width: 0; }
 .rx-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .rx-card-head h3 { margin: 0; font-size: 16px; }
 .processing { display: flex; align-items: center; gap: 10px; color: var(--muted); }
