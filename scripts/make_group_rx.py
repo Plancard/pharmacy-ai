@@ -59,6 +59,7 @@ def main(argv=None):
     p.add_argument("--cells", default="data/tray/cells.csv")
     p.add_argument("--group", nargs="*")
     p.add_argument("--list", action="store_true")
+    p.add_argument("--font", help="한글 글꼴 파일 (기본: Noto CJK, 없으면 /mnt/c/Windows/Fonts/malgun.ttf)")
     a = p.parse_args(argv)
 
     codes = {e.name: e.item_code for e in load_dictionary().entries}
@@ -89,9 +90,12 @@ def main(argv=None):
         wrong = [g for g, (_, e) in usable.items() if e > 0]
         picks = clean[:1] + wrong[:1]
 
-    font, bold = next(((f, b) for f, b in mp.DEFAULT_FONTS if Path(f).exists()), (None, None))
+    fonts = mp.DEFAULT_FONTS + [("/mnt/c/Windows/Fonts/malgun.ttf", "/mnt/c/Windows/Fonts/malgunbd.ttf")]   # WSL에서는 Windows 글꼴
+    font, bold = next(((f, b) for f, b in fonts if Path(f).exists()), (None, None))
+    if a.font:
+        font, bold = a.font, None
     if font is None:
-        print("한글 글꼴을 찾지 못했습니다.")
+        print("한글 글꼴을 찾지 못했습니다. --font 로 글꼴 파일을 알려 주세요.")
         return 1
     if bold and not Path(bold).exists():
         bold = None
