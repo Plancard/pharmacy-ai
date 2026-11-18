@@ -252,7 +252,9 @@ def attach_cells(anchors: list[Line], cells: list[Line]) -> list[list[Line]]:
             if overlap > best_overlap:
                 best, best_overlap = i, overlap
         if best is None or best_overlap < MIN_OVERLAP_RATIO * min(_height(cell), _height(anchors[best])):
-            raise StructureError("표 안에 어느 약품 줄에도 속하지 않는 글자가 있습니다.")
+            error = StructureError("표 안에 어느 약품 줄에도 속하지 않는 글자가 있습니다.")
+            error.cell = cell                 # extract_rule이 이 칸의 line_id를 실패 위치로 남긴다 (Q6)
+            raise error
         attached[best].append(cell)
     return attached
 
@@ -450,7 +452,11 @@ def extract_rule(ocr: dict[str, Any]) -> dict[str, Any]:
         raise StructureError("처방전에서 약품 줄을 찾지 못했습니다.")
     anchor_ids = {id(a) for a in anchors}
     cells = [l for l in body if id(l) not in anchor_ids and l["text"].strip()]
-    attached = attach_cells(anchors, cells)
+    try:
+        attached = attach_cells(anchors, cells)
+    except StructureError as e:
+        cell = getattr(e, "cell", None)
+        raise StructureError(str(e), line_ids=[ids[id(cell)]] if cell is not None else None) from e
 
     # 이름 조각과 값 칸을 가르는 기준: 값 칸이 시작하는 가장 왼쪽 x (표 전체에서 하나)
     name_edge = min(
@@ -462,8 +468,9 @@ def extract_rule(ocr: dict[str, Any]) -> dict[str, Any]:
     for number, (anchor, row) in enumerate(zip(anchors, attached), start=1):
         try:
             items.append(_read_row(anchor, row, name_edge, ids))
-        except StructureError as e:
-            raise StructureError(f"{number}번째 약품 줄: {e}") from e
+        except StructureError as e:           # 이 약 줄에서 실패했다: 그 줄의 칸들을 실패 위치로 남긴다 (Q6)
+            raise StructureError(f"{number}번째 약품 줄: {e}",
+                                 line_ids=[ids[id(line)] for line in [anchor, *row]]) from e
     return {"issue_no": find_issue_no(lines, top), "items": items}
 
 
@@ -531,16 +538,17 @@ def _llm_range(lines: list[Line]) -> tuple[float, float]:
 
 
 def table_lines(ocr: Any) -> list[dict[str, Any]]:
-    """약품 표 본문 칸들의 {line_id, bbox} (원본 이미지 좌표). 구조화에 실패했을 때 웹이 처방전 사진에서 강조할 곳이다 (11/17 회의 Q6).
+    """약품 표 본문 칸들의 {line_id, bbox} (A.1 이미지 좌표). 구조화에 실패했을 때 웹이 처방전 사진에서 강조할 곳이다 (11/17 회의 Q6).
 
-    LLM에 보내는 범위와 같다 (_llm_range: 머리글 아래 ~ '주사제' 위, 머리글이 없으면 첫 약품 줄부터). 표를 못 찾으면 빈 목록.
+    약품 표 = 머리글 아래 ~ '주사제 처방명세' 위 (find_table). 머리글을 못 찾으면 줄을 특정할 수 없는 실패로 보고 빈 목록이다
+    (11/18 결정: 요청서 1번 '머리글 못 찾음 등은 빈 목록').
     """
     try:
         lines = _check_lines(ocr)
         ids = line_ids(lines)
+        top, bottom = find_table(straighten(lines))
     except StructureError:
         return []
-    top, bottom = _llm_range(straighten(lines))
     return [{"line_id": ids[id(original)], "bbox": list(original["bbox"])}
             for original, fixed in zip(lines, straighten(lines)) if top < _center_y(fixed) < bottom]
 

@@ -136,18 +136,23 @@ def structure_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     except StructureError as e:
         return {
             "order": None, "status": "failed", "notice": str(e), "error_code": e.code,
-            "errors": [f"[structure] {e.code or '-'} {e}"], "error_area": error_area(state.get("ocr")),
+            "errors": [f"[structure] {e.code or '-'} {e}"], "failed_line_ids": failed_line_ids(state.get("ocr"), e),
         }
-    return {"order": _order_dict(order), "status": "structured", "notice": None, "error_area": None}
+    return {"order": _order_dict(order), "status": "structured", "notice": None, "failed_line_ids": []}
 
 
-def error_area(ocr: Any) -> dict[str, Any] | None:
-    """구조화 실패 때 웹이 처방전 사진에서 강조할 곳: 약품 표 본문 칸들 (Q6). 표를 못 찾았으면 None (사진 전체가 문제)."""
+def failed_line_ids(ocr: Any, error: StructureError | None = None) -> list[int]:
+    """구조화 실패 때 웹이 처방전 사진에서 강조할 OCR 줄 번호(A.1 line_id) (11/17 회의 Q6, 11/18 결정).
+
+    1. 규칙 경로가 특정 약 줄 · 칸에서 실패했으면(예: '2번째 약품 줄: 1회량 칸을 찾지 못했습니다') 그 줄의 칸들만.
+    2. 아니면(LLM까지 실패 등) 약품 표 본문 칸 전체 (머리글 아래 ~ '주사제' 위).
+    3. 줄을 특정할 수 없는 실패(글자 없음 · 머리글을 못 찾음 등)는 빈 목록. 원문 크기는 AgentApi.result의 ocr_size.
+    """
+    if error is not None and error.line_ids:
+        return list(error.line_ids)
     from agent.structure import table_lines
 
-    lines = table_lines(ocr)
-    size = ocr_size(ocr)
-    return {**size, "lines": lines} if lines and size else None
+    return [line["line_id"] for line in table_lines(ocr)]
 
 
 def _keep_pharmacist_choice(line, matched):
@@ -196,7 +201,8 @@ def match_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
                                               "items": [d.model_dump(mode="json") for d in items]})
     if not api_used and not matched.all_matched and NO_API_WARNING not in matched.warnings:
         matched.warnings = [*matched.warnings, NO_API_WARNING]
-    update: dict[str, Any] = {"status": "matched", "order": _order_dict(_mark_not_target(matched, deps.dictionary))}
+    update: dict[str, Any] = {"status": "matched", "order": _order_dict(_mark_not_target(matched, deps.dictionary)),
+                              "changed_items": redo if edited else None}
     if notes:
         update["notes"] = notes
     return update
@@ -362,7 +368,7 @@ def approval_notice(order: DispensingOrder, state: dict[str, Any]) -> str:
 def ocr_lines(order: DispensingOrder, ocr: Any) -> dict[str, dict[str, Any]]:
     """승인 화면에서 원문 위치를 보여 줄 OCR 줄 (조제지시서가 가리키는 줄만): {line_id: {text, conf, bbox}}.
 
-    bbox는 원본 처방전 이미지의 픽셀 좌표다 (웹 F-WEB-06이 원본 위에 위치를 그린다. 크기는 ocr_size).
+    bbox는 A.1 이미지의 픽셀 좌표다 (실제 CV OCR은 펴진 처방전 이미지 기준. 웹 F-WEB-06이 그 이미지 위에 위치를 그린다. 크기는 ocr_size).
     """
     used = {i for d in order.items for i in d.source_line_ids}
     lines = ocr.get("lines", []) if isinstance(ocr, dict) else []
@@ -373,7 +379,7 @@ def ocr_lines(order: DispensingOrder, ocr: Any) -> dict[str, dict[str, Any]]:
 
 
 def ocr_size(ocr: Any) -> dict[str, int] | None:
-    """원본 처방전 이미지 크기 {width, height} (A.1에 있을 때). 웹이 bbox를 화면 크기에 맞춰 줄일 때 쓴다."""
+    """A.1 이미지 크기 {width, height} (실제 CV OCR은 펴진 처방전 이미지). 웹이 bbox를 화면 크기에 맞춰 줄일 때 쓴다."""
     if isinstance(ocr, dict) and ocr.get("width") and ocr.get("height"):
         return {"width": ocr["width"], "height": ocr["height"]}
     return None
@@ -395,6 +401,7 @@ def approval_payload(state: dict[str, Any]) -> dict[str, Any]:
         "ocr_lines": ocr_lines(order, state.get("ocr")),
         "ocr_size": ocr_size(state.get("ocr")),
         "notice": approval_notice(order, state),
+        "changed_items": state.get("changed_items") or [],     # 약사가 고친 뒤 다시 검수한 줄 번호(0부터, Q7)
     }
 
 
@@ -466,8 +473,10 @@ def approve_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         if action == MANUAL:
             reason = " ".join(str(reply["reason"]).split())
             return {"status": "planned", "notice": f"{MANUAL_NOTICE} 사유: {reason}", "error_code": None, "previous_order": None,
+                    "changed_items": None,
                     "notes": [f"위험 신호 확인 후 진행 사유: {reason}"]}
-        return {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None, "previous_order": None}
+        return {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None, "previous_order": None,
+                "changed_items": None}
     data = _order_dict(order)
     data["items"] = [line.model_dump(mode="json") for line in answered.items]
     data["risk_check"] = None

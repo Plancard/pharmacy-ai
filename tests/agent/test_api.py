@@ -67,7 +67,7 @@ def test_start_stops_at_the_approval_with_what_the_web_shows(backend):
     api = make_api()
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     assert isinstance(pause, Pause) and pause.hitl_point == "rx_approval"
-    assert set(pause.payload) == {"order", "plan", "error_code", "ocr_lines", "ocr_size", "notice"}   # 웹 FakeGateway의 payload(order · ocr_lines)에 더했다
+    assert set(pause.payload) == {"order", "plan", "error_code", "ocr_lines", "ocr_size", "notice", "changed_items"}   # 웹 FakeGateway의 payload(order · ocr_lines)에 더했다
     assert len(pause.payload["plan"]["plan"]) == 9 and pause.payload["error_code"] is None   # 조제 계획은 승인 전에 보인다 (v0.8)
     order = DispensingOrder.model_validate(pause.payload["order"])
     assert [d.item_code for d in order.items] == ["202106092", "197900277"]
@@ -105,7 +105,8 @@ def test_a_structure_failure_is_an_error_with_the_a7_code(backend):
         api.start("P0001", EMPTY_OCR)
     assert error.value.code == E_OCR_EMPTY
     assert api.pending("P0001") is None and api.stage("P0001") == "failed"
-    assert error.value.area is None and api.result("P0001")["error_area"] is None      # 표가 없으면 강조할 곳도 없다
+    assert error.value.failed_line_ids == [] and api.result("P0001")["failed_line_ids"] == []   # 줄을 특정할 수 없으면 빈 목록
+    assert api.failed_lines("P0001") is None
 
 
 def test_an_llm_failure_carries_the_drug_table_to_highlight(backend):
@@ -126,9 +127,15 @@ def test_an_llm_failure_carries_the_drug_table_to_highlight(backend):
     ocr = json.loads((RESOURCES_DIR / "samples" / "cv_a1" / "rx_002.json").read_text(encoding="utf-8"))
     with pytest.raises(AgentRunError) as error:
         api.start("P0001", ocr)
-    area = error.value.area
-    assert error.value.code == E_LLM and area["lines"] and area["width"] == ocr["width"]
-    assert api.result("P0001")["error_area"] == area
+    ids = error.value.failed_line_ids
+    assert error.value.code == E_LLM and ids and all(isinstance(i, int) for i in ids)
+    assert error.value.ocr_size == {"width": ocr["width"], "height": ocr["height"]}      # 원문 크기
+    result = api.result("P0001")
+    assert result["failed_line_ids"] == ids and result["ocr_size"] == error.value.ocr_size
+    spot = api.failed_lines("P0001")                                                   # 웹이 사진에 그릴 bbox
+    by_id = {l["line_id"]: l for l in ocr["lines"]}
+    assert [l["line_id"] for l in spot["lines"]] == ids and spot["ocr_size"] == error.value.ocr_size
+    assert all(l["bbox"] == by_id[l["line_id"]]["bbox"] for l in spot["lines"])
 
 
 def test_a_photo_that_is_not_a_prescription_does_not_stop_at_the_approval(backend):

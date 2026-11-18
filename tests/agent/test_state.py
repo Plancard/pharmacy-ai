@@ -22,8 +22,8 @@ def test_the_first_state_values():
     assert initial_state("C0001") == {
         "conversation_id": "C0001", "prescription_id": None,
         "image_id": None, "photo_kind": None, "ocr": None,
-        "route": [], "flow": None, "order": None, "plan": None, "previous_order": None, "inspection": None,
-        "error_area": None,
+        "route": [], "flow": None, "order": None, "plan": None, "previous_order": None, "changed_items": None, "inspection": None,
+        "failed_line_ids": [],
         "status": "received", "notice": None, "error_code": None, "errors": [], "notes": [],
     }
 

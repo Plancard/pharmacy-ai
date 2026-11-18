@@ -17,13 +17,15 @@ class StructureError(Exception):
 
     code는 A.7 오류 코드다. 구조화 함수(agent.pipeline)가 마지막에 내는 오류에는 언제나 붙어 있다.
     중간 단계(규칙 경로, 검증)의 오류에는 없을 수 있다 (None).
+    line_ids는 실패한 곳의 A.1 line_id들이다 (규칙 경로가 특정 약 줄 · 칸에서 실패했을 때, 11/17 회의 Q6). 모르면 빈 목록.
     """
 
-    def __init__(self, message: str = "", code: str | None = None):
+    def __init__(self, message: str = "", code: str | None = None, line_ids: list[int] | None = None):
         super().__init__(message)
         if code is not None and code not in ERROR_CODES:
             raise ValueError(f"알 수 없는 오류 코드: {code}")
         self.code = code
+        self.line_ids = sorted(set(line_ids or []))
 
 
 class VectorStoreError(Exception):

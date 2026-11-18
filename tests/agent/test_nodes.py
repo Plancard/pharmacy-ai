@@ -112,7 +112,7 @@ def state_with(order=None, **extra):
 def test_structure_makes_the_order_from_a_sample():
     state = first_state("P0001", load("cv_a1", "rx_001"))
     update = structure_node(state, deps())
-    assert set(update) == {"order", "status", "notice", "error_area"} and update["error_area"] is None
+    assert set(update) == {"order", "status", "notice", "failed_line_ids"} and update["failed_line_ids"] == []
     assert update["status"] == "structured" and update["notice"] is None
     order = DispensingOrder.model_validate(update["order"])
     assert order.prescription_id == "P0001" and len(order.items) == 2
@@ -141,7 +141,7 @@ def test_a_structure_failure_is_recorded_in_the_state(code):
     update = structure_node(first_state("P0001", {}), deps(structure=fails))
     assert update == {
         "order": None, "status": "failed", "notice": "자동 구조화에 실패했습니다.", "error_code": code,
-        "errors": [f"[structure] {code or '-'} 자동 구조화에 실패했습니다."], "error_area": None,   # 표가 없는 OCR
+        "errors": [f"[structure] {code or '-'} 자동 구조화에 실패했습니다."], "failed_line_ids": [],   # 표가 없는 OCR
     }
 
 
@@ -152,12 +152,11 @@ def test_a_structure_failure_points_at_the_drug_table_on_the_photo():
 
     ocr = load("cv_a1", "rx_002")
     update = structure_node(first_state("P0001", ocr), deps(structure=fails))
-    area = update["error_area"]
-    assert (area["width"], area["height"]) == (ocr["width"], ocr["height"]) and area["lines"]
+    ids = update["failed_line_ids"]
     by_id = {l["line_id"]: l for l in ocr["lines"]}
-    texts = [by_id[x["line_id"]]["text"] for x in area["lines"]]
+    texts = [by_id[i]["text"] for i in ids]
+    assert ids and all(isinstance(i, int) for i in ids)
     assert any("알모란" in t for t in texts)                                     # 약 줄이 들어 있다
-    assert all(x["bbox"] == by_id[x["line_id"]]["bbox"] for x in area["lines"])
     assert not any("주사제" in t for t in texts)                                 # 표 밖은 아니다
 
 
@@ -209,7 +208,8 @@ def ready_order(order):
 
 def test_match_finds_the_item_codes_and_marks_the_lines_to_check():
     update = match_node(structured("rx_001"), deps())
-    assert set(update) == {"order", "status"} and update["status"] == "matched"
+    assert set(update) == {"order", "status", "changed_items"} and update["status"] == "matched"
+    assert update["changed_items"] is None                             # 처음 매칭 (고친 것 아님)
     order = DispensingOrder.model_validate(update["order"])
     assert order.items[0].item_code == TYLENOL                       # 타이레놀은 대상 8종이라 이름으로 찾는다
     assert order.items[0].needs_pharmacist_check                      # 이름으로 정한 줄은 언제나 약사 확인
@@ -392,7 +392,8 @@ def asked(state, answer=approve_as_shown):
 def test_approve_shows_the_order_the_plan_the_ocr_lines_and_a_notice():
     state = with_plan(checked("rx_001"))
     payload, _ = asked(state, edit(lambda order: None))
-    assert set(payload) == {"hitl_point", "order", "plan", "error_code", "ocr_lines", "ocr_size", "notice"}
+    assert set(payload) == {"hitl_point", "order", "plan", "error_code", "ocr_lines", "ocr_size", "notice", "changed_items"}
+    assert payload["changed_items"] == []
     assert payload["hitl_point"] == HITL_APPROVAL == "rx_approval"
     assert payload["order"] == state["order"]
     used = {i for item in state["order"]["items"] for i in item["source_line_ids"]}
@@ -524,7 +525,7 @@ def test_approving_the_order_as_shown_confirms_the_plan_on_the_card():
     state = ready(line("타이레놀정500mg"))
     _, update = asked(state)
     assert update == {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None,   # 계획은 새로 만들지 않는다
-                      "previous_order": None}
+                      "previous_order": None, "changed_items": None}
 
 
 def edit(change):
@@ -844,6 +845,11 @@ def test_only_the_changed_lines_are_matched_again(monkeypatch):
     assert items[0] == before[0]                                                # 안 바뀐 줄은 그대로
     assert items[1]["item_code"] == GEVORIN and items[1]["days"] == 2
     assert update["notes"] == ["약사 수정 후 다시 검수한 줄: 2번째(게보린정)"]
+    assert update["changed_items"] == [1]                                       # 승인 카드가 표시할 줄 번호 (0부터)
+    from agent.nodes import approval_payload
+    again = merged(_edited(state, two_days), update)
+    again = with_plan(merged(again, risk_node(again, deps())))
+    assert approval_payload(again)["changed_items"] == [1]
 
 
 def test_deleting_a_line_matches_nothing_again(monkeypatch):
@@ -895,3 +901,45 @@ def test_approving_clears_the_order_before_the_edit():
     state = ready(line("타이레놀정500mg"))
     state["previous_order"] = state["order"]
     assert approve_node(state, deps())["previous_order"] is None
+
+
+# ------------------------------------------------------------ 실패 위치: 규칙이 실패한 줄만 · 머리글 없으면 빈 목록 (11/18 결정)
+
+
+def _without(ocr, *drop):
+    """A.1에서 몇 칸을 지우고 line_id를 0부터 다시 매긴다 (돌려준 두 번째 값: 옛 line_id -> 새 line_id)."""
+    kept = [l for l in ocr["lines"] if l["line_id"] not in drop]
+    renum = {l["line_id"]: i for i, l in enumerate(kept)}
+    return {**ocr, "lines": [{**l, "line_id": i} for i, l in enumerate(kept)]}, renum
+
+
+def _llm_also_fails(prescription_id, ocr):
+    from agent.pipeline import structure_prescription
+
+    def broken(text, feedback):
+        raise StructureError("응답 없음")
+    return structure_prescription(prescription_id, ocr, llm_fn=broken)
+
+
+def test_when_the_rules_fail_on_one_drug_line_only_that_line_is_marked():
+    ocr, renum = _without(load("rx8_a1", "rx8_01"), 67)              # 2번째 약(게보린정) 줄의 '3회' 칸을 지운다
+    update = structure_node(first_state("P0001", ocr), deps(structure=_llm_also_fails))
+    assert update["error_code"] == E_LLM and "2번째 약품 줄" in update["notice"]
+    assert update["failed_line_ids"] == sorted(renum[i] for i in (66, 68, 69, 70))   # 게보린정 줄의 남은 칸들만
+    assert renum[61] not in update["failed_line_ids"]                                  # 1번째 약 줄은 아니다
+
+
+def test_without_the_table_header_no_line_is_marked():
+    ocr, _ = _without(load("rx8_a1", "rx8_01"), 54, 57, 58, 59, 60)    # 머리글(명칭 · 투약량 · 횟수 · 일수 · 구분코드)을 지운다
+    update = structure_node(first_state("P0001", ocr), deps(structure=_llm_also_fails))
+    assert update["status"] == "failed" and update["failed_line_ids"] == []          # 줄을 특정할 수 없다 (요청서 1번)
+
+
+def test_a_stray_cell_in_the_table_is_the_failed_spot():
+    from agent.structure import extract_rule
+
+    ocr = load("rx8_a1", "rx8_01")
+    stray = {"line_id": len(ocr["lines"]), "text": "얼룩", "bbox": [1000, 1430, 1100, 1460], "conf": 0.5}
+    with pytest.raises(StructureError) as error:
+        extract_rule({**ocr, "lines": [*ocr["lines"], stray]})
+    assert "어느 약품 줄에도 속하지 않는" in str(error.value) and error.value.line_ids == [stray["line_id"]]

@@ -40,7 +40,7 @@ from agent import config
 from agent.graph import build_graph, resume_run, run_message, thread_config
 from agent.mcp_client import DrugTools, from_settings as mcp_from_settings
 from agent.inspection import HITL_INSPECTION, read_inspection_reply
-from agent.nodes import HITL_APPROVAL, read_reply
+from agent.nodes import HITL_APPROVAL, ocr_size, read_reply
 from agent.schema import DispensingOrder
 
 # 승인된 조제지시서가 있는 단계 (approved_order가 돌려준다)
@@ -57,10 +57,12 @@ class Pause:
 class AgentRunError(Exception):
     """처방 처리 실패. code는 명세서 A.7 오류 코드, 메시지는 화면에 그대로 보여도 되는 문장이다."""
 
-    def __init__(self, code: str | None, message: str, area: dict[str, Any] | None = None):
+    def __init__(self, code: str | None, message: str, failed_line_ids: list[int] | None = None,
+                 ocr_size: dict[str, int] | None = None):
         super().__init__(message)
         self.code = code
-        self.area = area     # 처방전 사진에서 강조할 곳 {width, height, lines: [{line_id, bbox}]} 또는 None (11/17 회의 Q6)
+        self.failed_line_ids = list(failed_line_ids or [])   # 처방전 사진에서 강조할 OCR 줄 번호 (A.1 line_id). 모르면 빈 목록 (Q6)
+        self.ocr_size = ocr_size                              # 원문(A.1) 크기 {width, height} 또는 None
 
 
 class AgentApi:
@@ -155,12 +157,31 @@ class AgentApi:
         status = snapshot.values.get("status")
         return STAGE_AFTER_PLAN if status == "planned" else status
 
+    def failed_lines(self, rx_id: str) -> dict[str, Any] | None:
+        """구조화 실패 때 처방전 사진에서 강조할 줄: {ocr_size: {width, height}, lines: [{line_id, bbox}]} (11/17 회의 Q6).
+
+        체크포인트에 저장된 OCR(약품 표 칸의 좌표는 그대로 남아 있다)에서 failed_line_ids의 bbox를 찾는다.
+        그래서 서버를 껐다 켜도 웹이 다시 그릴 수 있다. 실패가 아니거나 줄을 특정할 수 없으면 None.
+        """
+        values = self._snapshot(rx_id).values
+        ids = set(values.get("failed_line_ids") or [])
+        ocr = values.get("ocr") or {}
+        size = ocr_size(ocr)
+        if not ids or size is None:
+            return None
+        lines = [{"line_id": line.get("line_id", i), "bbox": list(line["bbox"])}
+                 for i, line in enumerate(ocr.get("lines") or []) if line.get("line_id", i) in ids]
+        return {"ocr_size": size, "lines": lines} if lines else None
+
     def result(self, rx_id: str) -> dict[str, Any]:
         """지금 저장된 상태에서 웹이 쓰는 칸만. 멈춰 있는 동안의 조제지시서는 pending의 payload에 있다."""
         values = self._snapshot(rx_id).values
         keys = ("conversation_id", "prescription_id", "status", "flow", "route", "order", "plan",
-                "inspection", "notice", "error_code", "error_area", "notes")
-        return {key: values.get(key) for key in keys}
+                "inspection", "notice", "error_code", "notes")
+        out = {key: values.get(key) for key in keys}
+        out["failed_line_ids"] = list(values.get("failed_line_ids") or [])   # 실패한 처방전 줄 (Q6). 모르면 빈 목록
+        out["ocr_size"] = ocr_size(values.get("ocr"))                          # 원문 크기 {width, height}
+        return out
 
     def _after_run(self, rx_id: str) -> Pause | None:
         pause = self.pending(rx_id)
@@ -169,5 +190,5 @@ class AgentApi:
         values = self._snapshot(rx_id).values
         if values.get("status") == "failed" or values.get("error_code"):     # 트레이 검수 실패는 상태가 planned 그대로다
             raise AgentRunError(values.get("error_code"), values.get("notice") or "처방 처리에 실패했습니다.",
-                                values.get("error_area"))
+                                values.get("failed_line_ids"), ocr_size(values.get("ocr")))
         return None

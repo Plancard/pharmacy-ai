@@ -76,7 +76,7 @@ class _Model(BaseModel):
 class OcrLine(_Model):
     line_id: int = Field(ge=0)               # 정렬 뒤 0부터 매긴 번호. A.5의 source_line_ids가 이 값을 가리킨다
     text: str = Field(min_length=1)
-    bbox: Bbox                               # 원본 이미지 기준 픽셀 [x1, y1, x2, y2]
+    bbox: Bbox                               # A.1 이미지(width × height) 기준 픽셀 [x1, y1, x2, y2]. 실제 CV OCR은 펴진 처방전 이미지 기준이다
     conf: float = Field(ge=0.0, le=1.0)      # 글자 인식 신뢰도
 
 

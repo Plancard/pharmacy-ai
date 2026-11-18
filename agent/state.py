@@ -55,12 +55,13 @@ class GraphState(TypedDict, total=False):
     plan: dict[str, Any] | None               # 조제 계획 A.4 (Plan.model_dump(mode="json")). 승인 전에 만들어 승인 카드에 보인다 (v0.8)
     # 약사가 고치기(edit) 직전의 조제지시서. 바뀌지 않은 줄의 매칭과 위험 항목의 AI 설명 · 근거를 다시 쓴다 (11/17 회의 Q7). 승인하면 비운다
     previous_order: dict[str, Any] | None
+    changed_items: list[int] | None           # 약사가 고친 뒤 다시 검수한 줄 번호(0부터). 승인 카드가 표시한다 (Q7). 고치기 전에는 None
     inspection: dict[str, Any] | None         # 마지막 트레이 검수 결과 A.3 (CV가 준 것을 확인한 것). 트레이 사진을 검수한 뒤에만 생긴다
     status: Status                            # 지금 어느 단계인지
     notice: str | None                        # 화면에 보여 줄 안내 (실패 원인, 승인 대기 안내, 되묻는 말)
     error_code: str | None                    # 실패했을 때 명세서 A.7 오류 코드 (E_OCR_EMPTY, E_LLM …)
-    # 구조화에 실패했을 때 처방전 사진에서 강조할 곳 {width, height, lines: [{line_id, bbox}]} (약품 표 본문, 11/17 회의 Q6). 없으면 None
-    error_area: dict[str, Any] | None
+    # 구조화에 실패했을 때 처방전 사진에서 강조할 OCR 줄 번호(A.1 line_id, 약품 표 본문, 11/17 회의 Q6). 특정할 수 없으면 빈 목록
+    failed_line_ids: list[int]
     errors: Annotated[list[str], operator.add]   # 노드 실패 기록. 덮어쓰지 않고 쌓는다
     notes: Annotated[list[str], operator.add]    # 조제 기록에 남길 안내 (사유 입력 · 검수 확인 · AI 조사 등). 쌓는다
 
@@ -116,7 +117,8 @@ def initial_state(
         "order": None,
         "plan": None,
         "previous_order": None,
-        "error_area": None,
+        "changed_items": None,
+        "failed_line_ids": [],
         "inspection": None,
         "status": "received",
         "errors": [],

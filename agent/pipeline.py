@@ -93,7 +93,7 @@ def structure_prescription(
         return _checked(_structure(prescription_id, ocr, llm_fn, rule_fn, llm_retries), ocr)
     except StructureError as e:
         if paper_cut(ocr) and e.code in (E_LLM, E_OCR_EMPTY):    # 잘린 종이 때문일 수 있다: 다시 찍게 한다
-            raise StructureError(f"{PAPER_CUT_RETAKE} {e}", code=E_OCR_EMPTY) from e
+            raise StructureError(f"{PAPER_CUT_RETAKE} {e}", code=E_OCR_EMPTY, line_ids=e.line_ids) from e
         raise
 
 
@@ -103,6 +103,7 @@ def _structure(prescription_id: str, ocr: dict[str, Any], llm_fn: LlmFn, rule_fn
     issue_no, table_rows, redacted = prepare_llm_input(ocr)
 
     failures: list[str] = []
+    rule_lines: list[int] = []
 
     # 1) 규칙 경로
     try:
@@ -111,6 +112,7 @@ def _structure(prescription_id: str, ocr: dict[str, Any], llm_fn: LlmFn, rule_fn
         raise
     except StructureError as e:
         rule_error = str(e)
+        rule_lines = e.line_ids              # 규칙이 특정 약 줄 · 칸에서 실패했으면 그 줄 (Q6: 웹이 사진에서 강조)
     except Exception as e:   # 규칙 경로의 예기치 못한 오류가 서비스를 멈추게 하지 않는다 (REQ-NF-06)
         rule_error = f"규칙 경로에서 예기치 못한 오류가 났습니다 ({type(e).__name__})."
     failures.append(f"[규칙] {rule_error}")
@@ -118,7 +120,7 @@ def _structure(prescription_id: str, ocr: dict[str, Any], llm_fn: LlmFn, rule_fn
     # 2) LLM 경로: 처음 1번 + 재시도. 보낼 약품 표 줄이 없으면 LLM도 읽을 수 없으니 부르지 않는다.
     if not table_rows:
         failures.append("[LLM] 처방전에서 약품 표 줄을 찾지 못해 LLM에 보내지 않았습니다.")
-        raise StructureError(f"{NOT_PRESCRIPTION} " + " ".join(failures), code=E_OCR_EMPTY)
+        raise StructureError(f"{NOT_PRESCRIPTION} " + " ".join(failures), code=E_OCR_EMPTY, line_ids=rule_lines)
     text = format_llm_text(issue_no, table_rows)
     feedback: str | None = None
     for attempt in range(1, 2 + max(0, llm_retries)):
@@ -131,7 +133,7 @@ def _structure(prescription_id: str, ocr: dict[str, Any], llm_fn: LlmFn, rule_fn
 
         if isinstance(extracted, dict) and extracted.get("items") == []:     # LLM도 약 줄을 하나도 찾지 못했다 (11/17 회의)
             failures.append(f"[LLM {attempt}회] 약품 표에서 약을 찾지 못했습니다.")
-            raise StructureError(f"{NOT_PRESCRIPTION} " + " ".join(failures), code=E_OCR_EMPTY)
+            raise StructureError(f"{NOT_PRESCRIPTION} " + " ".join(failures), code=E_OCR_EMPTY, line_ids=rule_lines)
         try:
             order = order_from_extracted(prescription_id, extracted, source="llm")
         except StructureError as e:   # 검증에서 거절됨. 사유를 다음 시도에 알려 준다
@@ -147,4 +149,5 @@ def _structure(prescription_id: str, ocr: dict[str, Any], llm_fn: LlmFn, rule_fn
         order.warnings = notes + order.warnings
         return order
 
-    raise StructureError("자동 구조화에 실패했습니다. 직접 입력해 주세요. " + " ".join(failures), code=E_LLM)
+    raise StructureError("자동 구조화에 실패했습니다. 직접 입력해 주세요. " + " ".join(failures), code=E_LLM,
+                         line_ids=rule_lines)

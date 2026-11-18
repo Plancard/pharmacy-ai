@@ -55,18 +55,8 @@ def load(kind, name):
 
 
 def stub_inspect(scenario):
-    """CV 가짜 모듈의 검수. 명세서 v0.9에서 A.3 칸 사유 low_conf가 빠졌는데 cv/stub.py는 아직 low_conf를 낸다.
-
-    CV 파트가 stub을 고칠 때까지(신정훈 님께 요청) 시험에서는 low_conf를 boundary로 바꿔 쓴다. 고친 뒤에는 그대로 통과한다.
-    """
-    inspect = cv_stub_inspect(scenario)
-
-    def run(image_id, plan):
-        result = inspect(image_id, plan)
-        for cell in result.get("cells", []):
-            cell["reasons"] = ["boundary" if r == "low_conf" else r for r in cell.get("reasons", [])]
-        return result
-    return run
+    """CV 가짜 모듈의 검수 (cv/stub.py는 11/17부터 low_conf를 내지 않는다)."""
+    return cv_stub_inspect(scenario)
 
 
 def stub(scenario, plan=PLAN):
