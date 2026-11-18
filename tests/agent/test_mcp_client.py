@@ -57,7 +57,7 @@ def test_a_server_that_cannot_start_is_reported_on_open():
 def test_a_tool_error_keeps_only_the_reason():
     with in_process(DICT) as tools:
         with pytest.raises(McpToolError) as error:
-            tools.call("verify_dictionary")
+            tools.call("check_item_code", item_code="197900277", name="게보린정")
     assert not str(error.value).startswith("Error executing tool")
 
 
@@ -104,4 +104,4 @@ def test_the_server_does_not_need_the_working_directory_of_the_caller(tmp_path):
     done = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, timeout=120,
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     assert done.returncode == 0, done.stderr
-    assert done.stdout.strip() == "9"
+    assert done.stdout.strip() == "7"

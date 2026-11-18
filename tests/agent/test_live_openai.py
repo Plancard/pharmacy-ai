@@ -46,11 +46,13 @@ def timed(fn, *args):
 def test_the_llm_reads_a_prescription_that_the_rules_cannot():
     from agent.drug_names import match_key
     from agent.llm import extract_llm
-    from agent.pipeline import structure_prescription
+    from agent.structure import ocr_to_llm_text
+    from agent.validate import order_from_extracted
 
     ocr = json.loads((SAMPLES / "a1_ocr" / "s05_no_code.json").read_text(encoding="utf-8"))     # 코드가 인쇄되지 않은 처방전
     want = json.loads((SAMPLES / "a5_order" / "s05_no_code.json").read_text(encoding="utf-8"))
-    order, seconds = timed(lambda: structure_prescription("P_LIVE", ocr, llm_fn=extract_llm))
+    # 구조화 함수는 코드가 하나도 없으면 '처방전 아님'(E_OCR_EMPTY)으로 끝내므로(11/17), LLM이 읽는 힘은 LLM 경로만 따로 본다
+    order, seconds = timed(lambda: order_from_extracted("P_LIVE", extract_llm(ocr_to_llm_text(ocr), None), source="llm"))
     assert order.source == "llm"
     got = [(match_key(d.name)[:4], d.count_per_dose, d.days, sorted(d.times)) for d in order.items]
     expected = [(match_key(d["name"])[:4], d["count_per_dose"], d["days"], sorted(d["times"])) for d in want["items"]]
@@ -93,27 +95,7 @@ def test_the_risk_explanation_keeps_the_level_and_names_the_drugs():
     assert seconds < config.LLM_TIMEOUT_SECONDS
 
 
-# ------------------------------------------------------------ AI 조사 (ReAct + Function Calling, 11/16)
-
-
-def test_react_finds_a_candidate_for_a_misread_drug_name_with_the_tools():
-    from agent.drug_dictionary import load_dictionary
-    from agent.drug_match import match_order
-    from agent.investigate import drug_tools, suggest_candidates
-    from agent.llm import load_prompt, tool_chat
-    from agent.schema import DispensingOrder
-
-    dictionary = load_dictionary(RESOURCES_DIR / "drug_dictionary.json")
-    item = {"item_code": None, "name": "뮤코다인캡술", "count_per_dose": 1, "times": ["morning"], "days": 1}   # OCR이 '슐'을 '술'로
-    order = match_order(DispensingOrder.model_validate({"prescription_id": "P_LIVE", "items": [item]}), dictionary)
-    order = order.model_copy(update={"items": [order.items[0].model_copy(update={"match_candidates": []})]})  # 규칙 후보를 지우고 AI만
-    (new, notes), seconds = timed(lambda: suggest_candidates(order, drug_tools(dictionary, None), tool_chat, load_prompt("react_match")))
-    print(f"\nAI 후보 조사 ({seconds:.1f}초): {notes} | {[(c.item_code, c.reason) for c in new.items[0].match_candidates]}")
-    line = new.items[0]
-    assert line.item_code is None                                       # 약은 정하지 않는다
-    assert "200308774" in [c.item_code for c in line.match_candidates]   # 뮤코다인캡슐200mg
-    assert "search_drug(성공)" in notes[0]
-    assert seconds < 4 * config.LLM_TIMEOUT_SECONDS
+# ------------------------------------------------------------ AI 조사 (ReAct + Function Calling, 11/16: 위험 신호 근거)
 
 
 def test_react_investigates_a_risk_with_the_evidence_tool():

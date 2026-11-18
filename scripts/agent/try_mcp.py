@@ -2,7 +2,6 @@
 
     python scripts/agent/try_mcp.py               # 서버를 띄워 도구 목록 → 도구 호출 → 샘플 13장을 함수 · MCP로 돌려 비교
     python scripts/agent/try_mcp.py --no-api      # 의약품 API 없이 (약품 사전만). 함수 쪽도 API를 쓰지 않는다
-    python scripts/agent/try_mcp.py --verify      # verify_dictionary 도구까지 부른다 (의약품 API를 8번 부른다)
     python scripts/agent/try_mcp.py --in-process  # 하위 프로세스 없이 서버 객체에 바로 붙는다 (stdio 문제를 가를 때)
     python scripts/agent/try_mcp.py --url http://127.0.0.1:8765/mcp   # 따로 띄운 서버(python -m agent.mcp_server --http)에 붙는다
 
@@ -140,7 +139,7 @@ def compare(samples: dict[str, dict[str, Any]], tools: DrugTools, *, api: Any = 
     return results
 
 
-def show_tool_calls(tools: DrugTools, out: Callable[[str], None], *, verify: bool) -> None:
+def show_tool_calls(tools: DrugTools, out: Callable[[str], None]) -> None:
     dictionary = load_dictionary()
     first = dictionary.entries[0]
 
@@ -177,22 +176,11 @@ def show_tool_calls(tools: DrugTools, out: Callable[[str], None], *, verify: boo
         for item in found["unchecked"]:
             out(f"    대조 못 함: {item['name']} ({item['reason']})")
 
-    if verify:
-        out("verify_dictionary()")
-        try:
-            report = tools.call("verify_dictionary")
-            for r in report["results"]:
-                out(f"    [{r['verdict']}] {r['name']} ({r['item_code']})" + (f": {r['error']}" if r.get("error") else ""))
-            out(f"    전체 {report['total']}종 중 {report['matched']}종 일치")
-        except McpToolError as e:
-            out(f"    건너뜀: {e}")
-
 
 def main(argv: list[str] | None = None, *, out: Callable[[str], None] = print,
          build: Callable[..., Any] = build_graph) -> int:
     parser = argparse.ArgumentParser(description="MCP 약품 도구 시험 · 함수와 MCP의 그래프 결과 비교")
     parser.add_argument("--no-api", action="store_true", help="의약품 API를 쓰지 않는다 (서버 · 함수 둘 다)")
-    parser.add_argument("--verify", action="store_true", help="verify_dictionary 도구도 부른다 (API 8번)")
     parser.add_argument("--in-process", action="store_true", help="하위 프로세스 없이 서버 객체에 바로 붙는다")
     parser.add_argument("--url", help="따로 띄운 서버의 주소 (예: http://127.0.0.1:8765/mcp). 서버 쪽 API 사용은 서버를 띄울 때 정한다")
     args = parser.parse_args(argv)
@@ -227,7 +215,7 @@ def main(argv: list[str] | None = None, *, out: Callable[[str], None] = print,
         for name, description in tools.tools():
             out(f"    {name}: {description}")
         out("")
-        show_tool_calls(tools, out, verify=args.verify)
+        show_tool_calls(tools, out)
         out("")
         try:
             results = compare(load_samples(), tools, api=api, dur=dur, build=build)

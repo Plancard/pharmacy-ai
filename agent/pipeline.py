@@ -19,14 +19,51 @@ from typing import Any, Callable
 from agent import config
 from agent.errors import E_LLM, E_OCR_EMPTY, ConfigError, StructureError
 from agent.schema import DispensingOrder
-from agent.structure import extract_rule, format_llm_text, prepare_llm_input
+from agent.structure import TABLE_END_WORD, extract_rule, format_llm_text, prepare_llm_input
 from agent.validate import order_from_extracted
 
 # LLM에 보낼 글에 개인정보로 보이는 글자가 섞여 있어 가렸을 때. 표 범위를 잘못 잡았다는 신호라 약사가 원문과 대조해야 한다.
 # 무엇을 가렸는지는 적지 않는다 (경고도 화면 · 기록에 남는다).
 REDACTED_WARNING = "LLM에 보내기 전에 개인정보로 보이는 글자를 가렸습니다. 약품 표를 제대로 읽었는지 원문과 꼭 대조하세요."
 
+# 처방전이 아닌 사진 (11/17 회의): 약 줄이 없거나 품목코드를 하나도 읽지 못했다 → E_OCR_EMPTY로 다시 찍게 한다.
+NOT_PRESCRIPTION = "처방전이 아닌 것 같습니다 (약 줄이나 품목코드를 읽지 못했습니다). 처방전 전체가 보이게 다시 찍어 주세요."
+# 종이 잘림 (A.1 paper_edge_cut, 11/17 회의). 구조화는 됐지만 약 줄이 불완전할 수 있을 때 다시 찍기를 권한다 (막지는 않는다).
+PAPER_CUT_WARNING = "처방전 종이 끝이 잘려 약 줄이 빠졌을 수 있습니다. 처방전 전체가 보이게 다시 찍는 것을 권합니다."
+PAPER_CUT_RETAKE = "처방전 종이 끝이 잘려 읽지 못했습니다. 처방전 전체가 보이게 다시 찍어 주세요."
+
 RuleFn = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+def paper_cut(ocr: Any) -> bool:
+    """CV가 종이 가장자리가 사진 끝에 닿았다고 알렸는가 (A.1 paper_edge_cut, 선택 필드. 없으면 False)."""
+    return isinstance(ocr, dict) and ocr.get("paper_edge_cut") is True
+
+
+def table_end_seen(ocr: Any) -> bool:
+    """약품 표 아래의 '주사제 처방명세' 줄이 사진에 있는가. 없으면 표 아래쪽이 잘렸을 수 있다."""
+    lines = ocr.get("lines") if isinstance(ocr, dict) else None
+    return any(isinstance(l, dict) and "".join(str(l.get("text", "")).split()).startswith(TABLE_END_WORD)
+               for l in lines or [])
+
+
+def lines_incomplete(order: DispensingOrder, ocr: Any) -> bool:
+    """약 줄이 불완전할 수 있는가: 규칙으로 표를 다 읽지 못했거나(LLM 경로), 표의 끝 줄이 사진에 없다."""
+    return order.source == "llm" or not table_end_seen(ocr)
+
+
+def _checked(order: DispensingOrder, ocr: Any) -> DispensingOrder:
+    """구조화가 끝난 조제지시서의 마지막 검사 (11/17 회의).
+
+    - 품목코드(인쇄된 9자리)를 하나도 읽지 못했으면 처방전이 아닌 것으로 보고 E_OCR_EMPTY (다시 찍기).
+      1차 가상 처방전은 모든 약 줄에 코드가 인쇄되어 있다. (코드 없는 처방전은 2차 범위)
+    - 종이가 잘렸고(paper_edge_cut) 약 줄이 불완전할 수 있으면 다시 찍기를 권하는 경고를 단다.
+    """
+    if not any(d.printed_code for d in order.items):
+        raise StructureError(NOT_PRESCRIPTION, code=E_OCR_EMPTY)
+    if paper_cut(ocr) and lines_incomplete(order, ocr) and PAPER_CUT_WARNING not in order.warnings:
+        order.warnings = [PAPER_CUT_WARNING, *order.warnings]
+    return order
 LlmFn = Callable[[str, "str | None"], dict[str, Any]]
 
 
@@ -52,6 +89,15 @@ def structure_prescription(
     """
     if not isinstance(prescription_id, str) or not prescription_id.strip():
         raise StructureError("처방 ID가 없습니다.")
+    try:
+        return _checked(_structure(prescription_id, ocr, llm_fn, rule_fn, llm_retries), ocr)
+    except StructureError as e:
+        if paper_cut(ocr) and e.code in (E_LLM, E_OCR_EMPTY):    # 잘린 종이 때문일 수 있다: 다시 찍게 한다
+            raise StructureError(f"{PAPER_CUT_RETAKE} {e}", code=E_OCR_EMPTY) from e
+        raise
+
+
+def _structure(prescription_id: str, ocr: dict[str, Any], llm_fn: LlmFn, rule_fn: RuleFn, llm_retries: int) -> DispensingOrder:
     # OCR 형식이 틀렸으면 어느 경로도 쓸 수 없다. 여기서 바로 StructureError
     # LLM에는 교부번호와 약품 표만 보낸다 (환자 정보는 보내지 않는다). 개인정보 모양이 섞여 있으면 가린 뒤다 (redact.py)
     issue_no, table_rows, redacted = prepare_llm_input(ocr)
@@ -72,7 +118,7 @@ def structure_prescription(
     # 2) LLM 경로: 처음 1번 + 재시도. 보낼 약품 표 줄이 없으면 LLM도 읽을 수 없으니 부르지 않는다.
     if not table_rows:
         failures.append("[LLM] 처방전에서 약품 표 줄을 찾지 못해 LLM에 보내지 않았습니다.")
-        raise StructureError("자동 구조화에 실패했습니다. 직접 입력해 주세요. " + " ".join(failures), code=E_OCR_EMPTY)
+        raise StructureError(f"{NOT_PRESCRIPTION} " + " ".join(failures), code=E_OCR_EMPTY)
     text = format_llm_text(issue_no, table_rows)
     feedback: str | None = None
     for attempt in range(1, 2 + max(0, llm_retries)):
@@ -83,6 +129,9 @@ def structure_prescription(
             failures.append(f"[LLM {attempt}회] {e}")
             continue
 
+        if isinstance(extracted, dict) and extracted.get("items") == []:     # LLM도 약 줄을 하나도 찾지 못했다 (11/17 회의)
+            failures.append(f"[LLM {attempt}회] 약품 표에서 약을 찾지 못했습니다.")
+            raise StructureError(f"{NOT_PRESCRIPTION} " + " ".join(failures), code=E_OCR_EMPTY)
         try:
             order = order_from_extracted(prescription_id, extracted, source="llm")
         except StructureError as e:   # 검증에서 거절됨. 사유를 다음 시도에 알려 준다

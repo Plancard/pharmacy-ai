@@ -5,18 +5,20 @@
     python -m agent.mcp_server --http     # HTTP로 띄운다: http://127.0.0.1:8765/mcp (따로 띄운 서버에 클라이언트가 주소로 붙는다)
     python -m agent.mcp_server --http --host 0.0.0.0 --port 9000   # 다른 컨테이너 · PC에서 붙을 때
 
-도구 9개
-    search_drug        이름으로 약 찾기: 약품 사전에서 비슷한 약 + (API가 있으면) 의약품 API의 제품
-                       <- drug_match.search_drug_result (AI 조사도 같은 함수를 쓴다)
+도구 7개 (명세서 3.3 '의약품 정보 · DUR API (MCP 경유)', 기능분석서 F-AG-08)
+    의약품 정보 (REQ-AG-03)
+    match_drug         조제지시서(A.5)의 약품마다 품목기준코드를 정한다 (그래프의 매칭 노드)  <- drug_match.match_order
+    search_drug        이름으로 약 찾기: 약품 사전에서 비슷한 약 + (API가 있으면) 의약품 API의 제품  <- drug_match.search_drug_result
     check_item_code    품목기준코드가 이 이름의 제품 코드가 맞는지 의약품 API로 확인  <- drug_match.check_code_result
-    match_drug         조제지시서(A.5)의 약품마다 품목기준코드를 정한다                 <- drug_match.match_order
-    verify_dictionary  약품 사전 8종의 코드를 의약품 API로 한 번에 확인                 <- drug_match.check_item_code
-    check_interaction  처방약끼리 병용금기 (DUR API)                                   <- dur.check_interaction
-    check_duplicate    처방약끼리 성분 중복(사전) + 효능군 중복(DUR API)               <- dur.check_duplicate
-    build_plan         승인된 조제지시서(A.5)로 칸별 조제 계획(A.4)을 만든다 (14단계)  <- plan.build_plan
-    get_plan           조제 계획(A.4)의 칸 내용을 약 이름과 함께 읽는다 (일자 · 시점으로 거를 수 있다)  <- plan.plan_lines
-                       서버는 대화 상태(체크포인터)를 모른다. 계획은 부르는 쪽이 넘긴다 (그래프 state의 plan)
-    search_evidence    약 허가정보(e약은요 · 허가정보 상세)에서 근거 조각 찾기 (11/16, AI 조사 · 위험 신호 설명)  <- rag.evidence_search
+                       (search_drug · check_item_code는 1차 그래프가 부르지 않는다. 약 조회용이고 2차 실제 처방전 매칭의 기반이다)
+    DUR (REQ-AG-05)
+    check_duplicate    처방약끼리 성분 중복(사전) + 효능군 중복(DUR API) (그래프의 위험 노드)  <- dur.check_duplicate
+    check_interaction  처방약끼리 병용금기 (DUR API) (그래프의 위험 노드)                <- dur.check_interaction
+    조제 계획 · 근거 (REQ-AG-04 · 06)
+    build_plan         승인 전 조제지시서(A.5)로 칸별 조제 계획(A.4). 3일 초과 · 약을 정하지 못한 줄 · 대상 8종 밖 약이면
+                       계획 없이 이유 (그래프의 계획 노드)                                 <- plan.build_plan
+    search_evidence    약 허가정보(e약은요 · 허가정보 상세)에서 근거 조각 찾기 (위험 신호 AI 근거 조사)  <- rag.evidence_search
+    (11/18 삭제: verify_dictionary는 scripts/agent/verify_dictionary.py가 같은 일을 한다. get_plan은 받은 계획을 다시 보여 줄 뿐이라 뺐다)
 
 리소스 1개
     pharmacy://dictionary   대상 약 8종 (품목기준코드 · 이름 · 주성분 · CV 클래스). LLM · 클라이언트가 읽는 고정 자료
@@ -43,18 +45,17 @@ from pydantic import ValidationError
 from agent import config
 from agent.drug_api import default_api
 from agent.drug_dictionary import DrugDictionary, load_dictionary
-from agent.drug_match import ApiSearch, check_code_result, check_item_code, match_order, search_drug_result
-from agent.drug_names import search_term
+from agent.drug_match import ApiSearch, check_code_result, match_order, search_drug_result
 from agent.dur import DurLookup, Ref, check_duplicate, check_interaction, report_to_json
 from agent.dur_api import default_dur_api
 from agent.errors import ConfigError, DrugApiError
-from agent.plan import TIME_LABELS, PlanError, build_plan, plan_lines
+from agent.plan import NOT_TARGET_PLAN, PlanError, build_plan, not_target_lines, plan_lines
 from agent.rag import RagIndex, evidence_search, load_index
-from agent.schema import TIME_SLOTS, DispensingOrder, Plan
+from agent.schema import DispensingOrder
 
 SERVER_NAME = "pharmacy-agent"
-TOOL_NAMES = ("search_drug", "check_item_code", "match_drug", "verify_dictionary", "check_interaction", "check_duplicate",
-              "build_plan", "get_plan", "search_evidence")
+TOOL_NAMES = ("search_drug", "check_item_code", "match_drug", "check_interaction", "check_duplicate",
+              "build_plan", "search_evidence")
 DICTIONARY_URI = "pharmacy://dictionary"
 MAX_EVIDENCE = 10        # search_evidence가 한 번에 돌려주는 조각 수의 최대
 MAX_RESULTS = 5          # 사전 · API에서 보여 줄 약의 수
@@ -79,7 +80,7 @@ def _refs(items: list[dict[str, Any]]) -> list[Ref]:
 
 def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: DurLookup | None = None,
                  rag: RagIndex | None = None, embed: Any = None) -> MCPServer:
-    """도구 9개 · 리소스 1개가 달린 서버를 만든다. 테스트는 이 서버를 프로세스 없이 바로 붙여 부른다 (mcp_client.in_process).
+    """도구 7개 · 리소스 1개가 달린 서버를 만든다. 테스트는 이 서버를 프로세스 없이 바로 붙여 부른다 (mcp_client.in_process).
 
     rag(근거 색인)가 없으면 search_evidence는 NO_RAG로 실패한다. embed(질문 임베딩)가 없으면 BM25만으로 찾는다.
     """
@@ -114,27 +115,6 @@ def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: 
         matched = match_order(parsed, dictionary, api=api)
         return {"order": matched.model_dump(mode="json"), "api_used": api is not None}
 
-    @server.tool(description="약품 사전 8종의 품목기준코드를 의약품 API로 한 번에 확인한다 (약마다 일치 · 불일치 · 없음 · 실패).")
-    def verify_dictionary() -> dict[str, Any]:
-        if api is None:
-            raise ToolError(NO_API)
-        results = []
-        for entry in dictionary.entries:
-            try:
-                products = list(api(search_term(entry.name)))
-            except (DrugApiError, ConfigError) as e:
-                results.append({"item_code": entry.item_code, "name": entry.name, "verdict": "실패", "error": str(e)})
-                continue
-            verdict, similar = check_item_code(entry.item_code, entry.name, products)
-            results.append({
-                "item_code": entry.item_code,
-                "name": entry.name,
-                "verdict": verdict,
-                "similar": [_product(p, score) for score, p in similar[:3]],
-            })
-        matched = sum(r["verdict"] == "일치" for r in results)
-        return {"total": len(results), "matched": matched, "results": results}
-
     @server.tool(name="check_interaction",
                  description="처방약끼리 병용금기를 DUR API로 찾는다. items: [{item_code, name}]. 결과는 hits · unchecked · dur_used.")
     def check_interaction_tool(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -147,49 +127,23 @@ def build_server(dictionary: DrugDictionary, api: ApiSearch | None = None, dur: 
     def check_duplicate_tool(items: list[dict[str, Any]]) -> dict[str, Any]:
         return report_to_json(check_duplicate(_refs(items), dictionary, dur))
 
-    def names_of(codes) -> dict[str, str]:
-        out = {}
-        for code in codes:
-            entry = dictionary.by_item_code(code)
-            if entry is not None:
-                out[code] = entry.name
-        return out
-
     @server.tool(name="build_plan",
                  description="조제지시서(A.5)로 트레이 칸별 조제 계획(A.4)을 만든다 (승인 카드에 보이고 승인되면 확정). 만들 수 없으면(3일 초과 · "
-                             "약을 정하지 못한 줄) plan은 null이고 error에 코드와 이유가 있다.")
+                             "약을 정하지 못한 줄 · 대상 8종이 아닌 약) plan은 null이고 error에 코드와 이유가 있다.")
     def build_plan_tool(order: dict[str, Any]) -> dict[str, Any]:
         try:
             parsed = DispensingOrder.model_validate(order)
         except ValidationError as e:
             raise ToolError(f"조제지시서(A.5) 형식이 아닙니다: {e.error_count()}곳이 틀립니다.") from None
+        not_target = not_target_lines(parsed, dictionary)
+        if not_target:                    # CV가 모르는 약 (REQ-AG-03). 그래프의 계획 노드와 같은 결과
+            return {"plan": None, "error": {"code": None, "message": f"{NOT_TARGET_PLAN}: {', '.join(not_target)}"}, "lines": []}
         try:
             plan = build_plan(parsed)
         except PlanError as e:            # 계획을 못 만드는 것은 도구 실패가 아니라 결과다 (약사에게 돌아갈 이유)
             return {"plan": None, "error": {"code": e.code, "message": str(e)}, "lines": []}
         names = {i.item_code: i.name for i in parsed.items if i.item_code}
         return {"plan": plan.model_dump(mode="json"), "error": None, "lines": plan_lines(plan, names)}
-
-    @server.tool(name="get_plan",
-                 description="조제 계획(A.4)의 칸 내용을 약 이름과 함께 돌려준다. day(1~3) · time(morning · noon · evening · bedtime)을 "
-                             "주면 그 칸만. 약 이름은 약품 사전에서 찾고, 없으면 품목기준코드를 그대로 쓴다.")
-    def get_plan_tool(plan: dict[str, Any], day: int | None = None, time: str | None = None) -> dict[str, Any]:
-        try:
-            parsed = Plan.model_validate(plan)
-        except ValidationError as e:
-            raise ToolError(f"조제 계획(A.4) 형식이 아닙니다: {e.error_count()}곳이 틀립니다.") from None
-        if time is not None and time not in TIME_SLOTS:
-            raise ToolError(f"time은 {' · '.join(TIME_SLOTS)} 중 하나여야 합니다.")
-        names = names_of({i.item_code for c in parsed.plan for i in c.items})
-        cells = [
-            {"day": c.day, "time": c.time, "label": f"{c.day}일 {TIME_LABELS[c.time]}",
-             "items": [{"item_code": i.item_code, "name": names.get(i.item_code, i.item_code), "count": i.count} for i in c.items],
-             "total": sum(i.count for i in c.items)}
-            for c in parsed.plan
-            if (day is None or c.day == day) and (time is None or c.time == time)
-        ]
-        return {"prescription_id": parsed.prescription_id, "days": parsed.days, "cells": cells,
-                "pills": sum(c["total"] for c in cells), "lines": plan_lines(parsed, names)}
 
     @server.tool(name="search_evidence",
                  description="약 허가정보(식약처 e약은요 · 허가정보 상세)에서 근거 조각을 찾는다. query: 찾을 내용, item_codes: 찾을 약의 "

@@ -11,7 +11,7 @@
     재시도는 여기서 하지 않는다. 몇 번 다시 시도할지는 pipeline.py가 센다 (SDK 자동 재시도는 꺼 둔다).
 
 지시문은 agent/prompts/*.md 파일이다 (structure.md: 시스템 지시, structure_retry.md: 거절 사유를 알려 주는 말,
-risk_explain.md: 위험 신호 설명, react_match.md · react_risk.md: AI 조사(ReAct)).
+risk_explain.md: 위험 신호 설명, react_risk.md: AI 조사(ReAct), 위험 신호 근거).
 
 AI 조사 (ReAct, 11/16)
     tool_chat(messages, tools)  →  {"content", "tool_calls"}   도구 호출이 되는 대화 한 번. 루프는 react.py가 돈다.

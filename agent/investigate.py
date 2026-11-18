@@ -1,16 +1,9 @@
-"""AI 조사 (판단, 11/16) — ReAct 루프(react.py)를 쓰는 두 곳. 둘 다 규칙의 결과를 바꾸지 않고 덧붙이기만 한다.
+"""AI 조사 (판단, 11/16) — ReAct 루프(react.py)로 위험 신호의 근거를 찾는다. 규칙의 결과를 바꾸지 않고 덧붙이기만 한다.
 
-도구는 MCP 서버의 것을 쓴다 (nodes가 mcp_client.react_tools · search_evidence로 넘긴다). MCP 서버를 쓰지 않으면
-같은 판단 함수(drug_match.search_drug_result · check_code_result, rag.evidence_search)를 직접 부르는 도구로 대신한다.
+도구는 MCP 서버의 search_evidence를 쓴다 (nodes가 넘긴다). MCP 서버를 쓰지 않으면 같은 판단 함수(rag.evidence_search)를 직접 부른다.
+(매칭 실패 줄의 AI 후보 조사는 11/18에 뺐다: 1차 대상 8종 밖의 약은 승인할 수 없어 후보를 고를 일이 없다. REQ-AG-03)
 
-1) 약품 매칭 실패 → 후보 조사
-    suggest_candidates(order, tools, chat, prompt)  ->  (새 조제지시서, 안내 목록)
-    약을 정하지 못한 줄(item_code None)마다 LLM이 search_drug · check_item_code 도구로 찾아 후보를 낸다.
-    - item_code는 여전히 None이다. 후보(match_candidates)에 'AI 조사: …' 이유로 더할 뿐, 고르는 것은 약사다 (REQ-AG-03).
-    - LLM이 낸 코드는 이번 조사에서 도구가 돌려준 코드만 받는다 (지어낸 코드는 버린다). 이름은 도구 결과의 이름을 쓴다.
-    - 함량이 처방전과 다른 제품은 버린다 (다른 약이다). 이미 있는 후보와 같은 약은 더하지 않는다. 후보는 많아야 3개.
-
-2) 위험 신호 → 근거 조사
+위험 신호 → 근거 조사
     investigate_risks(findings, names, search, chat, prompt)  ->  (설명을 붙인 항목들, 안내) | None
     LLM이 search_evidence 도구로 관련 약의 허가정보(RAG 색인)를 찾아 항목마다 설명을 쓴다.
     - 단계 · 유형 · 관련 약 · 규칙 문장은 그대로. 설명은 explain.acceptable로 거른다 (위험을 낮추는 말 등).
@@ -24,128 +17,18 @@ from __future__ import annotations
 
 from typing import Any, Callable, Sequence
 
-from agent.drug_dictionary import DrugDictionary
-from agent.drug_match import ApiSearch, check_code_result, search_drug_result, strengths_conflict
-from agent.drug_names import match_key, product_key, similarity
 from agent.explain import acceptable, evidence_item, explain_input
 from agent.rag import EVIDENCE_TEXT, RagIndex, evidence_search
 from agent.react import ReactResult, Tool, ToolChatFn, ToolFailure, run_react, trace
-from agent.schema import MAX_CANDIDATES, DispensingOrder, DrugLine, Evidence, MatchCandidate, RiskFinding
+from agent.schema import Evidence, RiskFinding
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
 EvidenceSearch = Callable[[str, Sequence[str], int], list[dict[str, Any]]]   # (질문, 품목기준코드들, 개수) -> 근거 줄들
 
-MAX_LINES = 3             # 처방전 한 장에서 후보를 조사할 줄 수 (시간 · 비용)
 TOOL_RESULTS = 5          # 근거 검색 한 번에 받는 조각 수
-REASON_CHARS = 80
-AI_REASON = "AI 조사"
-AI_CHECK = "AI가 도구로 찾은 후보가 있습니다. 약사가 골라야 정해집니다."
-NO_SUGGESTION = "AI 후보 조사를 끝내지 못했습니다"
 
 
-# ------------------------------------------------------------ 1) 약품 매칭 실패 → 후보 조사
-
-
-DRUG_TOOL_NAMES = ["search_drug", "check_item_code"]
-
-
-def drug_tools(dictionary: DrugDictionary, api: ApiSearch | None) -> list[Tool]:
-    """MCP 서버를 쓰지 않을 때의 search_drug · check_item_code (서버와 같은 함수 · 같은 이름). API가 없으면 check_item_code는 없다.
-
-    MCP 서버가 있으면 nodes가 mcp_client.react_tools(DRUG_TOOL_NAMES)로 서버의 도구를 대신 넘긴다.
-    """
-    def search(args: dict[str, Any]) -> dict[str, Any]:
-        name = str(args["name"]).strip()
-        if not name:
-            raise ToolFailure("name이 비었습니다")
-        return search_drug_result(name, dictionary, api)
-
-    def check(args: dict[str, Any]) -> dict[str, Any]:
-        code, name = str(args["item_code"]).strip(), str(args["name"]).strip()
-        if not (code.isdigit() and len(code) == 9):
-            raise ToolFailure("item_code는 9자리 숫자입니다")
-        return check_code_result(code, name, dictionary, api)
-
-    tools = [Tool("search_drug", "약 이름으로 찾는다. 약품 사전에서 이름이 비슷한 약과 (있으면) 의약품 API의 제품을 돌려준다.",
-                  {"type": "object", "properties": {"name": {"type": "string", "description": "찾을 약 이름"}},
-                   "required": ["name"], "additionalProperties": False}, search)]
-    if api is not None:
-        tools.append(Tool("check_item_code", "품목기준코드(9자리)가 이 이름의 제품 코드가 맞는지 의약품 API로 확인한다. 판정: 일치 · 불일치 · 없음.",
-                          {"type": "object", "properties": {"item_code": {"type": "string"}, "name": {"type": "string"}},
-                           "required": ["item_code", "name"], "additionalProperties": False}, check))
-    return tools
-
-
-def _seen_drugs(result: ReactResult) -> dict[str, str]:
-    """이번 조사에서 도구가 돌려준 약 {품목기준코드: 이름}. LLM의 답은 이 안의 코드만 받는다."""
-    seen: dict[str, str] = {}
-    for out in result.outputs("search_drug"):
-        for row in [*(out.get("dictionary") or []), *(out.get("api") or [])]:
-            seen.setdefault(str(row["item_code"]), str(row["name"]))
-    for out in result.outputs("check_item_code"):
-        for row in out.get("similar") or []:
-            seen.setdefault(str(row["item_code"]), str(row["name"]))
-    return seen
-
-
-def line_question(line: DrugLine) -> str:
-    """LLM에 보내는 줄 정보: 처방전에 적힌 약 이름 · 이미 있는 후보 · 정하지 못한 이유. 환자 정보는 없다."""
-    parts = [f"처방전에 적힌 약 이름: {line.name}"]
-    if line.match_candidates:
-        parts.append("이미 있는 후보: " + ", ".join(f"{c.name}({c.item_code})" for c in line.match_candidates))
-    if line.check_reasons:
-        parts.append("정하지 못한 이유: " + " / ".join(line.check_reasons))
-    return "\n".join(parts)
-
-
-def candidates_from(result: ReactResult, line: DrugLine) -> list[MatchCandidate]:
-    """LLM의 답 {"candidates": [{"item_code", "reason"}]}에서 쓸 수 있는 후보만 (도구가 준 코드 · 같은 함량 · 새 약)."""
-    seen = _seen_drugs(result)
-    have = {c.item_code for c in line.match_candidates}
-    key = match_key(line.name)
-    out: list[MatchCandidate] = []
-    for row in (result.final or {}).get("candidates") or []:
-        if not isinstance(row, dict):
-            continue
-        code = str(row.get("item_code") or "").strip()
-        name = seen.get(code)
-        if name is None or code in have or strengths_conflict(key, product_key(name)):
-            continue
-        reason = " ".join(str(row.get("reason") or "").split())[:REASON_CHARS] or "도구로 찾음"
-        out.append(MatchCandidate(item_code=code, name=name, score=round(similarity(key, product_key(name)), 3),
-                                  reason=f"{AI_REASON}: {reason}"))
-        have.add(code)
-    return out
-
-
-def suggest_candidates(order: DispensingOrder, tools: Sequence[Tool], chat: ToolChatFn, prompt: str, *,
-                       max_lines: int = MAX_LINES) -> tuple[DispensingOrder, list[str]]:
-    """약을 정하지 못한 줄에 AI 후보를 더한 새 조제지시서와 안내 (조사 기록 · 실패). 원래 조제지시서는 바꾸지 않는다.
-
-    tools: search_drug · check_item_code (MCP 서버의 도구 또는 drug_tools). 결과 모양이 같아야 후보를 견줄 수 있다.
-    """
-    items, notes, asked = list(order.items), [], 0
-    for i, line in enumerate(order.items):
-        if line.item_code is not None or len(line.match_candidates) >= MAX_CANDIDATES or asked >= max_lines:
-            continue
-        asked += 1
-        result = run_react(prompt, line_question(line), tools, chat)
-        if result.final is None:
-            notes.append(f"{NO_SUGGESTION} ({line.name}: {result.stopped}).")
-            continue
-        found = candidates_from(result, line)[: MAX_CANDIDATES - len(line.match_candidates)]
-        notes.append(f"AI 후보 조사 ({line.name}): 후보 {len(found)}개 | {trace(result)}")
-        if found:
-            reasons = line.check_reasons if AI_CHECK in line.check_reasons else [*line.check_reasons, AI_CHECK]
-            items[i] = line.model_copy(update={"match_candidates": [*line.match_candidates, *found],
-                                               "needs_pharmacist_check": True, "check_reasons": reasons})
-    if not asked:
-        return order, []
-    return DispensingOrder.model_validate({**order.model_dump(mode="json"),
-                                          "items": [d.model_dump(mode="json") for d in items]}), notes
-
-
-# ------------------------------------------------------------ 2) 위험 신호 → 근거 조사
+# ------------------------------------------------------------ 위험 신호 → 근거 조사
 
 
 def local_evidence(rag: RagIndex, embed: EmbedFn | None = None) -> EvidenceSearch:

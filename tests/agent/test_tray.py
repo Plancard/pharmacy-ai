@@ -394,24 +394,13 @@ def test_build_plan_refuses_something_that_is_not_an_order(server_tools):
         server_tools.call("build_plan", order={"items": []})
 
 
-def test_get_plan_shows_the_cells_with_names_and_can_pick_one_cell(server_tools):
-    plan = build_plan(order_without_risk()).model_dump(mode="json")
-    everything = server_tools.call("get_plan", plan=plan)
-    assert everything["days"] == 3 and len(everything["cells"]) == len(plan["plan"])
-    one = server_tools.call("get_plan", plan=plan, day=2, time="noon")
-    assert [c["label"] for c in one["cells"]] == ["2일 점심"]
-    assert one["cells"][0]["items"] == [{"item_code": TYLENOL, "name": "타이레놀정500mg", "count": 1},
-                                        {"item_code": GEBORIN, "name": "게보린정", "count": 1}]
-    assert one["pills"] == 2 and everything["lines"][0].startswith("아침: 1일 타이레놀정500mg 1 · 게보린정 1")
-
-
-@pytest.mark.parametrize("arguments, words", [({"time": "lunch"}, "time은"), ({"plan_broken": True}, "A.4")])
-def test_get_plan_refuses_a_wrong_time_or_plan(server_tools, arguments, words):
-    plan = build_plan(order_without_risk()).model_dump(mode="json")
-    if arguments.pop("plan_broken", False):
-        plan = {**plan, "days": 9}
-    with pytest.raises(McpToolError, match=words):
-        server_tools.call("get_plan", plan=plan, **arguments)
+def test_build_plan_over_mcp_refuses_a_drug_outside_the_eight(server_tools):
+    """REQ-AG-03: MCP로 직접 불러도 대상 8종 밖 약이면 계획 없이 이유 (그래프의 계획 노드와 같다)."""
+    order = order_without_risk().model_dump(mode="json")
+    order["items"][0]["item_code"] = "201800001"                       # 의약품 API에서 찾은 다른 제품
+    answer = server_tools.call("build_plan", order=order)
+    assert answer["plan"] is None and answer["error"]["code"] is None
+    assert "대상 8종이 아닌 약이 있습니다: 1번째 약품" in answer["error"]["message"]
 
 
 # ------------------------------------------------------------ CV 연결 (agent/cv_adapter.py)

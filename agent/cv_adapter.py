@@ -1,7 +1,7 @@
 """Agent가 CV 트레이 검수를 부르는 연결 (가장자리, 14단계). 그래프는 InspectFn = (사진 ID, 조제 계획 A.4) -> 검수 결과 A.3 만 안다.
 
     stub_inspect(scenario)     CV 가짜 모듈(cv/stub.py)로 검수한다. 데모 · 시험 · 웹 연동 연습용. 사진 ID를 그대로 파일 이름으로 쓴다
-    file_inspect(fn, resolve)  실제 CV 함수(cv.inspect.inspect_tray 등, (경로, plan) -> A.3)와 '사진 ID -> 파일 경로'를 묶는다
+    file_inspect(fn, resolve)  실제 CV 함수(cv.tray_inspect.inspect_tray 등, (경로, plan) -> A.3)와 '사진 ID -> 파일 경로'를 묶는다
 
 웹은 사진을 저장한 경로를 알고 있으므로 file_inspect(cv의 함수, 웹의 경로 찾기)로 만들어 build_graph(inspect=...)에 넘긴다.
 CV 모듈이 바뀌어도(cv.stub -> cv.pipeline) Agent 쪽은 이 파일만 바꾼다. 판정 규칙은 CV에 있고 여기에는 없다.

@@ -530,6 +530,21 @@ def _llm_range(lines: list[Line]) -> tuple[float, float]:
         return min((l["bbox"][1] - _height(l) / 2 for l in codes), default=math.inf), bottom
 
 
+def table_lines(ocr: Any) -> list[dict[str, Any]]:
+    """약품 표 본문 칸들의 {line_id, bbox} (원본 이미지 좌표). 구조화에 실패했을 때 웹이 처방전 사진에서 강조할 곳이다 (11/17 회의 Q6).
+
+    LLM에 보내는 범위와 같다 (_llm_range: 머리글 아래 ~ '주사제' 위, 머리글이 없으면 첫 약품 줄부터). 표를 못 찾으면 빈 목록.
+    """
+    try:
+        lines = _check_lines(ocr)
+        ids = line_ids(lines)
+    except StructureError:
+        return []
+    top, bottom = _llm_range(straighten(lines))
+    return [{"line_id": ids[id(original)], "bbox": list(original["bbox"])}
+            for original, fixed in zip(lines, straighten(lines)) if top < _center_y(fixed) < bottom]
+
+
 # ---------------------------------------------------------------- Agent가 간직하는 OCR (체크포인트에 저장되는 것)
 
 def agent_view(ocr: Any) -> Any:

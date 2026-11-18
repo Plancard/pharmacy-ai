@@ -107,21 +107,31 @@ def test_samples_with_printed_codes_are_read_by_rules_and_match_the_answer(sampl
     assert _read(order) == _answer(sample_id)
 
 
-def test_the_code_less_sample_goes_to_the_llm_and_matches_the_answer():
-    ocr = load("a1_ocr", "s05_no_code")
-    llm = FakeFn(
-        {
-            "issue_no": "2026년11월09일 00065호",
-            "items": [
-                dict(name="타이레놀정 500mg", printed_code=None, count_per_dose=1, times_per_day=3, days=3, times=[]),
-                dict(name="뮤코다인캡슐 200mg", printed_code=None, count_per_dose=1, times_per_day=3, days=3, times=[]),
-            ],
-        }
-    )
-    order = structure_prescription("P0005", ocr, llm_fn=llm)
+CODE_LESS = {
+    "issue_no": "2026년11월09일 00065호",
+    "items": [
+        dict(name="타이레놀정 500mg", printed_code=None, count_per_dose=1, times_per_day=3, days=3, times=[]),
+        dict(name="뮤코다인캡슐 200mg", printed_code=None, count_per_dose=1, times_per_day=3, days=3, times=[]),
+    ],
+}
+
+
+def test_a_prescription_without_any_printed_code_is_not_a_prescription():
+    """11/17 회의: 품목코드를 하나도 읽지 못했으면 처방전이 아닌 것으로 보고 다시 찍게 한다 (E_OCR_EMPTY)."""
+    from agent.errors import E_OCR_EMPTY
+    from agent.pipeline import NOT_PRESCRIPTION
+
+    llm = FakeFn(CODE_LESS)
+    with pytest.raises(StructureError) as error:
+        structure_prescription("P0005", load("a1_ocr", "s05_no_code"), llm_fn=llm)
+    assert error.value.code == E_OCR_EMPTY and str(error.value) == NOT_PRESCRIPTION and len(llm.calls) == 1
+
+
+def test_the_code_less_sample_is_read_when_one_code_is_printed():
+    with_code = {**CODE_LESS, "items": [{**CODE_LESS["items"][0], "printed_code": "900000011"}, CODE_LESS["items"][1]]}
+    order = structure_prescription("P0005", load("a1_ocr", "s05_no_code"), llm_fn=(llm := FakeFn(with_code)))
     assert order.source == "llm" and order.issue_no == "2026년11월09일 00065호"
-    assert _read(order) == _answer("s05_no_code")                                     # 빈 복용 시점은 횟수로 채워진다
-    assert [d.item_code for d in order.items] == [None, None]                          # 약품 매칭은 아직 안 한 단계
+    assert [d.count_per_dose for d in order.items] == [1, 1] and [d.item_code for d in order.items] == [None, None]
     assert any("규칙 기반으로 읽지 못해" in w for w in order.warnings)
     assert any("복용 시점이 처방전에 없어" in w for w in order.warnings)
 
@@ -134,6 +144,54 @@ def test_the_code_less_sample_goes_to_the_llm_and_matches_the_answer():
         "뮤코다인캡슐/ 200mg 1 CAP 3회 3일 PO 식후 30분",
     ]
     assert "OCR 테스트용" not in text and "가상의료재단" not in text             # 처방전 위·아래의 글은 보내지 않는다
+
+
+def test_an_llm_that_finds_no_drug_means_it_is_not_a_prescription():
+    from agent.errors import E_OCR_EMPTY
+
+    llm = FakeFn({"issue_no": None, "items": []})
+    with pytest.raises(StructureError) as error:
+        structure_prescription("P0001", NO_HEADER_OCR, llm_fn=llm)
+    assert error.value.code == E_OCR_EMPTY and "처방전이 아닌 것 같습니다" in str(error.value)
+    assert len(llm.calls) == 1                                                         # 다시 묻지 않는다
+
+
+# ------------------------------------------------------------ 종이 잘림 (A.1 paper_edge_cut, 11/17 회의)
+
+
+def test_a_cut_paper_with_a_complete_table_gets_no_warning():
+    from agent.pipeline import PAPER_CUT_WARNING
+
+    ocr = {**load("a1_ocr", "s01_combo_a"), "paper_edge_cut": True}
+    order = structure_prescription("P0001", ocr, llm_fn=never_called)
+    assert order.source == "rule" and PAPER_CUT_WARNING not in order.warnings          # 규칙으로 표를 끝까지 읽었다
+
+
+def test_a_cut_paper_without_the_table_end_asks_to_retake():
+    from agent.pipeline import PAPER_CUT_WARNING
+
+    ocr = load("a1_ocr", "s01_combo_a")
+    lines = [l for l in ocr["lines"] if not "".join(l["text"].split()).startswith("주사제")]
+    cut = {**ocr, "lines": [{**l, "line_id": i} for i, l in enumerate(lines)], "paper_edge_cut": True}
+    read = {"issue_no": None, "items": [dict(name="타이레놀정 500mg", printed_code="900000011", count_per_dose=1,
+                                             times_per_day=3, days=3, times=[])]}
+    order = structure_prescription("P0001", cut, llm_fn=FakeFn(read))     # 표 끝이 없어 규칙이 못 읽고 LLM으로 읽었다
+    assert order.source == "llm" and order.warnings[0] == PAPER_CUT_WARNING
+    plain = structure_prescription("P0001", {**cut, "paper_edge_cut": False}, llm_fn=FakeFn(read))
+    assert PAPER_CUT_WARNING not in plain.warnings                                     # 잘림 표시가 없으면 경고도 없다
+
+
+def test_a_cut_paper_that_cannot_be_read_is_retaken():
+    from agent.errors import E_LLM, E_OCR_EMPTY
+    from agent.pipeline import PAPER_CUT_RETAKE
+
+    broken = FakeFn(StructureError("응답 없음"))
+    with pytest.raises(StructureError) as error:
+        structure_prescription("P0001", {**NO_HEADER_OCR, "paper_edge_cut": True}, llm_fn=broken)
+    assert error.value.code == E_OCR_EMPTY and str(error.value).startswith(PAPER_CUT_RETAKE)
+    with pytest.raises(StructureError) as error:
+        structure_prescription("P0001", NO_HEADER_OCR, llm_fn=FakeFn(StructureError("응답 없음")))
+    assert error.value.code == E_LLM
 
 
 # ------------------------------------------------------------ 규칙 경로 실패 -> LLM
@@ -184,7 +242,7 @@ def test_without_any_table_row_the_llm_is_not_called():
     with pytest.raises(StructureError) as error:
         structure_prescription("P0001", ocr, llm_fn=never_called)
     message = str(error.value)
-    assert "직접 입력" in message and "[규칙]" in message and "LLM에 보내지 않았습니다" in message
+    assert "처방전이 아닌 것 같습니다" in message and "[규칙]" in message and "LLM에 보내지 않았습니다" in message
     assert "알마겔정" not in message
 
 

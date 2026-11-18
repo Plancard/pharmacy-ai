@@ -57,9 +57,10 @@ class Pause:
 class AgentRunError(Exception):
     """처방 처리 실패. code는 명세서 A.7 오류 코드, 메시지는 화면에 그대로 보여도 되는 문장이다."""
 
-    def __init__(self, code: str | None, message: str):
+    def __init__(self, code: str | None, message: str, area: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
+        self.area = area     # 처방전 사진에서 강조할 곳 {width, height, lines: [{line_id, bbox}]} 또는 None (11/17 회의 Q6)
 
 
 class AgentApi:
@@ -71,7 +72,7 @@ class AgentApi:
     def from_settings(cls, **kwargs) -> "AgentApi":
         """설정대로 만든 그래프로 (약품 사전 · 의약품 API · 체크포인터). 인자는 graph.build_graph와 같다.
 
-        .env에 AGENT_USE_MCP=1 이면 약품 매칭 · DUR 대조를 MCP 도구로 부른다. AGENT_MCP_URL이 있으면 따로 띄운 서버에 그 주소로 붙고,
+        .env AGENT_USE_MCP(기본 1)이 켜져 있으면 약품 매칭 · DUR 대조 · 조제 계획 · 근거 검색을 MCP 도구로 부른다 (0이면 함수로 직접). AGENT_MCP_URL이 있으면 따로 띄운 서버에 그 주소로 붙고,
         없으면 서버(python -m agent.mcp_server)를 하위 프로세스로 띄운다.
         api=None을 주면 서버도 의약품 API 없이 띄운다.
         """
@@ -158,7 +159,7 @@ class AgentApi:
         """지금 저장된 상태에서 웹이 쓰는 칸만. 멈춰 있는 동안의 조제지시서는 pending의 payload에 있다."""
         values = self._snapshot(rx_id).values
         keys = ("conversation_id", "prescription_id", "status", "flow", "route", "order", "plan",
-                "inspection", "notice", "error_code", "notes")
+                "inspection", "notice", "error_code", "error_area", "notes")
         return {key: values.get(key) for key in keys}
 
     def _after_run(self, rx_id: str) -> Pause | None:
@@ -167,5 +168,6 @@ class AgentApi:
             return pause
         values = self._snapshot(rx_id).values
         if values.get("status") == "failed" or values.get("error_code"):     # 트레이 검수 실패는 상태가 planned 그대로다
-            raise AgentRunError(values.get("error_code"), values.get("notice") or "처방 처리에 실패했습니다.")
+            raise AgentRunError(values.get("error_code"), values.get("notice") or "처방 처리에 실패했습니다.",
+                                values.get("error_area"))
         return None

@@ -5,14 +5,14 @@ call()이 그 스레드에 요청을 넘긴 뒤 결과를 기다린다. 연결�
 (stdio 서버를 부를 때마다 띄우면 Windows에서 한 번에 1초 가까이 걸린다).
 
     with stdio() as tools:                          # python -m agent.mcp_server 를 하위 프로세스로 띄운다
-        tools.tool_names()                          # ['search_drug', 'check_item_code', 'match_drug', 'verify_dictionary']
+        tools.tool_names()                          # ['search_drug', 'check_item_code', 'match_drug', …] (서버의 도구 7개)
         matched, api_used = tools.match_drug(order)
 
     tools = in_process(dictionary, api=None)        # 프로세스 없이 서버 객체에 바로 붙는다 (테스트 · 측정용)
     tools = http("http://127.0.0.1:8765/mcp")       # 따로 띄운 서버(python -m agent.mcp_server --http)에 주소로 붙는다
     tools = from_settings()                         # .env의 AGENT_MCP_URL이 있으면 http, 없으면 stdio
 
-    tools.react_tools(["search_drug", "check_item_code"])   # AI 조사(ReAct)에 줄 도구: 서버가 알려 준 이름 · 설명 · 입력 스키마 그대로
+    tools.react_tools(["search_evidence"])                 # ReAct에 줄 도구: 서버가 알려 준 이름 · 설명 · 입력 스키마 그대로
     tools.read_resource("pharmacy://dictionary")             # 서버의 고정 자료 (글)
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 # mcp 패키지는 연결할 때만 불러온다. 그래서 MCP를 쓰지 않는 실행(웹 · 테스트)은 mcp가 없어도 이 파일을 불러올 수 있다.
 ROOT = Path(__file__).resolve().parents[1]
 CONNECT_TIMEOUT_SECONDS = 30.0     # 서버를 띄우고 연결하기까지 (첫 실행은 import가 길다)
-CALL_TIMEOUT_SECONDS = 60.0        # 도구 하나 (의약품 API를 여러 번 부르는 verify_dictionary가 가장 길다)
+CALL_TIMEOUT_SECONDS = 60.0        # 도구 하나 (DUR API를 약마다 여러 쪽 부르는 check_duplicate · check_interaction이 가장 길다)
 
 
 class McpToolError(Exception):

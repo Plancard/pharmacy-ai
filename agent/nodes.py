@@ -39,9 +39,9 @@ from agent.inspection import (
     read_inspection_reply,
 )
 from agent.mcp_client import DrugTools, McpToolError
-from agent.plan import PlanError, build_plan
+from agent.plan import NOT_TARGET_PLAN, PlanError, build_plan, not_target_lines
 from agent.explain import ExplainFn, attach_evidence, explain_findings, passages_for
-from agent.investigate import DRUG_TOOL_NAMES, drug_tools, investigate_risks, local_evidence, suggest_candidates
+from agent.investigate import investigate_risks, local_evidence
 from agent.llm import load_prompt
 from agent.react import ToolChatFn, ToolFailure
 from agent.errors import ConfigError
@@ -68,7 +68,7 @@ DANGER_NEEDS_REASON = ("위험 단계 항목이 있어 그대로 승인할 수 �
 UNMATCHED_CANNOT_APPROVE = ("약을 정하지 못한 줄(품목기준코드 없음)이 있어 승인할 수 없습니다. "
                             "약을 고르거나 줄을 지운 뒤(edit) 다시 승인해 주세요.")      # 기능분석서 v1.2 5.1절
 NO_PLAN_CANNOT_APPROVE = "조제 계획을 만들지 못해 승인할 수 없습니다. 조제지시서를 고친 뒤(edit) 다시 승인해 주세요."
-EDITED_NOTICE = "약사가 고친 내용으로 약품 매칭과 위험 신호 대조를 다시 했습니다."
+EDITED_NOTICE = "약사가 고친 줄을 다시 검수하고 위험 신호를 다시 대조했습니다."
 
 # 의약품 API를 쓰지 못할 때 조제지시서에 남기는 경고. 사전에서 못 찾은 약이 있을 때만 남긴다.
 # 키가 없을 때와 --no-api로 끈 때 모두 남으므로 이유는 적지 않는다.
@@ -88,7 +88,7 @@ class Deps:
     rag: RagIndex | None = None           # 위험 신호 설명의 근거 색인 (rag.load_index). None이면 근거 없이 설명한다
     embed: Any = None                     # 검색어 임베딩 (embed.embed_texts). 색인에 임베딩이 있을 때만 쓴다. None이면 BM25만
     explain: ExplainFn | None = None      # 위험 신호 AI 설명 (llm.explain_llm). None이면 규칙 문장만 (18단계)
-    react: ToolChatFn | None = None       # AI 조사의 도구 호출 대화 (llm.tool_chat, 11/16). 매칭 실패 후보 · 위험 신호 근거 조사. None이면 끈다
+    react: ToolChatFn | None = None       # AI 조사의 도구 호출 대화 (llm.tool_chat, 11/16). 위험 신호 근거 조사. None이면 끈다
     inspect: InspectFn | None = None      # 트레이 검수 (CV). None이면 트레이 사진을 검수하지 못했다고 알린다 (가짜 '전 칸 일치'를 만들지 않는다)
 
 
@@ -136,9 +136,18 @@ def structure_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     except StructureError as e:
         return {
             "order": None, "status": "failed", "notice": str(e), "error_code": e.code,
-            "errors": [f"[structure] {e.code or '-'} {e}"],
+            "errors": [f"[structure] {e.code or '-'} {e}"], "error_area": error_area(state.get("ocr")),
         }
-    return {"order": _order_dict(order), "status": "structured", "notice": None}
+    return {"order": _order_dict(order), "status": "structured", "notice": None, "error_area": None}
+
+
+def error_area(ocr: Any) -> dict[str, Any] | None:
+    """구조화 실패 때 웹이 처방전 사진에서 강조할 곳: 약품 표 본문 칸들 (Q6). 표를 못 찾았으면 None (사진 전체가 문제)."""
+    from agent.structure import table_lines
+
+    lines = table_lines(ocr)
+    size = ocr_size(ocr)
+    return {**size, "lines": lines} if lines and size else None
 
 
 def _keep_pharmacist_choice(line, matched):
@@ -163,28 +172,83 @@ def match_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     약사가 고친 뒤(status=edited)에는 약사가 직접 고른 약(매칭 결과와 다른 품목기준코드)을 바꾸지 않는다.
     """
     order = DispensingOrder.model_validate(state["order"])
-    mcp_failure = None
-    if deps.tools is not None:
-        try:
-            matched, api_used = deps.tools.match_drug(order)  # 같은 match_order를 MCP 서버가 부른다
-        except McpToolError as e:                             # 서버가 죽어도 조제를 멈추지 않고 직접 부른다
-            mcp_failure = e
-    if deps.tools is None or mcp_failure is not None:
-        matched, api_used = match_order(order, deps.dictionary, api=deps.api), deps.api is not None
-    if mcp_failure is not None:
-        matched.warnings = [*matched.warnings, f"{MCP_FAILED_WARNING}: {mcp_failure}"]
-    if state.get("status") == "edited":
-        matched.items = [_keep_pharmacist_choice(line, new) for line, new in zip(order.items, matched.items)]
-        matched = DispensingOrder.model_validate(matched.model_dump(mode="json"))
+    edited = state.get("status") == "edited"
+    previous = state.get("previous_order") if edited else None
+    kept = _unchanged_lines(order, previous)                  # {줄 번호: 고치기 전의 매칭된 줄} (Q7: 바뀐 줄만 다시)
+    redo = [i for i in range(len(order.items)) if i not in kept]
+    notes: list[str] = []
+    if edited:
+        changed = ", ".join(f"{i + 1}번째({order.items[i].name})" for i in redo)
+        notes.append(f"약사 수정 후 다시 검수한 줄: {changed}" if redo else "약사 수정 후 다시 검수한 줄: 없음 (지운 줄만 있음)")
+    items = [kept.get(i) for i in range(len(order.items))]
+    warnings = list(order.warnings)
+    api_used = deps.api is not None
+    if redo:
+        sub = order.model_copy(update={"items": [order.items[i] for i in redo], "warnings": []})
+        matched_sub, api_used = _match(sub, deps)
+        new_lines = matched_sub.items
+        if edited:
+            new_lines = [_keep_pharmacist_choice(line, new) for line, new in zip(sub.items, new_lines)]
+        for i, line in zip(redo, new_lines):
+            items[i] = line
+        warnings += [w for w in matched_sub.warnings if w not in warnings]
+    matched = DispensingOrder.model_validate({**order.model_dump(mode="json"), "warnings": warnings,
+                                              "items": [d.model_dump(mode="json") for d in items]})
     if not api_used and not matched.all_matched and NO_API_WARNING not in matched.warnings:
         matched.warnings = [*matched.warnings, NO_API_WARNING]
-    update: dict[str, Any] = {"status": "matched"}
-    if deps.react is not None and not matched.all_matched:      # 정하지 못한 줄: AI가 도구로 후보만 더 찾는다 (약은 정하지 않는다)
-        matched, notes = suggest_candidates(matched, _react_drug_tools(deps), deps.react, load_prompt("react_match"))
-        if notes:
-            update["notes"] = notes
-    update["order"] = _order_dict(matched)
+    update: dict[str, Any] = {"status": "matched", "order": _order_dict(_mark_not_target(matched, deps.dictionary))}
+    if notes:
+        update["notes"] = notes
     return update
+
+
+def _match(order: DispensingOrder, deps: Deps) -> tuple[DispensingOrder, bool]:
+    """약 줄들의 품목기준코드를 정한다: MCP 도구(match_drug)가 있으면 서버에서, 없거나 실패하면 직접 (같은 match_order)."""
+    if deps.tools is not None:
+        try:
+            return deps.tools.match_drug(order)
+        except McpToolError as e:                             # 서버가 죽어도 조제를 멈추지 않고 직접 부른다
+            matched = match_order(order, deps.dictionary, api=deps.api)
+            matched.warnings = [*matched.warnings, f"{MCP_FAILED_WARNING}: {e}"]
+            return matched, deps.api is not None
+    return match_order(order, deps.dictionary, api=deps.api), deps.api is not None
+
+
+def _line_key(line) -> tuple:
+    """줄이 바뀌었는지 보는 값: 약사가 고칠 수 있는 칸 (이름 · 품목기준코드 · 1회 알 수 · 복용 시점 · 일수)."""
+    return (line.name, line.item_code, line.count_per_dose, tuple(line.times), line.days)
+
+
+def _unchanged_lines(order: DispensingOrder, previous: dict[str, Any] | None) -> dict[int, Any]:
+    """약사가 고친 조제지시서에서 바뀌지 않은 줄 → 고치기 전의 매칭된 줄 (매칭 결과 · 확인 표시를 그대로 쓴다, Q7).
+
+    같은 줄이 여러 번 있으면 앞에서부터 하나씩 짝짓는다. 고치기 전이 없으면(처음 매칭) 빈 dict.
+    """
+    if not previous:
+        return {}
+    before = DispensingOrder.model_validate(previous).items
+    pool: dict[tuple, list] = {}
+    for line in before:
+        pool.setdefault(_line_key(line), []).append(line)
+    kept = {}
+    for i, line in enumerate(order.items):
+        same = pool.get(_line_key(line))
+        if same:
+            kept[i] = same.pop(0).model_copy(update={"source_line_ids": line.source_line_ids})
+    return kept
+
+
+NOT_TARGET_REASON = "대상 8종이 아닌 약품입니다. 8종 중 하나로 고쳐야 승인할 수 있습니다."
+
+
+def _mark_not_target(order: DispensingOrder, dictionary) -> DispensingOrder:
+    """대상 8종이 아닌 약 줄에 약사 확인 표시와 이유를 붙인다 (명세서 v0.9 REQ-AG-03: 대상 외 약품은 승인 불가)."""
+    items = []
+    for d in order.items:
+        if d.item_code is not None and dictionary.by_item_code(d.item_code) is None and NOT_TARGET_REASON not in d.check_reasons:
+            d = d.model_copy(update={"needs_pharmacist_check": True, "check_reasons": [*d.check_reasons, NOT_TARGET_REASON]})
+        items.append(d)
+    return order.model_copy(update={"items": items})
 
 
 def risk_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
@@ -210,22 +274,35 @@ def risk_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     update: dict[str, Any] = {"status": "checked"}
     if order.risk_check is not None and order.risk_check.findings:
         names = {d.item_code: d.name for d in order.items if d.item_code}
-        explained, note = _explain(deps, order.risk_check.findings, names)
-        order = order.model_copy(update={"risk_check": order.risk_check.model_copy(update={"findings": explained})})
-        if note:
-            update["notes"] = [note]
+        findings = _reuse_explanations(order.risk_check.findings, state.get("previous_order"))
+        todo = [i for i, f in enumerate(findings) if f.explanation is None and not f.evidence]
+        if todo:                                   # 고치기 전에 설명한 항목은 다시 부르지 않는다 (Q7)
+            explained, note = _explain(deps, [findings[i] for i in todo], names)
+            for i, f in zip(todo, explained):
+                findings[i] = f
+            if note:
+                update["notes"] = [note]
+        order = order.model_copy(update={"risk_check": order.risk_check.model_copy(update={"findings": findings})})
     update["order"] = _order_dict(order)
     return update
 
 
-def _react_drug_tools(deps: Deps) -> list:
-    """AI 조사의 약 찾기 도구: MCP 서버가 있으면 서버의 도구(list_tools 스키마 그대로, call_tool로 실행), 없으면 같은 함수를 직접."""
-    if deps.tools is not None:
-        try:
-            return deps.tools.react_tools(DRUG_TOOL_NAMES)
-        except McpToolError:
-            pass
-    return drug_tools(deps.dictionary, deps.api)
+def _finding_key(f) -> tuple:
+    return (f.type, tuple(sorted(f.item_codes)), f.level, f.message)
+
+
+def _reuse_explanations(findings, previous: dict[str, Any] | None) -> list:
+    """고치기 전에도 똑같이 있던 위험 항목(유형 · 약 · 단계 · 문장이 같음)은 그때의 AI 설명과 근거를 그대로 쓴다 (Q7)."""
+    findings = list(findings)
+    old = ((previous or {}).get("risk_check") or {}).get("findings") or []
+    if not old:
+        return findings
+    from agent.schema import RiskFinding
+
+    done = {_finding_key(f): f for f in (RiskFinding.model_validate(x) for x in old) if f.explanation or f.evidence}
+    return [f.model_copy(update={"explanation": done[_finding_key(f)].explanation,
+                                 "evidence": done[_finding_key(f)].evidence})
+            if _finding_key(f) in done and f.explanation is None and not f.evidence else f for f in findings]
 
 
 def _evidence_search(deps: Deps):
@@ -377,7 +454,8 @@ def approve_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
       위험(danger) 항목이 있으면 그대로 승인할 수 없고 사유를 적어 진행(manual)해야 한다. 사유는 notes에 남는다
       (조제 기록의 승인 이력에 쓴다). 약을 정하지 못한 줄이 있거나 계획이 없으면 진행할 수 없다 (read_reply).
     - 고치기(edit), 또는 약품 줄을 바꾼 채 승인하면: 고친 줄을 넣고 edited → 약품 매칭 · 위험 신호 대조 · 조제 계획을
-      다시 하고 다시 여기서 멈춘다 (전체 재계산, 기능분석서 F-WEB-07). LLM 구조화는 다시 부르지 않는다.
+      다시 하고 다시 여기서 멈춘다. 바뀐 줄만 다시 매칭하고, 고치기 전에도 있던 위험 항목은 AI 설명 · 근거를 다시 쓴다
+      (11/17 회의 Q7). 중복 · 금기 대조와 조제 계획은 전체로 다시 한다. LLM 구조화는 다시 부르지 않는다.
     위험 신호 대조를 건너뛴 조제지시서면 ValueError (그래프를 잘못 이은 것이다).
     """
     payload = approval_payload(state)
@@ -387,13 +465,14 @@ def approve_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     if action in (APPROVE, MANUAL) and answered.items == order.items:
         if action == MANUAL:
             reason = " ".join(str(reply["reason"]).split())
-            return {"status": "planned", "notice": f"{MANUAL_NOTICE} 사유: {reason}", "error_code": None,
+            return {"status": "planned", "notice": f"{MANUAL_NOTICE} 사유: {reason}", "error_code": None, "previous_order": None,
                     "notes": [f"위험 신호 확인 후 진행 사유: {reason}"]}
-        return {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None}
+        return {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None, "previous_order": None}
     data = _order_dict(order)
     data["items"] = [line.model_dump(mode="json") for line in answered.items]
     data["risk_check"] = None
-    return {"order": data, "plan": None, "status": "edited", "notice": EDITED_NOTICE, "error_code": None}
+    return {"order": data, "plan": None, "status": "edited", "notice": EDITED_NOTICE, "error_code": None,
+            "previous_order": _order_dict(order)}      # 고치기 직전 (매칭 결과 · AI 설명 · 근거를 다시 쓰려고, Q7)
 
 
 def plan_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
@@ -406,6 +485,10 @@ def plan_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     order = DispensingOrder.model_validate(state["order"])
     if order.risk_check is None:
         raise ValueError("위험 신호 대조를 거치지 않은 조제지시서로는 조제 계획을 만들지 않습니다")
+    not_target = not_target_lines(order, deps.dictionary)
+    if not_target:                                   # CV가 모르는 약이라 계획을 만들어도 검수할 수 없다 (REQ-AG-03)
+        notice = f"{NOT_TARGET_PLAN}: {', '.join(not_target)}"
+        return {"plan": None, "notice": notice, "error_code": None, "errors": [f"[plan] - {notice}"]}
     mcp_failure = None
     try:
         plan = None

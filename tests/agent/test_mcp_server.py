@@ -60,9 +60,9 @@ def with_api(api):
 
 # ------------------------------------------------------------ 도구 목록
 def test_the_server_offers_the_drug_and_dur_tools_with_descriptions(tools):
-    assert tools.tool_names() == list(TOOL_NAMES) == ["search_drug", "check_item_code", "match_drug", "verify_dictionary",
-                                                      "check_interaction", "check_duplicate", "build_plan", "get_plan",
-                                                      "search_evidence"]
+    assert tools.tool_names() == list(TOOL_NAMES) == ["search_drug", "check_item_code", "match_drug",
+                                                      "check_interaction", "check_duplicate", "build_plan",
+                                                      "search_evidence"]      # 11/18: verify_dictionary · get_plan 삭제
     assert all(description for _, description in tools.tools())
 
 
@@ -149,26 +149,6 @@ def test_match_drug_rejects_something_that_is_not_an_order(tools):
         tools.call("match_drug", order={"prescription_id": "P1"})
 
 
-# ------------------------------------------------------------ verify_dictionary
-def test_verify_dictionary_needs_the_api(tools):
-    with pytest.raises(McpToolError, match="의약품 API를 쓰지 않는 서버"):
-        tools.call("verify_dictionary")
-
-
-def test_verify_dictionary_checks_every_entry():
-    products = {search_term(e.name): [ApiDrug(e.item_code, e.name, None)] for e in DICT.entries}
-    first = DICT.entries[0]
-    products[search_term(first.name)] = [ApiDrug("199999999", first.name, None)]
-    failing = search_term(DICT.entries[1].name)
-    with with_api(FakeApi(products, fail={failing})) as tools:
-        report = tools.call("verify_dictionary")
-    assert report["total"] == len(DICT.entries) == 8
-    assert report["matched"] == 6
-    verdicts = {r["item_code"]: r["verdict"] for r in report["results"]}
-    assert verdicts[first.item_code] == CODE_DIFFERENT and verdicts[DICT.entries[1].item_code] == "실패"
-    assert "연결하지 못했습니다" in report["results"][1]["error"]
-
-
 # ------------------------------------------------------------ stdio (진짜 하위 프로세스)
 def test_the_server_runs_as_a_process_and_answers_like_the_function():
     order = order_of("rx8_05")
@@ -176,7 +156,7 @@ def test_the_server_runs_as_a_process_and_answers_like_the_function():
         assert tools.tool_names() == list(TOOL_NAMES)
         assert tools.match_drug(order) == (match_order(order, DICT), False)
         with pytest.raises(McpToolError, match="의약품 API를 쓰지 않는 서버"):
-            tools.call("verify_dictionary")
+            tools.call("check_item_code", item_code="197900277", name="게보린정")
 
 
 def test_the_server_writes_nothing_to_stdout_when_it_cannot_start(monkeypatch, capsys):
@@ -329,4 +309,4 @@ def test_react_tools_carry_the_server_schema_and_run_on_the_server():
             check.run({"item_code": "197900277", "name": "게보린"})
         with pytest.raises(McpToolError, match="도구가 없습니다: delete_all"):
             tools.react_tools(["search_drug", "delete_all"])
-        assert tools.schema("get_plan")["required"] == ["plan"] and tools.schema("없음") is None
+        assert tools.schema("build_plan")["required"] == ["order"] and tools.schema("없음") is None

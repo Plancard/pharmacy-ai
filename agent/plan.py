@@ -39,6 +39,19 @@ def _label(index: int, name: str) -> str:
     return f"{index}번째 약품({name})"
 
 
+NOT_TARGET_PLAN = "조제 계획을 만들 수 없습니다. 대상 8종이 아닌 약이 있습니다"
+
+
+def not_target_lines(order: DispensingOrder, dictionary) -> list[str]:
+    """품목기준코드는 있지만 약품 사전(대상 8종)에 없는 줄 (의약품 API로 찾은 약 · 약사가 넣은 코드).
+
+    CV가 알아보지 못하는 약이라 트레이로 조제 · 검수할 수 없다 → 조제 계획을 만들지 않는다 (명세서 v0.9 REQ-AG-03, 회의 Q4).
+    그래프의 계획 노드와 MCP build_plan 도구가 같이 쓴다.
+    """
+    return [_label(i, d.name) for i, d in enumerate(order.items, start=1)
+            if d.item_code is not None and dictionary.by_item_code(d.item_code) is None]
+
+
 def build_plan(order: DispensingOrder) -> Plan:
     """조제지시서로 A.4 조제 계획을 만든다. 만들 수 없으면 PlanError."""
     unmatched = [_label(i, d.name) for i, d in enumerate(order.items, start=1) if d.item_code is None]

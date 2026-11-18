@@ -239,7 +239,7 @@ def match_order(order: DispensingOrder, dictionary: DrugDictionary, *, api: ApiS
     return DispensingOrder.model_validate(data)
 
 
-# ------------------------------------------------------------ 도구 결과 (MCP search_drug · check_item_code와 AI 조사가 같이 쓴다)
+# ------------------------------------------------------------ 도구 결과 (MCP search_drug · check_item_code)
 
 TOOL_RESULTS = 5          # 도구 하나가 돌려주는 약 수
 

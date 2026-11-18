@@ -88,6 +88,8 @@ class OcrResult(_Model):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     lines: list[OcrLine]                     # 비어 있어도 형식은 맞다. 글자가 없는 사진(E_OCR_EMPTY)은 구조화 단계가 가려낸다
+    # 종이 가장자리가 사진 끝에 닿았는가 (선택, 명세서 v0.9 A.1 · 11/17 회의). 재찍기 판단은 Agent가 약 줄과 함께 한다 (pipeline.py)
+    paper_edge_cut: bool | None = None
 
     @model_validator(mode="after")
     def _lines_sorted_and_inside(self):

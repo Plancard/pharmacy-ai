@@ -60,8 +60,9 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 # 처방전 1장 1분 이내(REQ-NF-01)가 빠듯하면 0으로 끈다. 꺼도 단계와 규칙 문장은 그대로 보인다.
 RISK_EXPLAIN = os.getenv("RISK_EXPLAIN", "1").strip() != "0"
 
-# AI 조사 (ReAct + Function Calling, 11/16). 약품 매칭 실패 줄의 후보 조사와 위험 신호 근거 조사에 LLM을 여러 번(많아야 4번) 부른다.
-# 0이면 끈다: 매칭 실패 줄은 규칙 후보만, 위험 신호 설명은 한 번 부르는 설명(RISK_EXPLAIN)만 쓴다.
+# AI 조사 (ReAct + Function Calling, 11/16). 위험 신호 근거 조사에 LLM을 여러 번(많아야 4번) 부른다.
+# (매칭 실패 줄의 AI 후보 조사는 11/18에 뺐다: 대상 8종 밖의 약은 승인할 수 없다)
+# 0이면 끈다: 위험 신호 설명은 한 번 부르는 설명(RISK_EXPLAIN)만 쓴다.
 AGENT_REACT = os.getenv("AGENT_REACT", "1").strip() != "0"
 
 # RAG 임베딩을 어디서 찾나 (11/16 결정: pgvector). file: agent/resources/rag_corpus/embeddings.json (기본)
@@ -101,5 +102,9 @@ def mcp_url() -> str | None:
 
 
 def use_mcp() -> bool:
-    """AGENT_USE_MCP=1 이면 웹의 Agent(api.AgentApi.from_settings)가 약품 매칭을 MCP 도구로 부른다 (12단계). 기본은 함수 호출."""
-    return os.getenv("AGENT_USE_MCP", "").strip().lower() in ("1", "true", "yes", "on")
+    """웹의 Agent(api.AgentApi.from_settings)가 약품 매칭 · DUR 대조 · 조제 계획 · 근거 검색을 MCP 도구로 부르는가.
+
+    기본은 켜짐이다 (명세서 3.3 '외부 API (MCP 경유)', 11/17). AGENT_USE_MCP=0이면 함수로 직접 부른다 (MCP 서버가 안 뜰 때 · 디버깅).
+    켜져 있어도 서버 연결 · 호출이 실패하면 함수로 대신하고 경고를 남긴다.
+    """
+    return os.getenv("AGENT_USE_MCP", "1").strip().lower() not in ("0", "false", "no", "off")

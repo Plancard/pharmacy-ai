@@ -105,6 +105,30 @@ def test_a_structure_failure_is_an_error_with_the_a7_code(backend):
         api.start("P0001", EMPTY_OCR)
     assert error.value.code == E_OCR_EMPTY
     assert api.pending("P0001") is None and api.stage("P0001") == "failed"
+    assert error.value.area is None and api.result("P0001")["error_area"] is None      # 표가 없으면 강조할 곳도 없다
+
+
+def test_an_llm_failure_carries_the_drug_table_to_highlight(backend):
+    """11/17 회의 Q6: 규칙도 LLM도 못 읽으면(E_LLM) 처방전 사진의 약품 표 칸을 함께 알려 준다."""
+    import json
+
+    from agent.errors import E_LLM, StructureError
+
+    def broken_llm(text, feedback):
+        raise StructureError("응답 없음")
+
+    def rule_fails(ocr):
+        raise StructureError("규칙으로 읽지 못함")
+
+    graph = build_graph(dictionary=DICT, api=None, checkpointer=memory_checkpointer(),
+                        structure=lambda pid, ocr: structure_prescription(pid, ocr, llm_fn=broken_llm, rule_fn=rule_fails))
+    api = AgentApi(graph)
+    ocr = json.loads((RESOURCES_DIR / "samples" / "cv_a1" / "rx_002.json").read_text(encoding="utf-8"))
+    with pytest.raises(AgentRunError) as error:
+        api.start("P0001", ocr)
+    area = error.value.area
+    assert error.value.code == E_LLM and area["lines"] and area["width"] == ocr["width"]
+    assert api.result("P0001")["error_area"] == area
 
 
 def test_a_photo_that_is_not_a_prescription_does_not_stop_at_the_approval(backend):

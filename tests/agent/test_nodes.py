@@ -112,7 +112,7 @@ def state_with(order=None, **extra):
 def test_structure_makes_the_order_from_a_sample():
     state = first_state("P0001", load("cv_a1", "rx_001"))
     update = structure_node(state, deps())
-    assert set(update) == {"order", "status", "notice"}
+    assert set(update) == {"order", "status", "notice", "error_area"} and update["error_area"] is None
     assert update["status"] == "structured" and update["notice"] is None
     order = DispensingOrder.model_validate(update["order"])
     assert order.prescription_id == "P0001" and len(order.items) == 2
@@ -141,8 +141,24 @@ def test_a_structure_failure_is_recorded_in_the_state(code):
     update = structure_node(first_state("P0001", {}), deps(structure=fails))
     assert update == {
         "order": None, "status": "failed", "notice": "자동 구조화에 실패했습니다.", "error_code": code,
-        "errors": [f"[structure] {code or '-'} 자동 구조화에 실패했습니다."],
+        "errors": [f"[structure] {code or '-'} 자동 구조화에 실패했습니다."], "error_area": None,   # 표가 없는 OCR
     }
+
+
+def test_a_structure_failure_points_at_the_drug_table_on_the_photo():
+    """11/17 회의 Q6: LLM까지 실패하면 웹이 처방전 사진에서 약품 표 칸을 강조한다 (원본 좌표)."""
+    def fails(prescription_id, ocr):
+        raise StructureError("자동 구조화에 실패했습니다.", code=E_LLM)
+
+    ocr = load("cv_a1", "rx_002")
+    update = structure_node(first_state("P0001", ocr), deps(structure=fails))
+    area = update["error_area"]
+    assert (area["width"], area["height"]) == (ocr["width"], ocr["height"]) and area["lines"]
+    by_id = {l["line_id"]: l for l in ocr["lines"]}
+    texts = [by_id[x["line_id"]]["text"] for x in area["lines"]]
+    assert any("알모란" in t for t in texts)                                     # 약 줄이 들어 있다
+    assert all(x["bbox"] == by_id[x["line_id"]]["bbox"] for x in area["lines"])
+    assert not any("주사제" in t for t in texts)                                 # 표 밖은 아니다
 
 
 def test_a_state_without_ocr_fails_with_the_empty_ocr_code():
@@ -507,7 +523,8 @@ def test_approve_refuses_an_order_that_skipped_the_risk_check():
 def test_approving_the_order_as_shown_confirms_the_plan_on_the_card():
     state = ready(line("타이레놀정500mg"))
     _, update = asked(state)
-    assert update == {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None}   # 계획은 새로 만들지 않는다
+    assert update == {"status": "planned", "notice": APPROVED_NOTICE, "error_code": None,   # 계획은 새로 만들지 않는다
+                      "previous_order": None}
 
 
 def edit(change):
@@ -526,7 +543,8 @@ def test_editing_puts_the_new_lines_in_and_asks_for_matching_and_checking_again(
         order["items"][0]["days"] = 2
 
     update = approve_node(state, deps(ask=edit(two_days)))
-    assert set(update) == {"order", "plan", "status", "notice", "error_code"}
+    assert set(update) == {"order", "plan", "status", "notice", "error_code", "previous_order"}
+    assert update["previous_order"] == state["order"]                # 고치기 직전 (안 바뀐 줄 · 설명을 다시 쓴다, Q7)
     assert update["plan"] is None                                    # 고친 뒤에는 계획도 다시 만든다
     assert (update["status"], update["notice"], update["error_code"]) == ("edited", EDITED_NOTICE, None)
     assert update["order"]["items"][0]["days"] == 2
@@ -798,3 +816,82 @@ def test_when_the_mcp_dur_tool_fails_the_node_checks_by_itself_and_says_so():
     assert f"{MCP_DUR_FAILED_WARNING}: 연결이 끊겼습니다" in order.warnings
 
 
+
+
+# ------------------------------------------------------------ 수정 후 바뀐 항목만 다시 (11/17 회의 Q7)
+
+
+def _edited(state, change):
+    """승인 카드에서 약사가 고친 뒤의 상태 (approve_node가 돌려준 칸을 합친 것)."""
+    return merged(state, approve_node(state, deps(ask=edit(change))))
+
+
+def test_only_the_changed_lines_are_matched_again(monkeypatch):
+    import agent.nodes as nodes
+
+    state = ready(line("타이레놀정500mg"), line("게보린정"))
+    before = state["order"]["items"]
+    seen = []
+    real = nodes.match_order
+    monkeypatch.setattr(nodes, "match_order", lambda order, *a, **k: seen.append([d.name for d in order.items]) or real(order, *a, **k))
+
+    def two_days(order):
+        order["items"][1]["days"] = 2
+
+    update = match_node(_edited(state, two_days), deps())
+    assert seen == [["게보린정"]]                                              # 바뀐 줄만 다시 매칭한다
+    items = update["order"]["items"]
+    assert items[0] == before[0]                                                # 안 바뀐 줄은 그대로
+    assert items[1]["item_code"] == GEVORIN and items[1]["days"] == 2
+    assert update["notes"] == ["약사 수정 후 다시 검수한 줄: 2번째(게보린정)"]
+
+
+def test_deleting_a_line_matches_nothing_again(monkeypatch):
+    import agent.nodes as nodes
+
+    state = ready(line("타이레놀정500mg"), line("게보린정"))
+    monkeypatch.setattr(nodes, "match_order", lambda *a, **k: pytest.fail("다시 매칭하면 안 됩니다"))
+    update = match_node(_edited(state, lambda order: order["items"].pop(1)), deps())
+    assert [d["name"] for d in update["order"]["items"]] == ["타이레놀정500mg"]
+    assert update["notes"] == ["약사 수정 후 다시 검수한 줄: 없음 (지운 줄만 있음)"]
+
+
+def test_a_risk_explained_before_the_edit_is_not_explained_again():
+    from agent.nodes import Deps
+
+    state = ready(line("타이레놀정500mg"), line("게보린정"))
+    finding = state["order"]["risk_check"]["findings"][0]
+    finding.update(explanation="두 약 모두 아세트아미노펜이 들어 있습니다.",
+                   evidence=[{"title": "타이레놀정500mg · 주의사항", "source": "e약은요", "excerpt": "…"}])
+
+    def two_days(order):
+        order["items"][1]["days"] = 2
+
+    after = _edited(state, two_days)
+    after = merged(after, match_node(after, deps()))
+    never = Deps(dictionary=DICT, structure=real_structure, explain=lambda *a: pytest.fail("다시 설명하면 안 됩니다"))
+    again = risk_node(after, never)["order"]["risk_check"]["findings"]
+    assert again[0]["explanation"] == finding["explanation"] and again[0]["evidence"] == finding["evidence"]
+
+
+def test_a_new_risk_after_the_edit_is_explained():
+    from agent.nodes import Deps
+
+    state = ready(line("타이레놀정500mg"), line("뮤코다인캡슐200mg"))
+    assert state["order"]["risk_check"]["findings"] == []
+
+    def add_gevorin(order):
+        order["items"][1].update(name="게보린정", item_code=None, match_method=None, match_candidates=[])
+
+    after = _edited(state, add_gevorin)
+    after = merged(after, match_node(after, deps()))
+    asked = []
+    explain = lambda text: asked.append(text) or {"items": [{"index": 1, "text": "아세트아미노펜이 겹칩니다. 하루 총량을 확인하세요."}]}
+    found = risk_node(after, Deps(dictionary=DICT, structure=real_structure, explain=explain))["order"]["risk_check"]["findings"]
+    assert len(asked) == 1 and found[0]["type"] == "ingredient_dup"
+
+
+def test_approving_clears_the_order_before_the_edit():
+    state = ready(line("타이레놀정500mg"))
+    state["previous_order"] = state["order"]
+    assert approve_node(state, deps())["previous_order"] is None

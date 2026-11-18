@@ -28,6 +28,7 @@ def no_real_database(monkeypatch):
 def no_real_mcp_server(monkeypatch):
     """테스트는 .env의 AGENT_MCP_URL(따로 띄운 MCP 서버)에 붙지 않는다. HTTP 서버 시험은 test_mcp_http.py가 스스로 띄운다."""
     monkeypatch.delenv("AGENT_MCP_URL", raising=False)
+    monkeypatch.setenv("AGENT_USE_MCP", "0")      # 기본은 MCP 켜짐이지만 시험은 함수로 직접 부른다 (MCP를 보는 시험은 스스로 setenv)
 
 
 LIVE_FLAG = "AGENT_LIVE_OPENAI"     # 1이면 @pytest.mark.live_openai 시험이 진짜 OpenAI를 부른다 (비용이 든다)
