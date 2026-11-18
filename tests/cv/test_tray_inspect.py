@@ -270,6 +270,14 @@ def test_old_expected_column_still_reads(tmp_path):
     assert ti.load_truth(tmp_path / "cells.csv")["g01"][(1, "noon")]["expected"] == Counter({0: 1, 1: 1})
 
 
+@pytest.mark.parametrize("value", ["ok", "OK", "none", "-", "정상"])
+def test_normal_markers_in_the_error_column_are_not_errors(tmp_path, value):
+    (tmp_path / "cells.csv").write_text(CELLS_CSV.replace("0:1;1:1,0:1;1:1,,\n", f"0:1;1:1,0:1;1:1,{value},\n"),
+                                        encoding="utf-8")
+    truth = ti.load_truth(tmp_path / "cells.csv")
+    assert truth["g01"][(1, "morning")]["error"] == "" and truth["g01"][(1, "noon")]["error"] == "missing"
+
+
 def test_truth_conflict_is_counted(tmp_path):
     """error 열은 비었는데 planned ≠ actual이면(또는 반대) 정답표 확인용으로 센다."""
     (tmp_path / "cells.csv").write_text(CELLS_CSV.replace("1:1,missing,", "1:1,,"), encoding="utf-8")

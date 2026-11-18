@@ -39,6 +39,7 @@ from cv.stub import CVError, DAYS, TIMES, PlanRangeError
 from cv.warp import OUT_H, OUT_W
 
 REASON_ORDER = ("boundary", "overlap")
+NO_ERROR = {"", "ok", "none", "normal", "-", "0", "no", "false", "정상", "없음"}   # cells.csv error 열의 '틀린 칸 아님' 값
 
 
 # ---------------------------------------------------------------- 판정 (모델 없이)
@@ -168,7 +169,7 @@ def load_truth(path):
             planned = r.get("planned", r.get("expected"))
             groups.setdefault(g, {})[(int(r["day"]), r["time"].strip())] = {
                 "expected": _parse(planned), "actual": _parse(r.get("actual")),
-                "error": (r.get("error") or "").strip(),
+                "error": "" if (r.get("error") or "").strip().lower() in NO_ERROR else r["error"].strip(),
                 "flags": set((r.get("flags") or "").replace(";", " ").replace(",", " ").replace("|", " ").split()),
                 "has_expected": bool((planned or "").strip())}
     for cells in groups.values():
