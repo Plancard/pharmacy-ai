@@ -114,3 +114,34 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 .time-checks label { display: flex; align-items: center; gap: 3px; font-size: 14px; white-space: nowrap; }
 .time-checks input { padding: 0; }
 .reason-input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+
+/* 트레이 검수 (F-WEB-09) — 칸 판정은 색과 글자를 함께 쓴다 (일치 초록 · 불일치 빨강 · 확인 필요 노랑) */
+.tray-upload { display: grid; gap: 8px; }
+.tray-upload p { margin: 0; }
+.retake { border: 1px solid #fcd34d; background: #fffbeb; color: var(--warn); border-radius: 6px; padding: 10px 12px; margin: 0; }
+.retake p { margin: 4px 0 0; color: var(--ink); }
+.tray-summary { margin: 0; }
+.chip.ok { background: #f0fdf4; color: var(--ok); }
+table.tray-grid { table-layout: fixed; }
+table.tray-grid th { font-size: 13px; color: var(--muted); font-weight: 500; text-align: center; padding: 4px; }
+table.tray-grid th[scope="row"] { text-align: right; width: 4.5em; }
+table.tray-grid td { padding: 3px; border: 0; }
+.cell { width: 100%; min-height: 58px; display: grid; gap: 2px; align-content: center; padding: 6px; border-radius: 6px;
+  border: 2px solid transparent; color: var(--ink); font-size: 13px; text-align: center; }
+.cell-state { font-weight: 600; }
+.cell-items { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.cell-ok { background: #f0fdf4; border-color: #86efac; }
+.cell-ok .cell-state { color: var(--ok); }
+.cell-ok.cell-empty { background: #f9fafb; border-color: var(--line); }
+.cell-ok.cell-empty .cell-state { color: var(--muted); font-weight: 400; }
+.cell-mismatch { background: #fef2f2; border-color: #fca5a5; }
+.cell-mismatch .cell-state { color: var(--bad); }
+.cell-need_review { background: #fffbeb; border-color: #fcd34d; }
+.cell-need_review .cell-state { color: var(--warn); }
+.cell[aria-pressed] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cell-detail { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font-size: 14px; }
+.cell-detail dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 6px 0 0; }
+.cell-detail dt { color: var(--muted); }
+.cell-detail dd { margin: 0; }
+button.secondary { background: var(--card); color: var(--ink); border: 1px solid var(--line); }

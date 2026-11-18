@@ -6,18 +6,24 @@ FakeGateway(web/agent_gateway.py)와 메서드 · 돌려주는 값이 같다. �
     pending(rx_id)                    AgentApi.pending → Pause | None
     resume(rx_id, hitl_point, reply)  AgentApi.resume → 다시 멈추면 Pause, 조제 계획까지 끝나면 Wait('waiting_tray')
     approved_order(rx_id)             AgentApi.approved_order
+    tray(rx_id, image_id, image_path) AgentApi.send(…, "tray") → 불일치가 있으면 Pause(inspection), 전 칸 일치면 Wait('done')
+    inspection(rx_id) · tray_error(rx_id)   AgentApi.result의 검수 결과(A.3) · 트레이 검수 실패 코드와 안내
     check_reply(rx_id, hitl_point, reply)   응답이 맞는지 미리 본다 (라우트가 백그라운드로 넘기기 전에 쓰면 400으로 거를 수 있다)
     close()                           MCP 연결 등을 닫는다
 
 대응 (기능분석서 5.2절)
 - Agent가 멈춤(Pause)                    → 처방 상태 waiting_approval (hitl_point는 Pause.hitl_point)
-- Agent stage 'await_tray'(status planned) → Wait('waiting_tray')
-- 그 밖의 stage(inspected 등)는 웹에 아직 상태가 없어 None (상태를 바꾸지 않는다)
+- Agent stage 'await_tray'(status planned) → Wait('waiting_tray') (HITL ② 재조제도 여기로)
+- Agent stage 'inspected' → Wait('done') (전 칸 일치, 또는 HITL ② 확인 완료)
+- 그 밖의 stage는 None (상태를 바꾸지 않는다)
+- 트레이 검수 실패(E_TRAY_NOT_FOUND 등)는 Agent가 planned에 머물고 AgentRunError를 올린다 → AgentError(같은 코드).
+  웹은 처방을 실패로 두지 않고 트레이 대기로 돌려 다시 찍게 한다 (web/workflow.run_tray)
 - AgentRunError(A.7 코드) → AgentError(같은 코드). CV 오류(OcrEmpty 등)는 .code가 있어 그대로 올린다.
 
 체크포인트는 AgentApi.from_settings가 .env DATABASE_URL(웹과 같은 PostgreSQL)에 붙인다 (PostgresSaver).
 그래서 서버를 껐다 켜도 승인 대기 처방은 같은 곳에서 이어진다 (REQ-WEB-03). Agent는 웹 테이블을 직접 쓰지 않는다.
 OCR은 .env CV_USE_STUB=1이면 cv/stub.py(시연용 고정 결과), 0이면 cv/ocr.py(EasyOCR)다.
+트레이 검수도 같다: 1이면 agent.cv_adapter.stub_inspect(CV_STUB_SCENARIO), 0이면 cv/tray_inspect.py(보정 → 검출 → 판정).
 """
 from __future__ import annotations
 
@@ -29,7 +35,7 @@ from typing import Any, Callable
 from web.agent_gateway import AgentError, Pause, Wait
 
 OcrFn = Callable[[Path, str], dict[str, Any]]      # (이미지 경로, 사진 ID) -> A.1
-STAGE_TO_WAIT = {"await_tray": "waiting_tray"}     # Agent stage -> 웹 처방 상태 (Wait)
+STAGE_TO_WAIT = {"await_tray": "waiting_tray", "inspected": "done"}     # Agent stage -> 웹 처방 상태 (Wait)
 DEFAULT_ERROR = "E_LLM"                            # 코드 없는 Agent 실패 (A.7에 가장 가까운 것)
 
 
@@ -62,6 +68,33 @@ def real_ocr(image_path: Path, image_id: str) -> dict[str, Any]:
     from cv.ocr import extract_text
 
     return extract_text(Path(image_path), "prescription", image_id)
+
+
+def tray_path(image_id: str) -> Path:
+    """트레이 사진 ID(웹 images.id) → 저장된 파일 경로. 백그라운드 작업(앱 컨텍스트 안)에서 부른다."""
+    import uuid
+
+    from cv.stub import CVError
+    from web import rx, storage
+
+    try:
+        key = rx.tray_image_key(uuid.UUID(str(image_id)))
+    except ValueError:
+        key = None
+    if key is None:
+        raise CVError(f"트레이 사진을 찾지 못했습니다: {image_id}")
+    return storage.path_of(key)
+
+
+def real_inspect(image_id: str, plan: dict[str, Any]) -> dict[str, Any]:
+    """cv/tray_inspect.py로 검수한다 (Agent 그래프가 받는 모양: (사진 ID, A.4) -> A.3). A.3 image_id는 웹의 사진 ID다.
+
+    agent.cv_adapter.file_inspect와 같은 일인데, A.3 image_id를 파일 이름이 아니라 웹의 사진 ID로 맞추기 위해 따로 둔다
+    (웹이 검수 결과를 inspections에 남길 때 이 ID로 사진과 잇는다). 처음 부를 때 모델 두 개를 읽어 몇 초 걸린다.
+    """
+    from cv.tray_inspect import inspect_tray
+
+    return inspect_tray(tray_path(image_id), plan, image_id=image_id)
 
 
 class LangGraphGateway:
@@ -105,6 +138,24 @@ class LangGraphGateway:
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         return self.api.approved_order(rx_id)
 
+    def tray(self, rx_id: str, image_id: str, image_path: Path) -> Pause | Wait | None:
+        """트레이 사진을 검수한다. Agent는 사진 ID만 받고, CV(build_graph(inspect=…))가 ID로 사진을 찾는다.
+
+        지금은 stub_inspect라 사진을 읽지 않는다. 실제 CV를 붙일 때 file_inspect(cv 함수, 사진 ID → 경로)로 바꾼다.
+        """
+        pause = self._run(lambda: self.api.send(rx_id, None, "tray", image_id=image_id, prescription_id=rx_id))
+        return self._outcome(rx_id, pause)
+
+    def inspection(self, rx_id: str) -> dict[str, Any] | None:
+        return self.api.result(rx_id).get("inspection")
+
+    def tray_error(self, rx_id: str) -> dict[str, Any] | None:
+        """트레이 대기에 머무는 이유. 승인 직후처럼 오류가 없으면 None."""
+        result = self.api.result(rx_id)
+        if not result.get("error_code") or self.api.stage(rx_id) != "await_tray":
+            return None
+        return {"code": result["error_code"], "notice": result.get("notice")}
+
     def close(self) -> None:
         self.api.close()
 
@@ -115,9 +166,7 @@ def from_settings() -> LangGraphGateway:
     from agent.cv_adapter import stub_inspect
 
     use_stub = os.getenv("CV_USE_STUB", "1").strip() != "0"
-    kwargs: dict[str, Any] = {}
-    if use_stub:
-        kwargs["inspect"] = stub_inspect()   # 트레이 사진 흐름이 웹에 붙으면 실제 CV(file_inspect)로 바꾼다
+    kwargs: dict[str, Any] = {"inspect": stub_inspect() if use_stub else real_inspect}
     gateway = LangGraphGateway(AgentApi.from_settings(**kwargs), stub_ocr if use_stub else real_ocr)
     atexit.register(gateway.close)
     return gateway

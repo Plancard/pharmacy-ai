@@ -151,3 +151,21 @@ def test_the_backend_setting_picks_the_gateway(monkeypatch, tmp_path):
     App.config["AGENT_BACKEND"] = "other"
     with pytest.raises(RuntimeError, match="fake · langgraph"):
         agent_gateway.init_app(App)
+
+
+def test_a_reply_the_agent_would_refuse_is_rejected_with_400_and_not_recorded(backend, monkeypatch, tmp_path, fake_rx):
+    """라우트가 응답을 기록하기 전에 check_reply로 거른다. 잘못된 응답이 백그라운드에서 처방을 실패로 만들지 않는다."""
+    client = make_client(monkeypatch, tmp_path)
+    gw = make_gateway()
+    client.application.extensions["agent"] = gw
+    rx_id = upload(client).get_json()["id"]
+    pause = gw.pending(rx_id)
+
+    wrong = dict(pause.payload["order"], prescription_id="다른-처방")
+    monkeypatch.setattr("web.workflow.build_edited_order", lambda order, edits: wrong)
+    r = approve(client, rx_id, action="edit", items=[{"name": "x"}])
+    assert r.status_code == 400, r.get_json()
+    assert "다른-처방" in r.get_json()["error"] or "처방" in r.get_json()["error"]   # 연결부가 되돌려 준 문장
+    assert fake_rx.approvals == []                                   # 기록하지 않았다
+    d = client.get(f"/api/prescriptions/{rx_id}").get_json()
+    assert d["status"] == "waiting_approval"                         # 처방은 그대로 승인 대기다

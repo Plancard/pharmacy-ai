@@ -4,6 +4,8 @@
     GET  /api/prescriptions/<id>                  상태·카드 내용·타임라인 사건 (화면이 2초마다 다시 읽음)
     GET  /api/prescriptions/<id>/images/<img_id>  원본 이미지
     POST /api/prescriptions/<id>/approve          HITL ① 조제지시서 승인
+    POST /api/prescriptions/<id>/tray             트레이 사진 업로드 (multipart, 필드 image. 트레이 대기 처방에만)
+    POST /api/prescriptions/<id>/inspection       HITL ② 검수 확인 {action: confirm | redo}
 
 로그인 안 됨은 401, 다른 약국의 처방은 404, 상태가 맞지 않으면 409로 답한다.
 """
@@ -71,29 +73,75 @@ def health():
     return jsonify(status="ok" if ok else "db_error", db=ok), (200 if ok else 503)
 
 
-@bp.post("/prescriptions")
-@api_login_required
-def upload():
-    """처방전 업로드 (F-WEB-02, REQ-WEB-07). 바로 202로 답하고 처리는 백그라운드에서 한다."""
+def _read_image(what: str) -> tuple[bytes, str] | tuple[Any, int]:
+    """업로드 필드 image를 읽는다. → (바이트, 확장자) 또는 오류 응답 (응답, 상태 코드)."""
     f = request.files.get("image")
     if f is None or not f.filename:
-        return _error(400, "처방전 이미지를 선택해 주세요.")
+        return _error(400, f"{what} 이미지를 선택해 주세요.")
     ext = Path(f.filename).suffix.lower()
     data = f.read()
     magic = _MAGIC.get(ext)
     if magic is None or not data.startswith(magic):
         return _error(400, "JPG 또는 PNG 이미지만 올릴 수 있습니다.")
+    return data, ext
+
+
+@bp.post("/prescriptions")
+@api_login_required
+def upload():
+    """처방전 업로드 (F-WEB-02, REQ-WEB-07). 바로 202로 답하고 처리는 백그라운드에서 한다."""
+    got = _read_image("처방전")
+    if not isinstance(got[0], bytes):
+        return got
+    data, ext = got
     row = workflow.receive(g.user["pharmacy_id"], g.user["id"], data, ext)
     return jsonify(id=str(row["id"]), display_no=row["display_no"], status=row["status"]), 202
 
 
-def _timeline(row: dict) -> list[dict]:
-    """처방 타임라인에 시각을 붙일 사건: 접수와 약사의 HITL 응답. 오래된 것부터 (검수 결과는 11/18에 더한다)."""
-    events = [{"event": "received", "at": row["created_at"].isoformat()}]
+NOT_WAITING_TRAY = "조제지시서 승인이 끝난 처방(트레이 대기)에만 트레이 사진을 올릴 수 있습니다. 화면을 새로고침해 주세요."
+
+
+@bp.post("/prescriptions/<rx_id>/tray")
+@api_login_required
+def upload_tray(rx_id: str):
+    """트레이 사진 업로드 (F-WEB-02 ④, REQ-WEB-04). 트레이 대기 → 처리 중으로 바꾸고 검수는 백그라운드에서 한다.
+
+    승인이 끝나지 않았거나 이미 검수 중인 처방은 409. 검수 결과는 상세 조회(GET)로 본다:
+    전 칸 일치면 done, 불일치·확인 필요가 있으면 waiting_approval(inspection), 트레이를 못 찾으면 waiting_tray + retake.
+    """
+    row = _load(rx_id)
+    if row["status"] != "waiting_tray":
+        return _error(409, NOT_WAITING_TRAY)
+    got = _read_image("트레이")
+    if not isinstance(got[0], bytes):
+        return got
+    data, ext = got
+    image_id = workflow.receive_tray(row["id"], g.user["pharmacy_id"], data, ext)
+    if image_id is None:
+        return _error(409, NOT_WAITING_TRAY)
+    return jsonify(id=str(row["id"]), image_id=str(image_id), status="processing"), 202
+
+
+def _image_url(rx_id: str, image_id: Any) -> str | None:
+    return f"/api/prescriptions/{rx_id}/images/{image_id}" if image_id else None
+
+
+def _timeline(row: dict, inspections: list[dict]) -> list[dict]:
+    """처방 타임라인에 시각을 붙일 사건: 접수, 약사의 HITL 응답, 트레이 사진 업로드, 트레이 검수 결과. 오래된 것부터.
+
+    트레이 사진은 올렸는데 검수 결과가 없으면 검수 중이거나 다시 찍어야 하는 사진이다 (화면이 구분해 보인다).
+    """
+    events = [{"event": "received", "at": row["created_at"]}]
+    for t in rx.tray_images(row["id"]):
+        events.append({"event": "tray_uploaded", "image_id": str(t["id"]), "at": t["created_at"]})
     for h in rx.history(row["id"]):
         events.append({"event": "response", "hitl_point": h["hitl_point"], "action": h["action"],
-                       "at": h["created_at"].isoformat()})
-    return events
+                       "at": h["created_at"]})
+    for i in inspections:
+        events.append({"event": "inspected", "image_id": str(i["image_id"]), "hitl_required": i["hitl_required"],
+                       "at": i["created_at"]})
+    events.sort(key=lambda e: e["at"])
+    return [{**e, "at": e["at"].isoformat()} for e in events]
 
 
 @bp.get("/prescriptions/<rx_id>")
@@ -102,6 +150,7 @@ def detail(rx_id: str):
     row = _load(rx_id)
     sid = str(row["id"])
     img = rx.first_image(row["id"])
+    inspections = rx.inspections(row["id"])
     body = {
         "id": sid,
         "display_no": row["display_no"],
@@ -110,7 +159,7 @@ def detail(rx_id: str):
         "error_code": row["error_code"],
         "created_at": row["created_at"].isoformat(),
         "updated_at": row["updated_at"].isoformat(),
-        "timeline": _timeline(row),
+        "timeline": _timeline(row, inspections),
         "image_url": f"/api/prescriptions/{sid}/images/{img['id']}" if img else None,
         "card": None,
     }
@@ -118,14 +167,27 @@ def detail(rx_id: str):
         body["error_message"] = workflow.ERROR_MESSAGES.get(row["error_code"], workflow.UNKNOWN_ERROR)
     elif row["status"] == "waiting_approval":
         pause = gateway().pending(sid)
-        if pause is not None and pause.hitl_point == row["hitl_point"]:
+        if pause is not None and pause.hitl_point == row["hitl_point"] == "rx_approval":
             order = pause.payload["order"]
             body["card"] = {**pause.payload,
                             "blockers": workflow.approval_blockers(order, pause.payload.get("plan")),
                             "needs_confirm": workflow.needs_confirm(order),
                             "is_danger": workflow.is_danger(order)}
+        elif pause is not None and pause.hitl_point == row["hitl_point"] == "inspection":
+            # HITL ② 검수 결과 카드 (F-WEB-09): A.3 + 조제 계획 + 칸별 안내 + 트레이 사진
+            a3 = pause.payload.get("inspection") or {}
+            body["card"] = {**pause.payload, "tray_image_url": _image_url(sid, a3.get("image_id"))}
     elif row["status"] == "waiting_tray":
-        body["card"] = {"order": gateway().approved_order(sid)}
+        card: dict[str, Any] = {"order": gateway().approved_order(sid), "retake": None}
+        err = gateway().tray_error(sid)
+        if err:   # 트레이를 못 찾는 등으로 다시 찍어야 함
+            card["retake"] = {"code": err.get("code"),
+                              "message": workflow.ERROR_MESSAGES.get(err.get("code"), err.get("notice") or workflow.UNKNOWN_ERROR)}
+        body["card"] = card
+    elif row["status"] == "done" and inspections:
+        last = inspections[-1]
+        body["card"] = {"inspection": last["result_json"], "tray_image_url": _image_url(sid, last["image_id"]),
+                        "order": gateway().approved_order(sid)}
     return jsonify(body)
 
 
@@ -158,6 +220,10 @@ def approve(rx_id: str):
             new_order = workflow.build_edited_order(order, body.get("items"))
         except ValueError as e:
             return _error(400, str(e))
+        try:
+            gateway().check_reply(str(row["id"]), "rx_approval", {"action": "edit", "order": new_order})
+        except ValueError as e:
+            return _error(400, str(e))
         if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
                           "edit", before=order, after=new_order):
             return _error(409, "이미 처리된 요청입니다. 화면을 새로고침해 주세요.")
@@ -179,9 +245,41 @@ def approve(rx_id: str):
         if workflow.needs_confirm(order) and body.get("confirmed") is not True:
             return _error(409, "위험 신호와 확인 필요 항목을 확인했다는 칸에 체크해 주세요.")
         action, reason = "approve", None
+    # 경고 확인 체크 여부 (Q11): 확인할 것이 있던 승인이면 체크해야만 여기까지 온다. manual(위험)은 사유로 대신한다
+    warning_ack = None if action == "manual" else (workflow.needs_confirm(order) and body.get("confirmed") is True)
 
+    try:   # 응답이 Agent가 받을 모양인지 미리 본다: 잘못된 응답이 백그라운드에서 처방을 실패로 만들지 않게
+        gateway().check_reply(str(row["id"]), "rx_approval", {"action": action, **reply})
+    except ValueError as e:
+        return _error(400, str(e))
     if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "rx_approval",
-                      action, before=order, after=order, reason=reason):
+                      action, before=order, after=order, reason=reason, warning_ack=warning_ack):
         return _error(409, "이미 처리된 승인입니다. 화면을 새로고침해 주세요.")
     workflow.jobs.submit(workflow.run_resume, row["id"], "rx_approval", {"action": action, **reply})
+    return jsonify(id=str(row["id"]), status="processing"), 202
+
+
+@bp.post("/prescriptions/<rx_id>/inspection")
+@api_login_required
+def inspection_reply(rx_id: str):
+    """HITL ② 검수 확인 (F-WEB-09, REQ-WEB-04). confirm이면 완료(done), redo(재조제)면 트레이 대기로 돌아가 다시 찍는다."""
+    row = _load(rx_id)
+    if row["status"] != "waiting_approval" or row["hitl_point"] != "inspection":
+        return _error(409, "검수 확인을 기다리는 처방이 아닙니다. 화면을 새로고침해 주세요.")
+    pause = gateway().pending(str(row["id"]))
+    if pause is None or pause.hitl_point != "inspection":
+        return _error(409, "확인할 검수 결과를 찾지 못했습니다. 화면을 새로고침해 주세요.")
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action not in ("confirm", "redo"):
+        return _error(400, "확인 완료(confirm) 또는 재조제(redo)를 골라 주세요.")
+    reply = {"action": action}
+    try:
+        gateway().check_reply(str(row["id"]), "inspection", reply)
+    except ValueError as e:
+        return _error(400, str(e))
+    if not rx.respond(row["id"], g.user["pharmacy_id"], g.user["id"], "inspection", action,
+                      before=pause.payload.get("inspection"), after=reply):
+        return _error(409, "이미 처리된 검수 확인입니다. 화면을 새로고침해 주세요.")
+    workflow.jobs.submit(workflow.run_resume, row["id"], "inspection", reply)
     return jsonify(id=str(row["id"]), status="processing"), 202

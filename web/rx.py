@@ -106,6 +106,70 @@ def set_waiting_tray(rx_id: uuid.UUID) -> bool:
     return row is not None
 
 
+def attach_tray(rx_id: uuid.UUID, pharmacy_id: int, storage_key: str) -> uuid.UUID | None:
+    """트레이 사진 접수: 트레이 대기 → 처리 중으로 바꾸고 트레이 이미지를 남긴다 (한 트랜잭션). → 이미지 ID
+
+    승인이 끝난(waiting_tray) 처방에만 붙는다 (기능분석서 F-WEB-02 ④). 아니면 None (아무것도 바꾸지 않음):
+    두 번 올리거나 다른 요청이 먼저 올렸을 때도 여기서 하나만 통과한다.
+    """
+    with db.transaction() as conn:
+        row = conn.execute(
+            "UPDATE prescriptions SET status = 'processing' "
+            "WHERE id = %s AND pharmacy_id = %s AND status = 'waiting_tray' RETURNING id",
+            (rx_id, pharmacy_id),
+        ).fetchone()
+        if row is None:
+            return None
+        img = conn.execute(
+            "INSERT INTO images (prescription_id, kind, kind_source, storage_key) "
+            "VALUES (%s, 'tray', 'manual', %s) RETURNING id",
+            (rx_id, storage_key),
+        ).fetchone()
+    return img["id"]
+
+
+def set_done(rx_id: uuid.UUID) -> bool:
+    """처리 중 → 완료. 트레이 검수가 끝남(전 칸 일치, 또는 HITL ② 확인 완료). 조제 기록 저장은 11/20에 여기에 붙인다."""
+    row = db.execute(
+        "UPDATE prescriptions SET status = 'done', hitl_point = NULL "
+        "WHERE id = %s AND status = 'processing' RETURNING id",
+        (rx_id,),
+    )
+    return row is not None
+
+
+def add_inspection(rx_id: uuid.UUID, image_id: uuid.UUID, result: dict) -> None:
+    """검수 결과(A.3)를 남긴다. 재촬영하면 여러 건이 쌓인다 (추가만)."""
+    db.execute(
+        "INSERT INTO inspections (prescription_id, image_id, result_json, hitl_required) "
+        "VALUES (%s, %s, %s, %s) RETURNING id",
+        (rx_id, image_id, _jsonb(result), bool(result.get("summary", {}).get("hitl_required"))),
+    )
+
+
+def tray_image_key(image_id: uuid.UUID) -> str | None:
+    """트레이 사진 ID → storage_key (CV 검수가 사진 파일을 찾을 때). 없거나 트레이 사진이 아니면 None."""
+    row = db.query_one("SELECT storage_key FROM images WHERE id = %s AND kind = 'tray'", (image_id,))
+    return row["storage_key"] if row else None
+
+
+def tray_images(rx_id: uuid.UUID) -> list[dict]:
+    """처방에 올린 트레이 사진을 오래된 것부터 (타임라인: 다시 찍은 사진도 하나씩)."""
+    return db.query_all(
+        "SELECT id, created_at FROM images WHERE prescription_id = %s AND kind = 'tray' ORDER BY created_at, id",
+        (rx_id,),
+    )
+
+
+def inspections(rx_id: uuid.UUID) -> list[dict]:
+    """처방의 검수 결과를 오래된 것부터 (타임라인·완료 카드)."""
+    return db.query_all(
+        "SELECT image_id, result_json, hitl_required, created_at FROM inspections WHERE prescription_id = %s "
+        "ORDER BY created_at, id",
+        (rx_id,),
+    )
+
+
 def set_failed(rx_id: uuid.UUID, error_code: str | None) -> bool:
     """처리 중 → 실패. error_code는 명세서 A.7 코드 또는 None(원인 미상, 로그 확인)."""
     row = db.execute(
@@ -132,8 +196,10 @@ def fail_stale(min_age_minutes: int) -> list[str]:
 
 
 def respond(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, hitl_point: str, action: str,
-            before: Any, after: Any, reason: str | None = None) -> bool:
+            before: Any, after: Any, reason: str | None = None, warning_ack: bool | None = None) -> bool:
     """HITL 응답: 승인 대기 → 처리 중으로 되돌리고 approvals에 이력을 남긴다 (한 트랜잭션).
+
+    warning_ack: HITL ① 승인 때 약사가 경고 확인란을 체크했는지 (11/17 Q11). 그 밖의 응답은 None.
 
     이미 다른 요청이 응답했거나 다른 지점에서 기다리는 중이면 False (아무것도 바꾸지 않음).
     """
@@ -147,8 +213,8 @@ def respond(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, hitl_point: str, a
         if row is None:
             return False
         conn.execute(
-            "INSERT INTO approvals (prescription_id, hitl_point, action, user_id, before_json, after_json, reason) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (rx_id, hitl_point, action, user_id, _jsonb(before), _jsonb(after), reason),
+            "INSERT INTO approvals (prescription_id, hitl_point, action, user_id, before_json, after_json, reason, "
+            "warning_ack) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (rx_id, hitl_point, action, user_id, _jsonb(before), _jsonb(after), reason, warning_ack),
         )
     return True
