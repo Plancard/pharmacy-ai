@@ -354,6 +354,14 @@ def test_malformed_ocr_fails_before_anything_runs(bad):
     assert error.value.code == "E_OCR_EMPTY"
 
 
+@pytest.mark.parametrize("bad", [None, {}, {"lines": []}])
+def test_a_photo_without_any_text_is_reported_as_not_a_prescription(bad):
+    # 11/19 결정(Q5 ③): 글자가 아예 없는 사진도 '처방전이 아닌 것 같습니다'로 알린다 (코드는 E_OCR_EMPTY 그대로)
+    with pytest.raises(StructureError) as error:
+        structure_prescription("P0001", bad, rule_fn=never_called, llm_fn=never_called)
+    assert error.value.code == "E_OCR_EMPTY" and "처방전이 아닌 것 같습니다" in str(error.value)
+
+
 def test_no_drug_row_to_send_is_an_ocr_empty_error_without_calling_the_llm():
     # 글자는 있지만 약품 코드 줄이 하나도 없다: 규칙 경로도 못 읽고 LLM에 보낼 것도 없다
     ocr = {"lines": [{"text": "처 방 전", "bbox": [0, 0, 100, 40], "conf": 0.9}]}

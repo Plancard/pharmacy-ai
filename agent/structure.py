@@ -409,7 +409,11 @@ def _check_lines(ocr: Any) -> list[Line]:
     """A.1의 lines가 있고 칸마다 text와 bbox(숫자 4개)가 있는지 확인한다. line_id는 line_ids()가 확인한다."""
     lines = ocr.get("lines") if isinstance(ocr, dict) else None
     if not isinstance(lines, list) or not lines:
-        raise StructureError("OCR 결과에 글자 줄(lines)이 없습니다.", code=E_OCR_EMPTY)
+        # 11/19 결정(Q5 ③): 글자가 하나도 없는 사진도 '처방전이 아닌 것 같다'로 알린다 (pipeline.NOT_PRESCRIPTION과 같은 취지)
+        raise StructureError(
+            "처방전이 아닌 것 같습니다 (사진에서 글자를 읽지 못했습니다). 처방전 전체가 보이게 다시 찍어 주세요.",
+            code=E_OCR_EMPTY,
+        )
     for line in lines:
         bbox = line.get("bbox") if isinstance(line, dict) else None
         valid = (
