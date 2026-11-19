@@ -197,7 +197,14 @@ def image(rx_id: str, image_id: str):
     row = rx.image(_uuid(rx_id), _uuid(image_id), g.user["pharmacy_id"])
     if row is None:
         abort(404)
-    return send_file(storage.path_of(row["storage_key"]), max_age=3600)
+    from flask import request
+
+    path = storage.path_of(row["storage_key"])
+    if request.args.get("view") == "rect":    # F-WEB-06: OCR 좌표 기준인 펴진 이미지. 없으면(가짜 연결부 등) 원본
+        rect = path.with_name(path.name + ".rect.jpg")
+        if rect.is_file():
+            path = rect
+    return send_file(path, max_age=3600)
 
 
 @bp.post("/prescriptions/<rx_id>/approve")

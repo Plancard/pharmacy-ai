@@ -67,7 +67,9 @@ def real_ocr(image_path: Path, image_id: str) -> dict[str, Any]:
     """cv/ocr.py(처방전 펴기 + EasyOCR) → A.1. 처음 부를 때 모델을 읽어 몇 초 걸린다."""
     from cv.ocr import extract_text
 
-    return extract_text(Path(image_path), "prescription", image_id)
+    path = Path(image_path)
+    rect = path.with_name(path.name + ".rect.jpg")   # 웹이 OCR 박스를 그릴 펴진 이미지(이미지 API ?view=rect)
+    return extract_text(path, "prescription", image_id, rect_out=rect)
 
 
 def tray_path(image_id: str) -> Path:
