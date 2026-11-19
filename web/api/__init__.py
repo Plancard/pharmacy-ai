@@ -266,6 +266,19 @@ def approve(rx_id: str):
     return jsonify(id=str(row["id"]), status="processing"), 202
 
 
+@bp.post("/prescriptions/<rx_id>/cancel")
+@api_login_required
+def cancel(rx_id: str):
+    """처방 취소 (F-5, REQ-WEB-07). 완료 전 처방을 '취소됨'으로 남긴다. 실패 카드의 [삭제]도 이 API를 쓴다.
+
+    이후 승인·트레이 업로드는 상태 확인에서 409가 되고, 처리 중이던 결과는 조건부 UPDATE가 무시한다.
+    """
+    row = _load(rx_id)
+    if not rx.set_cancelled(row["id"]):
+        return _error(409, "이미 끝났거나 취소된 처방입니다. 화면을 새로고침해 주세요.")
+    return jsonify(id=str(row["id"]), status="cancelled")
+
+
 @bp.post("/prescriptions/<rx_id>/inspection")
 @api_login_required
 def inspection_reply(rx_id: str):

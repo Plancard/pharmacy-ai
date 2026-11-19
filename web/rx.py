@@ -180,6 +180,16 @@ def set_failed(rx_id: uuid.UUID, error_code: str | None) -> bool:
     return row is not None
 
 
+def set_cancelled(rx_id: uuid.UUID) -> bool:
+    """완료 전 처방 → 취소됨 (F-5). 처리 중·승인 대기·트레이 대기·실패에서만 된다. 끝났거나 이미 취소된 건은 False."""
+    row = db.execute(
+        "UPDATE prescriptions SET status = 'cancelled', hitl_point = NULL "
+        "WHERE id = %s AND status IN ('processing', 'waiting_approval', 'waiting_tray', 'failed') RETURNING id",
+        (rx_id,),
+    )
+    return row is not None
+
+
 def fail_stale(min_age_minutes: int) -> list[str]:
     """처리 중인 채로 min_age_minutes분 넘게 바뀌지 않은 처방을 실패(E_INTERRUPTED)로 바꾼다. → 바꾼 display_no 목록.
 
