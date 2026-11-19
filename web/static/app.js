@@ -142,10 +142,34 @@
     intake.hidden = true;
   }
 
+  // 처방 취소 (F-5, REQ-WEB-07): 완료 전이면 언제든. 승인된 건(트레이 대기)은 한 번 더 확인한다. 실패 카드에서는 [삭제].
+  const CANCELLABLE = ["processing", "waiting_approval", "waiting_tray", "failed"];
+  function cancelButton(rx) {
+    if (!CANCELLABLE.includes(rx.status)) return null;
+    const isFailed = rx.status === "failed";
+    const btn = h("button", { type: "button", class: "link danger" }, isFailed ? "삭제" : "처방 취소");
+    btn.addEventListener("click", async () => {
+      const ask = isFailed
+        ? `처방 ${rx.display_no}을(를) 삭제할까요? (취소됨으로 남습니다)`
+        : `처방 ${rx.display_no}을(를) 취소할까요?`;
+      if (!window.confirm(ask)) return;
+      if (rx.status === "waiting_tray" && !window.confirm("이미 승인된 처방입니다. 정말 취소할까요?")) return;
+      btn.disabled = true;
+      try {
+        await api(`/api/prescriptions/${rx.id}/cancel`, { method: "POST" });
+      } catch (e) {
+        window.alert(e.message);
+      }
+      await refresh();
+    });
+    return btn;
+  }
+
   function header(rx) {
     return h("header", { class: "rx-card-head" },
       h("h3", {}, `처방 ${rx.display_no}`),
-      h("span", { class: `badge ${rx.status}` }, LABELS[rx.status] || rx.status));
+      h("span", { class: `badge ${rx.status}` }, LABELS[rx.status] || rx.status),
+      cancelButton(rx));
   }
 
   function fmtTime(iso) {

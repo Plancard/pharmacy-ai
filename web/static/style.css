@@ -21,6 +21,8 @@ label { display: grid; gap: 6px; font-size: 14px; }
 input { padding: 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 15px; }
 button { padding: 10px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
 button.link { background: none; color: var(--accent); padding: 0; font-size: 14px; }
+button.link.danger { color: var(--bad); }
+.rx-card-head .link.danger { margin-left: auto; }
 .flash { background: #fef2f2; color: var(--bad); border: 1px solid #fecaca; border-radius: 6px; padding: 10px 12px; }
 .layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
