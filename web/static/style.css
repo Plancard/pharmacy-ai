@@ -80,6 +80,13 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 .ocr-boxes { position: absolute; inset: 0; pointer-events: none; }
 .ocr-box { position: absolute; border: 2px solid var(--accent); background: rgba(37, 99, 235, .15); border-radius: 2px; }
 .ocr-box.low { border-color: var(--warn); background: rgba(180, 83, 9, .18); }
+/* 처방전 이미지 확대(F-WEB-06): 박스는 % 위치라 이미지와 함께 커진다 */
+.rx-image .img-wrap[role="button"] { cursor: zoom-in; }
+.rx-image.zoomed { position: fixed; inset: 0; z-index: 100; overflow: auto; padding: 16px; gap: 8px;
+  background: rgba(17, 24, 39, .88); justify-items: center; align-content: start; cursor: zoom-out; }
+.rx-image.zoomed .img-wrap { width: min(1000px, 100%); cursor: zoom-out; }
+.rx-image.zoomed figcaption { color: #fff; }
+.rx-image.zoomed figcaption a { color: #bfdbfe; }
 .reason { color: var(--warn); font-size: 12px; margin-top: 2px; }
 .chip { display: inline-block; white-space: nowrap; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: #f3f4f6; }
 .chip.low, .chip.warning { background: #fffbeb; color: var(--warn); }

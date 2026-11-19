@@ -387,6 +387,8 @@
     // F-WEB-06 처방 결과: 왼쪽 원본, 오른쪽 추출 항목. 항목을 누르면 그 줄의 OCR 위치(bbox)를 원본 위에 표시
     const boxes = h("div", { class: "ocr-boxes", "aria-hidden": "true" });
     const canLocate = !!(size && size.width && size.height);
+    // OCR 좌표는 펴진 처방전 이미지 기준이라 박스를 그릴 때는 그 이미지를 보여 준다 (원본은 [원본 보기])
+    const shownUrl = rx.image_url && canLocate ? `${rx.image_url}?view=rect` : rx.image_url;
     function select(idx, tr) {
       for (const r of tr.parentNode.children) r.classList.toggle("selected", r === tr);
       boxes.replaceChildren();
@@ -406,13 +408,23 @@
     const form = h("div", {});   // 수정 폼 자리 (2초 갱신은 처리 중에만 돌아서 입력 중인 폼이 지워지지 않는다)
     return h("div", { class: "approval" },
       h("div", { class: "approval-grid" },
-        rx.image_url ? h("figure", { class: "rx-image" },
-          h("a", { href: rx.image_url, target: "_blank", rel: "noopener", class: "img-wrap" },
-            h("img", { src: rx.image_url, alt: `처방 ${rx.display_no} 원본 사진` }), boxes),
-          h("figcaption", { class: "muted" }, "원본 (누르면 크게 보기)")) : null,
+        rx.image_url ? h("figure", { class: "rx-image",
+          onclick: (e) => { if (e.target.closest("a")) return; e.currentTarget.classList.toggle("zoomed"); },
+          onkeydown: (e) => {
+            if (e.key === "Escape") e.currentTarget.classList.remove("zoomed");
+            else if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("img-wrap")) {
+              e.preventDefault();
+              e.currentTarget.classList.toggle("zoomed");
+            }
+          } },
+          h("div", { class: "img-wrap", role: "button", tabindex: "0", "aria-label": "처방전 크게 보기" },
+            h("img", { src: shownUrl, alt: `처방 ${rx.display_no} ${canLocate ? "펴진 처방전" : "원본"} 사진` }), boxes),
+          h("figcaption", { class: "muted" },
+            canLocate ? "펴진 처방전 (누르면 크게 보기) · " : "원본 (누르면 크게 보기)",
+            canLocate ? h("a", { href: rx.image_url, target: "_blank", rel: "noopener" }, "원본 보기") : null)) : null,
         h("div", { class: "approval-body" },
           h("p", { class: "muted" }, canLocate
-            ? "항목을 누르면 원본에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."
+            ? "항목을 누르면 처방전에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."
             : "원본과 대조한 뒤 승인하세요."),
           itemsTable(order, lines, canLocate && rx.image_url ? select : null),
           planPanel(order, plan, notice),
