@@ -68,8 +68,15 @@ def to_lines(results, scale=1.0):
     return [{"line_id": i, **l} for i, l in enumerate(lines)]
 
 
+def _edge_cut(info):
+    """펴기 정보 -> A.1 paper_edge_cut. 종이를 찾았을 때만 true/false, 못 찾았으면 None(모름)"""
+    if info.get("status") not in ("ok", "rotated90"):
+        return None
+    return info.get("edge") == "yes"
+
+
 def read_document(image_path, doc_type="prescription", image_id=None, *, flatten=True,
-                  max_side=MAX_SIDE, reader=None):
+                  max_side=MAX_SIDE, reader=None, rect_out=None):
     """→ (A.1 dict, OCR에 쓴 이미지(펴진 이미지 또는 원본), 펴기 정보 dict)
 
     펴기 정보: {"status": ok · rotated90 · skip, "edge": "yes"(종이가 사진 밖으로 잘림) 또는 ""}
@@ -93,6 +100,13 @@ def read_document(image_path, doc_type="prescription", image_id=None, *, flatten
         raise OcrEmpty(path.stem)
     h, w = img.shape[:2]
     a1 = {"image_id": image_id or path.stem, "doc_type": doc_type, "width": w, "height": h, "lines": lines}
+    edge = _edge_cut(info)
+    if edge is not None:
+        a1["paper_edge_cut"] = edge
+    if rect_out is not None:  # 웹이 OCR 박스를 그릴 펴진 이미지(a1 좌표와 같은 크기)
+        Path(rect_out).parent.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(rect_out), img, [cv2.IMWRITE_JPEG_QUALITY, 92]):
+            raise OSError(f"펴진 이미지를 저장하지 못함: {rect_out}")
     return a1, img, {"status": info.get("status", "off"), "edge": info.get("edge", "")}
 
 
