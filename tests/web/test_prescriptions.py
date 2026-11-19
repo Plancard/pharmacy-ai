@@ -82,6 +82,13 @@ class FakeRx:
         r.update(status="failed", hitl_point=None, error_code=error_code)
         return True
 
+    def set_cancelled(self, rx_id):
+        r = self.rows.get(rx_id)
+        if not r or r["status"] not in ("processing", "waiting_approval", "waiting_tray", "failed"):
+            return False
+        r.update(status="cancelled", hitl_point=None, error_code=None)   # 실제 DB 제약: failed가 아니면 error_code는 NULL
+        return True
+
     def attach_tray(self, rx_id, pharmacy_id, storage_key):
         r = self.rows.get(rx_id)
         if not r or r["pharmacy_id"] != pharmacy_id or r["status"] != "waiting_tray":
@@ -130,7 +137,7 @@ class FakeRx:
 def fake_rx(monkeypatch):
     f = FakeRx()
     for name in ("create", "get", "first_image", "image", "history", "set_waiting", "set_waiting_tray", "set_failed", "respond",
-                 "attach_tray", "set_done", "add_inspection", "inspections", "tray_images", "tray_image_key"):
+                 "attach_tray", "set_done", "set_cancelled", "add_inspection", "inspections", "tray_images", "tray_image_key"):
         monkeypatch.setattr(rx, name, getattr(f, name))
     return f
 
