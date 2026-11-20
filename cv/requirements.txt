@@ -1,0 +1,23 @@
+# CV(처방전 OCR · 트레이 보정 · 알약 검출)를 돌리는 데 필요한 패키지. 11/20 사용자 PC(.venv, Python 3.12.3)에서 확인한 버전.
+# 웹·Agent 패키지는 web/requirements.txt · agent/requirements.txt에 있다 (도커 이미지는 셋을 함께 설치한다).
+# 나머지(scipy · scikit-image · shapely · requests 등)는 아래 패키지가 알아서 가져온다.
+#
+# torch는 CPU 전용 빌드라 PyTorch 저장소를 추가로 본다 (GPU 없이 돈다: 장당 0.3초, 명세서 REQ-NF-01).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu
+torchvision==0.29.2+cpu
+
+# 알약 검출(YOLO26n)과 트레이 영역 분할(YOLO26n-seg): cv/detect.py · cv/tray.py
+ultralytics==8.4.199
+
+# 처방전 OCR: cv/ocr.py. 첫 실행 때 한국어·영어 모델을 내려받는다 (도커 이미지는 빌드 때 미리 받아 둔다)
+easyocr==1.7.2
+
+# 이미지 처리. ultralytics가 GUI판(opencv-python)을 같이 끌고 오므로 서버·컨테이너에서는 headless판만 남긴다
+# (Dockerfile 참고). 사용자 PC .venv에는 두 개가 함께 깔려 있다.
+opencv-python-headless==5.0.0.93
+numpy==2.5.4
+pillow==13.0.0
+PyYAML==6.0.3
+
+# 개발 전용(런타임에는 불필요): rapidfuzz(cv/ocr_test.py 채점), 데이터 준비 스크립트

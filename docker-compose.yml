@@ -30,12 +30,14 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
-      - ./var:/app/var          # 업로드 이미지 (DB에는 storage_key만)
+      - ./var:/app/var          # 업로드 이미지 (DB에는 storage_key만). 처음에는 호스트에 mkdir -p var 해 두기(없으면 root 소유로 생겨 쓰기 오류)
+      - ./models:/app/models:ro # 모델 가중치(저장소에 없음). CV_DET_MODEL · CV_SEG_MODEL 경로가 이 폴더 안을 가리킨다
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
 volumes:
   pgdata:

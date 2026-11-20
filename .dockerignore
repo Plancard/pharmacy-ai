@@ -10,6 +10,7 @@ data/
 **/data/
 var/
 runs/
+models/
 *.zip
 *.tar
 .vscode/
