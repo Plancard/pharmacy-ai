@@ -162,9 +162,13 @@ def detail(rx_id: str):
         "timeline": _timeline(row, inspections),
         "image_url": f"/api/prescriptions/{sid}/images/{img['id']}" if img else None,
         "card": None,
+        "failed_lines": None,
+        "retryable": False,
     }
     if row["status"] == "failed":
         body["error_message"] = workflow.ERROR_MESSAGES.get(row["error_code"], workflow.UNKNOWN_ERROR)
+        body["retryable"] = row["error_code"] in workflow.RETRY_CODES and img is not None   # [재시도] (Q6)
+        body["failed_lines"] = gateway().failed_lines(sid)   # 구조화 실패 때 처방전 위에 강조할 줄 {ocr_size, lines} (Q6)
     elif row["status"] == "waiting_approval":
         pause = gateway().pending(sid)
         if pause is not None and pause.hitl_point == row["hitl_point"] == "rx_approval":
@@ -277,6 +281,21 @@ def cancel(rx_id: str):
     if not rx.set_cancelled(row["id"]):
         return _error(409, "이미 끝났거나 취소된 처방입니다. 화면을 새로고침해 주세요.")
     return jsonify(id=str(row["id"]), status="cancelled")
+
+
+@bp.post("/prescriptions/<rx_id>/retry")
+@api_login_required
+def retry(rx_id: str):
+    """실패한 처방 다시 시도 (Q6). 일시 오류(E_LLM·E_EXT_API·E_INTERRUPTED)로 실패한 처방만. 같은 처방전 이미지로 새 처방을
+    만들어 처음부터 다시 돌리고, 실패한 처방은 취소됨으로 남긴다. 새 처방의 ID·번호를 202로 돌려준다.
+    """
+    row = _load(rx_id)
+    if row["status"] != "failed" or row["error_code"] not in workflow.RETRY_CODES:
+        return _error(409, "다시 시도할 수 없는 처방입니다. 화면을 새로고침해 주세요.")
+    new = workflow.retry(row, g.user["pharmacy_id"], g.user["id"])
+    if new is None:
+        return _error(409, "이미 다시 시도했거나 처방전 사진을 찾을 수 없습니다. 화면을 새로고침해 주세요.")
+    return jsonify(id=str(new["id"]), display_no=new["display_no"], status=new["status"]), 202
 
 
 @bp.post("/prescriptions/<rx_id>/inspection")

@@ -7,6 +7,7 @@ FakeGateway(web/agent_gateway.py)와 메서드 · 돌려주는 값이 같다. �
     resume(rx_id, hitl_point, reply)  AgentApi.resume → 다시 멈추면 Pause, 조제 계획까지 끝나면 Wait('waiting_tray')
     approved_order(rx_id)             AgentApi.approved_order
     approved_plan(rx_id)              AgentApi.result의 조제 계획 A.4 (승인된 처방에만)
+    failed_lines(rx_id)               AgentApi.failed_lines: 구조화 실패 때 처방전에서 강조할 줄 (Q6, 없으면 None)
     tray(rx_id, image_id, image_path) AgentApi.send(…, "tray") → 불일치가 있으면 Pause(inspection), 전 칸 일치면 Wait('done')
     inspection(rx_id) · tray_error(rx_id)   AgentApi.result의 검수 결과(A.3) · 트레이 검수 실패 코드와 안내
     check_reply(rx_id, hitl_point, reply)   응답이 맞는지 미리 본다 (라우트가 백그라운드로 넘기기 전에 쓰면 400으로 거를 수 있다)
@@ -140,6 +141,16 @@ class LangGraphGateway:
 
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         return self.api.approved_order(rx_id)
+
+    def failed_lines(self, rx_id: str) -> dict[str, Any] | None:
+        """구조화 실패 때 처방전에서 강조할 줄 {ocr_size, lines: [{line_id, bbox}]} (Q6). 모르면 None.
+
+        Agent가 체크포인트에서 읽으므로 서버를 껐다 켜도 남는다. 읽다가 실패해도 화면만 사진 없이 보일 뿐이라 None으로 둔다.
+        """
+        try:
+            return self.api.failed_lines(rx_id)
+        except Exception:
+            return None
 
     def approved_plan(self, rx_id: str) -> dict[str, Any] | None:
         """승인된 조제지시서의 조제 계획. 아직 승인 전이면(approved_order가 None) 계획이 있어도 None."""

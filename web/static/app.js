@@ -195,9 +195,55 @@
     return h("p", { class: "processing" }, h("span", { class: "spinner", "aria-hidden": "true" }), text);
   }
 
-  function failure(rx) {
+  // Q6: 구조화에 실패한 줄을 펴진 처방전 위에 빨갛게 표시한다 (OCR 좌표는 펴진 이미지 기준이라 ?view=rect).
+  function failedImage(rx) {
+    const f = rx.failed_lines;
+    const size = f && f.ocr_size;
+    if (!rx.image_url || !size || !size.width || !size.height || !(f.lines || []).length) return null;
+    const boxes = h("div", { class: "ocr-boxes", "aria-hidden": "true" });
+    for (const l of f.lines) {
+      const [x1, y1, x2, y2] = l.bbox;
+      const b = h("div", { class: "ocr-box fail" });
+      b.style.left = `${(x1 / size.width) * 100}%`;
+      b.style.top = `${(y1 / size.height) * 100}%`;
+      b.style.width = `${((x2 - x1) / size.width) * 100}%`;
+      b.style.height = `${((y2 - y1) / size.height) * 100}%`;
+      boxes.append(b);
+    }
+    return h("figure", { class: "rx-image failed-image" },
+      h("div", { class: "img-wrap" },
+        h("img", { src: `${rx.image_url}?view=rect`, alt: `처방 ${rx.display_no} 펴진 처방전 사진, 처리하지 못한 줄에 빨간 박스` }), boxes),
+      h("figcaption", { class: "muted" }, "빨간 박스: AI가 처리하지 못한 줄입니다. ",
+        h("a", { href: rx.image_url, target: "_blank", rel: "noopener" }, "원본 보기")));
+  }
+
+  // Q6 [다시 시도]: 일시 오류(E_LLM·E_EXT_API·E_INTERRUPTED)로 실패했을 때만. 같은 처방전 사진으로 새 처방을 만들어 처음부터 다시 돌린다.
+  function retryButton(rx) {
+    if (!rx.retryable) return null;
+    const err = h("p", { class: "form-error", role: "alert", hidden: true });
+    const btn = h("button", { type: "button" }, "다시 시도");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      err.hidden = true;
+      try {
+        const next = await api(`/api/prescriptions/${rx.id}/retry`, { method: "POST" });
+        upsertListItem(next);
+        await open(next.id);
+      } catch (e) {
+        err.textContent = e.message;
+        err.hidden = false;
+        btn.disabled = false;
+      }
+    });
+    return h("div", {}, h("div", { class: "actions" }, btn,
+      h("small", { class: "muted" }, "같은 처방전 사진으로 처음부터 다시 처리합니다. 이 처방은 삭제되고 새 처방 번호가 생깁니다.")), err);
+  }
+
+  function failure(rx, withLines) {
     return [h("p", { class: "form-error" }, rx.error_message || "처리 중 오류가 났습니다."),
-      rx.error_code ? h("p", { class: "muted mono" }, rx.error_code) : null];
+      rx.error_code ? h("p", { class: "muted mono" }, rx.error_code) : null,
+      withLines ? failedImage(rx) : null,
+      retryButton(rx)];
   }
 
   function view(rx) {
@@ -219,7 +265,7 @@
     } else if (s === "waiting_approval" && rx.hitl_point === "rx_approval" && rx.card) {
       steps.push(step("active", "조제지시서 확인·승인", null, approvalCard(rx)));
     } else if (s === "failed") {
-      steps.push(step("error", "조제지시서 작성", rx.updated_at, ...failure(rx)));
+      steps.push(step("error", "조제지시서 작성", rx.updated_at, ...failure(rx, true)));
     } else if (s === "cancelled") {
       steps.push(step("cancelled", "조제지시서 확인·승인", rx.updated_at));
     } else {
@@ -266,7 +312,8 @@
   }
 
   // onSelect가 있으면 줄을 누르거나 Enter로 고를 수 있다 (F-WEB-06 원문 위치 표시)
-  function itemsTable(order, lines, onSelect) {
+  function itemsTable(order, lines, onSelect, changed) {
+    const changedSet = new Set(changed || []);   // Q7: 약사가 고친 뒤 다시 검수한 줄 번호(0부터)
     const rows = order.items.map((it, idx) => {
       const confs = (it.source_line_ids || []).map((i) => lines[String(i)]).filter(Boolean).map((l) => l.conf);
       const low = confs.length && Math.min(...confs) < LOW_CONF;
@@ -277,6 +324,7 @@
         title: onSelect ? "누르면 원본에서 위치를 표시합니다" : null },
         h("td", {}, h("div", {}, it.name),
           h("div", { class: "muted mono" }, it.item_code || "품목 없음"),
+          changedSet.has(idx) ? h("div", {}, h("span", { class: "chip caution" }, "수정 후 다시 검수")) : null,
           ...(it.check_reasons || []).map((r) => h("div", { class: "reason" }, r))),
         h("td", { class: "num" }, it.count_per_dose),
         h("td", {}, times),
@@ -385,6 +433,7 @@
 
   function approvalCard(rx) {
     const { order, plan, notice, ocr_lines: lines, ocr_size: size, blockers, needs_confirm: needsConfirm, is_danger: isDanger } = rx.card;
+    const changed = rx.card.changed_items || [];
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const confirm = needsConfirm
       ? h("label", { class: "confirm" }, h("input", { type: "checkbox", id: "confirm-risk" }),
@@ -461,7 +510,9 @@
             ? "항목을 누르면 처방전에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."
             : "원본과 대조한 뒤 승인하세요."),
           warningsPanel(order.warnings),
-          itemsTable(order, lines, canLocate && rx.image_url ? select : null),
+          changed.length ? h("p", { class: "muted" },
+            `수정한 줄 중 ${changed.length}줄(${changed.map((i) => i + 1).join(", ")}번째)을 다시 검수했습니다. 나머지 줄의 검수 결과는 그대로입니다.`) : null,
+          itemsTable(order, lines, canLocate && rx.image_url ? select : null, changed),
           planPanel(order, plan, notice),
           riskPanel(order.risk_check || {}))),
       blockers.map((b) => h("p", { class: "form-error" }, b)),

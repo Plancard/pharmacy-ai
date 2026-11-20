@@ -19,6 +19,9 @@ from web.agent_gateway import Pause, Wait, gateway
 ERROR_CODES = {"E_OCR_EMPTY", "E_TRAY_NOT_FOUND", "E_CV_INFER", "E_PLAN_RANGE",
                "E_BARCODE_FAIL", "E_LLM", "E_EXT_API", "E_DB", "E_INTERRUPTED"}
 
+# 일시 오류: 같은 처방전 이미지로 처음부터 다시 시도할 수 있다 (11/17 회의 Q6 [재시도]). 그 밖의 실패는 다시 찍어 올려야 한다
+RETRY_CODES = {"E_LLM", "E_EXT_API", "E_INTERRUPTED"}
+
 # 화면 안내 문구 (기능분석서 6장과 맞춘다)
 ERROR_MESSAGES = {
     "E_OCR_EMPTY": "처방전에서 글자를 찾지 못했습니다. 처방전 전체가 보이게 다시 찍어 올려 주세요.",
@@ -62,6 +65,21 @@ def receive(pharmacy_id: int, user_id: int, data: bytes, ext: str) -> dict:
         raise
     jobs.submit(run_start, rx_id, key)
     return row
+
+
+def retry(row: dict, pharmacy_id: int, user_id: int) -> dict | None:
+    """일시 오류로 실패한 처방을 같은 처방전 이미지로 처음부터 다시 돌린다 (Q6 [재시도]). → 새 처방 행, 처리할 수 없으면 None.
+
+    같은 처방 ID를 되살리지 않고 새 처방을 만든다: Agent 실행 기록(thread)이 처방 ID에 묶여 있어 실패한 기록 위에
+    다시 시작하지 않는다. 실패한 처방은 [삭제]와 같이 '취소됨'으로 남긴다. 취소가 먼저라 두 번 눌러도 새 처방은 하나만 생긴다.
+    """
+    img = rx.first_image(row["id"])
+    if img is None:
+        return None
+    path = storage.path_of(img["storage_key"])
+    if not path.is_file() or not rx.set_cancelled(row["id"]):
+        return None
+    return receive(pharmacy_id, user_id, path.read_bytes(), path.suffix)
 
 
 def receive_tray(rx_id: uuid.UUID, pharmacy_id: int, data: bytes, ext: str) -> uuid.UUID | None:

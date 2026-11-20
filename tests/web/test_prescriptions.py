@@ -509,6 +509,16 @@ def test_edit_recalculates_and_waits_again(client, fake_rx):
     assert approve(client, rx_id, confirmed=True).status_code == 202   # 수정 뒤에 승인할 수 있다
 
 
+def test_edit_reports_changed_items(client, fake_rx):
+    """수정 뒤 카드에는 다시 검수한 줄 번호(changed_items, Q7)가 실려 화면이 그 줄에 표시를 붙인다."""
+    rx_id = upload(client).get_json()["id"]
+    card = client.get(f"/api/prescriptions/{rx_id}").get_json()["card"]
+    assert card.get("changed_items", []) == []                     # 고치기 전에는 없다
+    edit(client, rx_id, _edit_items(card, count_per_dose=2))
+    d = client.get(f"/api/prescriptions/{rx_id}").get_json()
+    assert d["card"]["changed_items"] == [0]                       # 첫 줄만 바뀌었다
+
+
 def test_edit_fixes_a_missing_plan(monkeypatch, tmp_path, fake_rx):
     """3일 초과로 계획이 없던 처방을 일수를 줄여 고치면 계획이 생기고 승인할 수 있다."""
     c = make_client(monkeypatch, tmp_path, scenario="range")

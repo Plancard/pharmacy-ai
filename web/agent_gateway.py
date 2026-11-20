@@ -5,6 +5,7 @@
     resume(rx_id, hitl_point, reply)  약사 응답으로 이어 간다. 다시 멈추면 Pause
     approved_order(rx_id)             승인된 조제지시서 (트레이 대기 카드에 보여 줌)
     approved_plan(rx_id)              그 조제지시서의 조제 계획 A.4 (조제 기록 저장에 씀, 없으면 None)
+    failed_lines(rx_id)               구조화 실패 때 처방전에서 강조할 줄 {ocr_size, lines: [{line_id, bbox}]} (Q6, 모르면 None)
     tray(rx_id, image_id, image_path) 트레이 사진 검수 (11/18). 불일치·확인 필요 칸이 있으면 HITL ②(inspection)에서 멈춘다
     inspection(rx_id)                 마지막 검수 결과 A.3 (없으면 None)
     tray_error(rx_id)                 트레이 대기로 돌아온 이유 {code, notice} (트레이 못 찾음 등, 없으면 None)
@@ -51,7 +52,8 @@ class Pause:
     hitl_point: str
     payload: dict[str, Any]     # rx_approval: {"order": A.2, "plan": A.4 | None, "error_code": str | None,
                                 #               "notice": str | None, "ocr_lines": {line_id: {text, conf, bbox}},
-                                #               "ocr_size": {width, height} | None}
+                                #               "ocr_size": {width, height} | None,
+                                #               "changed_items": [고친 뒤 다시 검수한 줄 번호(0부터)] (고치기 전엔 없거나 빈 목록)}
                                 #   plan이 None이면(3일 초과·약을 정하지 못한 줄) 승인은 막고 edit만 받는다 (11/17)
 
 
@@ -104,7 +106,7 @@ _DUP = {"type": "ingredient_dup", "item_codes": ["202106092", "197900277"], "lev
 _DANGER = {"type": "contraindication", "item_codes": ["202106092", "200200099"], "level": "danger",
            "message": "(가짜 데이터) 병용금기 조합입니다. 처방 의사에게 확인한 뒤 진행하세요."}
 _SLOT_WARNING = "3번째 약품: 복용 시점이 처방전에 없어 하루 3회 기준으로 배정했습니다."   # agent/validate.py의 문구와 같은 꼴
-SCENARIOS = ("warning", "none", "danger", "flagged", "fail", "range")
+SCENARIOS = ("warning", "none", "danger", "flagged", "fail", "range", "llm_fail")
 _TIMES = ("morning", "noon", "evening")
 _TIME_LABELS = {"morning": "아침", "noon": "점심", "evening": "저녁", "bedtime": "취침 전"}
 _STATUS_LABELS = {"ok": "일치", "mismatch": "불일치", "need_review": "확인 필요"}
@@ -215,6 +217,13 @@ class FakeGateway:
             raise stub.OcrEmpty(Path(image_path).name)
         a1 = stub.ocr(Path(image_path).with_name("rx_004.jpg"))   # 업로드 파일 이름과 무관하게 rx_004 샘플
         order = self._order(rx_id)
+        if self.scenario == "llm_fail":   # 화면 확인용(Q6): LLM이 첫 약품 줄을 구조화하지 못함(E_LLM) → 그 줄을 강조하고 [다시 시도]
+            ids = set(order["items"][0]["source_line_ids"])
+            lines = [{"line_id": l["line_id"], "bbox": l["bbox"]} for l in a1["lines"] if l["line_id"] in ids and l.get("bbox")]
+            size = {"width": a1["width"], "height": a1["height"]} if a1.get("width") and a1.get("height") else None
+            self._save(rx_id, {"pause": None, "approved_order": None,
+                               "failed_lines": {"ocr_size": size, "lines": lines} if size and lines else None})
+            raise AgentError("E_LLM", "AI가 처방 줄을 구조화하지 못했습니다.")
         if self.scenario == "range":
             for it in order["items"]:
                 it["days"] = 4
@@ -244,7 +253,11 @@ class FakeGateway:
             old = data["pause"]["payload"]
             order = self._rematch(rx_id, reply["order"])
             plan, plan_error, why = self._plan(rx_id, order)
-            pause = Pause("rx_approval", {**old, "order": order, "plan": plan, "error_code": plan_error, "notice": why})
+            before = {(it["name"], it["count_per_dose"], tuple(it["times"]), it["days"]) for it in old["order"]["items"]}
+            changed = [i for i, it in enumerate(order["items"])    # 가짜: 고치기 전에 없던 줄 = 바뀐 줄 (Q7)
+                       if (it["name"], it["count_per_dose"], tuple(it["times"]), it["days"]) not in before]
+            pause = Pause("rx_approval", {**old, "order": order, "plan": plan, "error_code": plan_error, "notice": why,
+                                          "changed_items": changed})
             data.update(pause={"hitl_point": pause.hitl_point, "payload": pause.payload})
             self._save(rx_id, data)
             return pause
@@ -308,6 +321,10 @@ class FakeGateway:
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         data = self._load(rx_id)
         return data.get("approved_order") if data else None
+
+    def failed_lines(self, rx_id: str) -> dict[str, Any] | None:
+        data = self._load(rx_id)
+        return data.get("failed_lines") if data else None
 
     def approved_plan(self, rx_id: str) -> dict[str, Any] | None:
         order = self.approved_order(rx_id)
