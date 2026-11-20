@@ -54,7 +54,9 @@ NAME_MATCH_MIN = 0.7      # 코드로 찾은 약과 이름이 이 이상 비슷�
 NAME_ONLY_MIN = 0.9       # 코드 없이 이름만으로 약을 정하려면 1등이 이 이상이어야 한다
 NAME_ONLY_MARGIN = 0.1    # ... 그리고 2등보다 이만큼 이상 앞서야 한다
 CANDIDATE_MIN = 0.6       # 후보로 보여 줄 최소 유사도
-LOW_CONFIDENCE = 0.5      # OCR 신뢰도가 이보다 낮으면 확인 표시
+LOW_CONFIDENCE = 0.5      # 줄 전체(이름·코드·값·용법 칸 중 최저)의 OCR 신뢰도가 이보다 낮으면 확인 표시
+NUMBER_CONFIDENCE = 0.8   # 1회량·하루 횟수·투약 일수 칸은 따로 더 엄격하게 본다 (숫자 오독은 조제 오류로 바로 이어진다. 11/20 g02_hard: 1이 7로 읽힌 칸 0.76, 정상 숫자 칸 0.91 이상)
+NUMBER_LABELS = {"dose": "1회량", "times": "하루 횟수", "days": "투약 일수"}
 # MAX_CANDIDATES(후보 개수 상한 3)는 schema.py가 정한다. DrugLine이 그 이상은 받지 않는다.
 
 
@@ -191,6 +193,17 @@ def match_line(line: DrugLine, dictionary: DrugDictionary, *, api: ApiSearch | N
 
     if line.ocr_conf is not None and line.ocr_conf < LOW_CONFIDENCE:
         reasons.append(f"글자 인식 신뢰도가 낮습니다({line.ocr_conf:.2f}).")
+    known = dictionary.by_item_code(item_code) if item_code else None   # 코드나 이름으로 사전의 약을 정한 줄만 (API로 찾은 약은 사전에 없다)
+    if known is not None and known.max_dose_per_intake and line.count_per_dose > known.max_dose_per_intake:
+        reasons.append(
+            f"1회량 {line.count_per_dose}이(가) 허가 용법의 1회 최대 {known.max_dose_per_intake}을(를) 넘습니다. 원문을 확인하세요."
+        )
+    for key, label in NUMBER_LABELS.items():   # 낮은 칸을 지목한다 (약사가 어느 값을 원문과 맞춰 볼지 알도록)
+        conf = (line.value_conf or {}).get(key)
+        if conf is not None and conf < NUMBER_CONFIDENCE:
+            reasons.append(f"{label} 칸의 글자 인식 신뢰도가 낮습니다({conf:.2f}). 원문을 확인하세요.")
+    if line.times_note:                        # 복용 시점 글자를 못 알아보고 하루 횟수로 채운 줄 (validate가 남긴 설명)
+        reasons.append(line.times_note)
     if line.days > TRAY_DAYS:
         reasons.append(f"투약 일수 {line.days}일이 트레이 {TRAY_DAYS}일보다 깁니다.")
 

@@ -78,9 +78,22 @@ def with_line_ids(ocr, start=0):
     return ocr
 
 
+def row_value_confs(ocr):
+    """코드 줄마다 같은 행의 1회량·횟수·일수 칸의 신뢰도. 파서와 따로 만든 검사용 구현."""
+    patterns = {"dose": r"\d+ ?(?:TAB|CAP)", "times": r"\d+회", "days": r"\d+일"}
+    rows = []
+    for a in anchors_of(ocr):
+        near = [l for l in ocr["lines"] if center_y(a) - 25 <= center_y(l) <= center_y(a) + 45]
+        rows.append({
+            key: next(l["conf"] for l in near if re.fullmatch(pattern, l["text"])) for key, pattern in patterns.items()
+        })
+    return rows
+
+
 def expected_drugs(sample_id):
     confs = row_confs(load_ocr(sample_id))
     ids = row_line_ids(load_ocr(sample_id))
+    value_confs = row_value_confs(load_ocr(sample_id))
     return [
         {
             "name": d["name"],
@@ -91,8 +104,9 @@ def expected_drugs(sample_id):
             "times": [],          # 용법이 모두 'PO 식후 30분'이라 시점이 적혀 있지 않다
             "source_line_ids": line_ids,
             "ocr_conf": conf,
+            "value_conf": value_conf,
         }
-        for d, conf, line_ids in zip(load_expected(sample_id)["items"], confs, ids)
+        for d, conf, line_ids, value_conf in zip(load_expected(sample_id)["items"], confs, ids, value_confs)
     ]
 
 
@@ -116,6 +130,7 @@ def test_only_the_agreed_keys_are_returned(sample_id):
     for drug in result["items"]:
         assert set(drug) == {
             "name", "printed_code", "count_per_dose", "times_per_day", "days", "times", "source_line_ids", "ocr_conf",
+            "value_conf",
         }
 
 
@@ -344,7 +359,7 @@ def test_a_small_prescription_made_by_hand():
         "items": [{
             "name": "타이레놀정", "printed_code": "900000011", "count_per_dose": 2,
             "times_per_day": 3, "days": 5, "times": ["morning", "evening"], "source_line_ids": [2, 3, 4, 5, 6],
-            "ocr_conf": 0.9,
+            "ocr_conf": 0.9, "value_conf": {"dose": 0.9, "times": 0.9, "days": 0.9},
         }],
     }
 
@@ -577,3 +592,29 @@ def test_a_row_without_a_name_fails():
 def test_malformed_ocr_fails_with_structure_error(bad):
     with pytest.raises(StructureError):
         extract_rule(bad)
+
+
+def test_usage_text_without_a_time_word_but_with_unread_hangul_is_reported():
+    ocr = load_ocr("rx_002")
+    cell(ocr, 1, r"PO 식후 30분")["text"] = "PO 수면 전"
+    items = extract_rule(ocr)["items"]
+    assert [d.get("times_unclear") for d in items] == [None, "수면 전", None]
+    assert items[1]["times"] == []
+
+
+@pytest.mark.parametrize("sample_id", SAMPLE_IDS)
+def test_plain_prescriptions_never_report_unread_times(sample_id):
+    assert all("times_unclear" not in d for d in extract_rule(load_ocr(sample_id))["items"])
+
+
+def test_value_conf_has_the_confidence_of_each_value_cell():
+    ocr = load_ocr("rx_002")
+    cell(ocr, 1, r"1 CAP")["conf"] = 0.76
+    assert [d["value_conf"]["dose"] for d in extract_rule(ocr)["items"]] == [0.68, 0.76, 0.96]
+
+
+def test_value_conf_is_left_out_when_no_value_cell_has_a_confidence():
+    ocr = load_ocr("rx_001")
+    for line in ocr["lines"]:
+        line.pop("conf", None)
+    assert all("value_conf" not in d for d in extract_rule(ocr)["items"])

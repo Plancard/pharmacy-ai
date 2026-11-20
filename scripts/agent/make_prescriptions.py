@@ -77,7 +77,8 @@ PRESCRIPTIONS: list[dict[str, Any]] = [
      "drugs": [("타이레놀정500mg", 1, MTN, 3), ("트립라인정", 1, MTN, 3)]},
     {"id": "rx8_05", "purpose": "1회 2알 + 취침 전 (칸당 2알 꽉 채움)", "risk": "none", "plan": "ok",
      "dept": "이비인후과", "patient": "강가명", "disease": "J20.9", "doctor": "최예시", "hospital": HOSPITAL, "time": "11:36:22",
-     "drugs": [("뮤코다인캡슐200mg", 2, ME, 3), ("트립라인정", 1, BED, 3)]},
+     "drugs": [("뮤코다인캡슐200mg", 2, ME, 3), ("트립라인정", 1, BED, 3)],
+     "flagged": [0]},     # 11/20부터: 뮤코다인 1회 2캡슐은 허가 1회 최대(1캡슐)를 넘어 약사 확인이 붙는다
     {"id": "rx8_06", "purpose": "한약제제 요비신정 + 2일 처방", "risk": "none", "plan": "ok",
      "dept": "비뇨의학과", "patient": "오예제", "disease": "N30.9", "doctor": "오가상", "hospital": HOSPITAL, "time": "13:24:57",
      "drugs": [("아이월드요비신정 416.7mg", 1, ME, 2), ("아르펜정", 1, MTN, 2)]},

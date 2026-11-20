@@ -308,3 +308,36 @@ def test_error_messages_do_not_contain_prescription_text():
     with pytest.raises(StructureError) as error:
         build(drug(name="비밀약품", count_per_dose=0))
     assert "비밀약품" not in str(error.value)
+
+
+def test_unread_time_text_becomes_a_note_on_the_line_and_a_warning():
+    got = build(drug(times=[], times_per_day=1, times_unclear="수면 전"))
+    assert got.items[0].times == ["morning"]
+    assert got.items[0].times_note == "복용 시점으로 보이는 글자('수면 전')를 알아보지 못해 하루 1회 기준(아침)으로 배정했습니다. 원문을 확인하세요."
+    assert len(got.warnings) == 1 and got.items[0].times_note in got.warnings[0]
+
+
+def test_times_without_unread_text_get_no_note():
+    got = build(drug(times=[], times_per_day=2))
+    assert got.items[0].times_note is None and "처방전에 없어" in got.warnings[0]
+
+
+def test_unread_text_is_ignored_when_a_time_was_found():
+    got = build(drug(times=["bedtime"], times_per_day=1, times_unclear="수면 전"))
+    assert got.items[0].times == ["bedtime"] and got.items[0].times_note is None and got.warnings == []
+
+
+@pytest.mark.parametrize("bad", [5, ["수면"], True])
+def test_times_unclear_of_the_wrong_type_is_refused(bad):
+    with pytest.raises(StructureError):
+        build(drug(times=[], times_unclear=bad))
+
+
+def test_value_conf_is_passed_to_the_line():
+    assert build(drug(value_conf={"dose": 0.76, "days": 1.0})).items[0].value_conf == {"dose": 0.76, "days": 1.0}
+
+
+@pytest.mark.parametrize("bad", [0.5, [0.5], {"name": 0.5}, {"dose": 1.5}, {"dose": "0.5"}, {"dose": True}, {"dose": -0.1}])
+def test_value_conf_of_the_wrong_shape_is_refused(bad):
+    with pytest.raises(StructureError):
+        build(drug(value_conf=bad))

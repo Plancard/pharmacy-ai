@@ -113,7 +113,7 @@ def test_a_line_without_an_item_code_is_not_approved(graph):
 
 def test_the_demo_prescriptions_are_matched_by_their_printed_code(graph):
     _, text = run(["rx8_05"], graph)
-    assert "1. [    ] 뮤코다인캡슐 200mg | 코드 200308774 -> 품목 200308774 (code) | 2개 x 2회 x 3일 | morning, evening" in text
+    assert "1. [확인] 뮤코다인캡슐 200mg | 코드 200308774 -> 품목 200308774 (code) | 2개 x 2회 x 3일 | morning, evening" in text
     assert "2. [    ] 트립라인정 | 코드 200002714 -> 품목 200002714 (code) | 1개 x 1회 x 3일 | bedtime" in text
 
 

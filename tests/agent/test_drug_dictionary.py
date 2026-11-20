@@ -78,7 +78,8 @@ def test_load_without_a_path_uses_the_configured_file(monkeypatch, tmp_path):
 def test_the_dictionary_file_has_no_prescription_code_column():
     # 처방전 코드(rx_code) 칸은 없다. 자동 확정은 인쇄된 코드가 품목기준코드와 같을 때뿐이다 (drug_match.py)
     data = json.loads(DICTIONARY_FILE.read_text(encoding="utf-8"))
-    assert all(set(d) == {"class_id", "item_code", "name", "k_code", "ingredients"} for d in data["drugs"])
+    allowed = {"class_id", "item_code", "name", "k_code", "ingredients", "max_dose_per_intake"}   # max_dose_per_intake는 선택(트리스펜은 없다)
+    assert all({"class_id", "item_code", "name", "k_code", "ingredients"} <= set(d) <= allowed for d in data["drugs"])
 
 
 def test_the_project_dictionary_has_the_k_code_and_ingredients_of_every_drug():
@@ -319,3 +320,27 @@ def test_different_class_ids_and_codes_are_fine():
     assert [(e.item_code, e.class_id) for e in d.entries] == [
         ("100000001", 0), ("100000002", 1), ("100000003", None), ("100000004", None),
     ]
+
+
+def test_the_max_dose_per_intake_values_of_the_eight_drugs():
+    # 허가정보 용법용량의 성인 1회 최대량 (11/20). 트리스펜연질캡슐은 캡슐당 함량이 사전에 없어 비워 둔다
+    data = json.loads(DICTIONARY_FILE.read_text(encoding="utf-8"))
+    assert {d["name"]: d.get("max_dose_per_intake") for d in data["drugs"]} == {
+        "타이레놀정500mg": 2, "게보린정": 1, "트리스펜연질캡슐": None, "프론크논캡슐": 2,
+        "아르펜정": 2, "아이월드요비신정 416.7mg": 6, "트립라인정": 2, "뮤코다인캡슐200mg": 1,
+    }
+
+
+@pytest.mark.parametrize("bad", [0, -1, 1.5, "2", True, [2]])
+def test_max_dose_per_intake_of_the_wrong_kind_is_refused(bad):
+    data = {"drugs": [{"item_code": "197900277", "name": "게보린정", "max_dose_per_intake": bad}]}
+    with pytest.raises(ConfigError):
+        dictionary_from_data(data)
+
+
+def test_max_dose_per_intake_is_optional_and_read():
+    got = dictionary_from_data({"drugs": [
+        {"item_code": "197900277", "name": "게보린정", "max_dose_per_intake": 1},
+        {"item_code": "201110120", "name": "트리스펜연질캡슐"},
+    ]})
+    assert [e.max_dose_per_intake for e in got.entries] == [1, None]

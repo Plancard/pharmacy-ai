@@ -3,7 +3,9 @@
  "purpose": "1회 2알 + 취침 전 (칸당 2알 꽉 채움)",
  "risk_level": "none",
  "plan": "ok",
- "flagged": [],
+ "flagged": [
+  0
+ ],
  "items": [
   {
    "item_code": "200308774",

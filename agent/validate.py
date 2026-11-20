@@ -29,6 +29,9 @@ _DEFAULT_SLOTS = {
 }
 
 
+_SLOT_NAMES = {"morning": "아침", "noon": "점심", "evening": "저녁", "bedtime": "취침 전"}
+
+
 def default_times(times_per_day: int) -> list[str]:
     return list(_DEFAULT_SLOTS[times_per_day])
 
@@ -83,6 +86,14 @@ def order_from_extracted(
         if ocr_conf is not None and (isinstance(ocr_conf, bool) or not isinstance(ocr_conf, (int, float))):
             raise StructureError(f"{label}의 OCR 신뢰도 형식이 올바르지 않습니다.")
 
+        value_conf = raw.get("value_conf")
+        if value_conf is not None and (
+            not isinstance(value_conf, dict)
+            or set(value_conf) - {"dose", "times", "days"}
+            or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1 for v in value_conf.values())
+        ):
+            raise StructureError(f"{label}의 값 칸 신뢰도(value_conf) 형식이 올바르지 않습니다.")
+
         source_line_ids = raw.get("source_line_ids")
         if source_line_ids is None:
             source_line_ids = []
@@ -94,10 +105,20 @@ def order_from_extracted(
             raw_slots = []
         if not isinstance(raw_slots, list) or any(s not in TIME_SLOTS for s in raw_slots):
             raise StructureError(f"{label}의 복용 시점 값이 올바르지 않습니다.")
+        unclear = raw.get("times_unclear")
+        if unclear is not None and not isinstance(unclear, str):
+            raise StructureError(f"{label}의 times_unclear 형식이 올바르지 않습니다.")
+        times_note = None
         slots = [s for s in TIME_SLOTS if s in raw_slots]
         if not slots:
             slots = default_times(per_day)
-            warnings.append(f"{label}: 복용 시점이 처방전에 없어 하루 {per_day}회 기준으로 배정했습니다.")
+            if unclear and unclear.strip():
+                names = "·".join(_SLOT_NAMES[s] for s in slots)
+                times_note = (f"복용 시점으로 보이는 글자('{unclear.strip()}')를 알아보지 못해 "
+                              f"하루 {per_day}회 기준({names})으로 배정했습니다. 원문을 확인하세요.")
+                warnings.append(f"{label}: {times_note}")
+            else:
+                warnings.append(f"{label}: 복용 시점이 처방전에 없어 하루 {per_day}회 기준으로 배정했습니다.")
         elif len(slots) != per_day:
             slots = default_times(per_day)
             warnings.append(f"{label}: 복용 시점 수와 하루 횟수가 달라 횟수 기준으로 다시 배정했습니다. 확인이 필요합니다.")
@@ -112,6 +133,8 @@ def order_from_extracted(
                     days=days,
                     times=slots,
                     ocr_conf=ocr_conf,
+                    value_conf=value_conf,
+                    times_note=times_note,
                     source_line_ids=source_line_ids,
                 )
             )

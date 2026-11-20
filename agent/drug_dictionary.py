@@ -8,6 +8,8 @@
   트레이 검출 결과가 k_code로 오면 이 표로 품목기준코드를 찾는다 (12단계).
 - ingredients: 주성분 이름 목록 (선택, 명세서 2.6절). 처방약끼리 성분 중복을 찾는 데 쓴다 (dur.py).
   비어 있으면 성분을 모르는 약이다. 중복 대조에서 빠지고 조제지시서의 경고에 그렇게 남는다.
+- max_dose_per_intake: 허가정보 용법용량의 성인 1회 최대량 (선택, 정·캡슐 수의 1 이상 정수). 처방의 1회량이 이보다 크면
+  약사 확인을 붙인다 (drug_match.py). 트레이 칸의 알 수 제한과는 무관하다. 없으면 검사하지 않는다.
 
 처방전에 인쇄된 코드를 따로 적는 칸(rx_code)은 없다. 자동 확정은 처방전에 인쇄된 코드가 사전의 품목기준코드와
 같을 때뿐이고, 그 밖에는 이름으로 찾아 약사 확인으로 넘긴다 (drug_match.py).
@@ -30,7 +32,7 @@ from agent.errors import ConfigError
 
 _ITEM_CODE = re.compile(r"[0-9]{9}")           # [0-9]: \d는 전각 숫자 같은 다른 나라 숫자도 받는다
 _K_CODE = re.compile(r"K-[0-9]{6}")
-_ENTRY_KEYS = {"item_code", "name", "class_id", "k_code", "ingredients"}
+_ENTRY_KEYS = {"item_code", "name", "class_id", "k_code", "ingredients", "max_dose_per_intake"}
 
 
 def ingredient_key(name: str) -> str:
@@ -49,6 +51,7 @@ class DrugEntry:
     class_id: int | None = None   # CV 클래스 ID
     k_code: str | None = None     # AI Hub 약 번호 (dl_mapping_code)
     ingredients: tuple[str, ...] = ()   # 주성분. 비어 있으면 모르는 약
+    max_dose_per_intake: int | None = None   # 허가정보의 성인 1회 최대량(정·캡슐 수). 없으면 1회량을 검사하지 않는다
 
 
 class DrugDictionary:
@@ -115,6 +118,9 @@ def dictionary_from_data(data) -> DrugDictionary:
         if k_code is not None and (not isinstance(k_code, str) or not _K_CODE.fullmatch(k_code)):
             raise ConfigError(f"약품 사전 {number}번째 항목의 k_code는 K-와 숫자 6자리 글자여야 합니다.")
         ingredients = _read_ingredients(item.get("ingredients"), number)
+        max_dose = item.get("max_dose_per_intake")
+        if max_dose is not None and (isinstance(max_dose, bool) or not isinstance(max_dose, int) or max_dose < 1):
+            raise ConfigError(f"약품 사전 {number}번째 항목의 max_dose_per_intake는 1 이상의 정수여야 합니다.")
         key = match_key(name)
         if not key:
             raise ConfigError(f"약품 사전 {number}번째 항목의 이름에 비교할 글자가 없습니다.")
@@ -133,7 +139,8 @@ def dictionary_from_data(data) -> DrugDictionary:
         if k_code is not None:
             k_codes.add(k_code)
         entries.append(
-            DrugEntry(item_code=code, name=name.strip(), key=key, class_id=class_id, k_code=k_code, ingredients=ingredients)
+            DrugEntry(item_code=code, name=name.strip(), key=key, class_id=class_id, k_code=k_code, ingredients=ingredients,
+                      max_dose_per_intake=max_dose)
         )
     return DrugDictionary(entries)
 

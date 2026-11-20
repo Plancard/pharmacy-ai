@@ -13,6 +13,7 @@ from agent.drug_match import (
     CODE_FOUND,
     CODE_NOT_FOUND,
     LOW_CONFIDENCE,
+    NUMBER_CONFIDENCE,
     MAX_CANDIDATES,
     NAME_MATCH_MIN,
     NAME_ONLY_MARGIN,
@@ -60,7 +61,7 @@ def small_dict(*pairs):
 
 def test_thresholds_are_the_agreed_values():
     assert (NAME_MATCH_MIN, NAME_ONLY_MIN, NAME_ONLY_MARGIN) == (0.7, 0.9, 0.1)
-    assert (CANDIDATE_MIN, MAX_CANDIDATES, LOW_CONFIDENCE) == (0.6, 3, 0.5)
+    assert (CANDIDATE_MIN, MAX_CANDIDATES, LOW_CONFIDENCE, NUMBER_CONFIDENCE) == (0.6, 3, 0.5, 0.8)
 
 
 def _read_names():
@@ -421,8 +422,8 @@ BY_NAME = {
     "rx_004": [(TYLENOL, "name"), (GEVORIN, "name"), (FRONK, "name"), (None, "none")],
     "rx_005": [(None, "none")] * 4,
 }
-# 인쇄된 코드를 품목기준코드로 바꾸면 코드 단계가 약을 정한다. 확인 표시가 붙는 줄(0부터): 낮은 신뢰도, 사전에 없는 약, 4일 처방
-BY_CODE_FLAGGED = {"rx_001": [0, 1], "rx_002": [2], "rx_003": [0, 1], "rx_004": [0, 2, 3], "rx_005": [0, 1, 2, 3]}
+# 인쇄된 코드를 품목기준코드로 바꾸면 코드 단계가 약을 정한다. 확인 표시가 붙는 줄(0부터): 낮은 신뢰도(0.8 미만; rx_002는 모든 칸이 0.57), 사전에 없는 약, 4일 처방
+BY_CODE_FLAGGED = {"rx_001": [0, 1], "rx_002": [0, 1, 2], "rx_003": [0, 1], "rx_004": [0, 2, 3], "rx_005": [0, 1, 2, 3]}
 
 
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
@@ -809,3 +810,75 @@ def test_a_product_found_both_in_the_dictionary_and_the_api_is_one_candidate():
     got = match_line(line(name="게부린", printed_code=None), DICT, api=api)
     codes = [c.item_code for c in got.match_candidates]
     assert got.item_code is None and codes[0] == GEVORIN and len(codes) == len(set(codes))
+
+
+@pytest.mark.parametrize(
+    "value_conf, reasons",
+    [
+        ({"dose": 0.76}, ["1회량 칸의 글자 인식 신뢰도가 낮습니다(0.76). 원문을 확인하세요."]),    # 11/20: 1 TAB이 7 TAB으로 읽힌 칸
+        ({"dose": 0.91, "times": 1.0, "days": 0.99}, []),
+        ({"dose": NUMBER_CONFIDENCE}, []),
+        ({"times": 0.5}, ["하루 횟수 칸의 글자 인식 신뢰도가 낮습니다(0.50). 원문을 확인하세요."]),
+        ({"days": 0.3}, ["투약 일수 칸의 글자 인식 신뢰도가 낮습니다(0.30). 원문을 확인하세요."]),
+        (
+            {"dose": 0.6, "days": 0.7},
+            ["1회량 칸의 글자 인식 신뢰도가 낮습니다(0.60). 원문을 확인하세요.", "투약 일수 칸의 글자 인식 신뢰도가 낮습니다(0.70). 원문을 확인하세요."],
+        ),
+        (None, []),
+    ],
+)
+def test_a_low_value_cell_is_named_in_the_check_reasons(value_conf, reasons):
+    got = match_line(line(value_conf=value_conf), DICT)       # 줄 전체 신뢰도는 0.9라 줄 단위 이유는 붙지 않는다
+    assert got.check_reasons == reasons and got.needs_pharmacist_check is bool(reasons)
+
+
+def test_a_line_with_a_times_note_asks_the_pharmacist_with_that_note():
+    note = "복용 시점으로 보이는 글자('수면 전')를 알아보지 못해 하루 1회 기준(아침)으로 배정했습니다. 원문을 확인하세요."
+    got = match_line(line(times_note=note), DICT)
+    assert got.needs_pharmacist_check and got.check_reasons == [note] and got.times_note == note
+
+
+def test_a_line_without_a_times_note_is_not_flagged_for_times():
+    got = match_line(line(), DICT)
+    assert not got.needs_pharmacist_check and got.times_note is None
+
+
+# 허가정보의 성인 1회 최대량 (사전 max_dose_per_intake). 트레이 칸의 알 수 제한과는 무관하다 (11/20)
+def with_dose(dose, **kw):
+    return line(**kw).model_copy(update={"count_per_dose": dose})
+
+
+@pytest.mark.parametrize(
+    "name, code, dose, flagged, max_dose",
+    [
+        ("트립라인정", TRIPLINE, 7, True, 2),          # 11/20: 1 TAB이 7 TAB으로 읽힌 사례
+        ("트립라인정", TRIPLINE, 2, False, 2),         # 최대와 같으면 괜찮다 (첫날 1회 2정)
+        ("트립라인정", TRIPLINE, 1, False, 2),
+        ("게보린정", GEVORIN, 2, True, 1),
+        ("게보린정", GEVORIN, 1, False, 1),
+        ("뮤코다인캡슐200mg", MUCODYNE, 2, True, 1),
+        ("아이월드요비신정 416.7mg", YOVISIN, 6, False, 6),
+        ("아이월드요비신정 416.7mg", YOVISIN, 7, True, 6),
+        ("트리스펜연질캡슐", TRISPEN, 99, False, None),   # 캡슐당 함량을 몰라 최대량을 정하지 않았다 -> 검사하지 않는다
+    ],
+)
+def test_a_dose_above_the_licensed_maximum_asks_the_pharmacist(name, code, dose, flagged, max_dose):
+    got = match_line(with_dose(dose, name=name, printed_code=code), DICT)
+    reasons = [r for r in got.check_reasons if "허가 용법" in r]
+    assert got.item_code == code
+    assert reasons == ([f"1회량 {dose}이(가) 허가 용법의 1회 최대 {max_dose}을(를) 넘습니다. 원문을 확인하세요."] if flagged else [])
+    assert got.needs_pharmacist_check is flagged
+
+
+def test_the_dose_is_also_checked_when_the_drug_was_found_by_name():
+    got = match_line(with_dose(7, name="트립라인정", printed_code="900000099"), DICT)       # 코드가 사전에 없어 이름으로 정한다
+    assert (got.item_code, got.match_method) == (TRIPLINE, "name")
+    assert any("허가 용법" in r for r in got.check_reasons)
+
+
+def test_a_drug_found_only_by_the_api_is_not_checked_for_dose():
+    class Product:
+        item_code, name = "123456789", "대상 외 약"
+
+    got = match_line(with_dose(50, name="대상 외 약", printed_code=None), DICT, api=lambda term: [Product()])
+    assert not any("허가 용법" in r for r in got.check_reasons)

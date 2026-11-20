@@ -265,6 +265,8 @@ class DrugLine(_Model):
     # A.5 밖의 Agent 내부 필드. 웹이 몰라도 되고, 함께 넘어가면 승인 카드가 보여 줄 수 있다 (2단계)
     printed_code: str | None = None          # 처방전에 인쇄된 코드 (보험코드 자리). 약품 매칭이 사전에서 약을 찾을 때 쓴다
     ocr_conf: float | None = Field(default=None, ge=0.0, le=1.0)   # 이 줄을 읽은 OCR 칸들의 최저 신뢰도. LLM 경로는 모른다(None)
+    value_conf: dict[str, float] | None = None   # 1회량(dose)·하루 횟수(times)·투약 일수(days) 칸 각각의 OCR 신뢰도 (0~1). 낮은 칸을 약품 매칭이 지목한다. 약사가 줄을 고치면 지운다
+    times_note: str | None = None            # 복용 시점 글자를 못 알아봐 하루 횟수로 채웠을 때의 설명. 약품 매칭이 확인 이유로 옮긴다. 약사가 줄을 고치면 지운다
 
     # 약품 매칭의 결과 (4단계). 매칭 전이거나 약사가 직접 정한 줄은 match_method가 None이다
     match_method: MatchMethod | None = None
@@ -272,6 +274,10 @@ class DrugLine(_Model):
 
     @model_validator(mode="after")
     def _consistent(self):
+        if self.value_conf is not None and (
+            set(self.value_conf) - {"dose", "times", "days"} or not all(0.0 <= v <= 1.0 for v in self.value_conf.values())
+        ):
+            raise ValueError(f"{self.name}: value_conf는 dose·times·days 칸의 0~1 신뢰도여야 합니다")
         if len(set(self.times)) != len(self.times):
             raise ValueError(f"{self.name}: times에 같은 시점이 두 번 나옵니다")
         if len(set(self.source_line_ids)) != len(self.source_line_ids):

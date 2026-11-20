@@ -310,14 +310,44 @@ SLOT_WORDS: dict[str, tuple[str, ...]] = {
 }
 
 
+# OCR이 '취침 전'을 '취짐 전' · '취칭 전'처럼 가운데 글자만 틀리게 읽는 일이 있다 (11/19 시험). 취 + 글자 하나 + 전 이면 취침으로 본다.
+# 틀리게 읽은 것을 그냥 두면 시점이 비어 하루 횟수로 채워지고(1회 = 아침) 취침 약이 아침에 배정된다.
+_BEDTIME_MISREAD = re.compile(r"취[가-힣]전")
+
+
 def parse_times(text: str) -> list[str]:
     """용법 글자에서 복용 시점을 찾는다. 항상 morning, noon, evening, bedtime 순서로 돌려준다.
 
     "PO 식후 30분"처럼 아침·점심·저녁·취침 전이 없으면 빈 목록이다.
     (빈 목록은 "알 수 없음"이다. 하루 횟수에 맞춰 채우는 일은 나중에 스키마 단계에서 한다.)
+    '취짐 전'처럼 가운데 글자가 틀린 취침 전도 취침으로 읽는다.
     """
     key = _nfkc(text).replace(" ", "")
-    return [slot for slot, words in SLOT_WORDS.items() if any(w in key for w in words)]
+    found = {slot for slot, words in SLOT_WORDS.items() if any(w in key for w in words)}
+    if _BEDTIME_MISREAD.search(key):
+        found.add("bedtime")
+    return [slot for slot in SLOT_WORDS if slot in found]
+
+
+# 용법 칸에 시점이 없어도 정상인 말. 이것들을 빼고도 한글이 남으면 시점 글자를 못 알아본 것으로 본다.
+# ('PO 식후 30분'처럼 원래 시점이 없는 처방은 남는 글자가 없어 해당 없다. 'PO'·숫자·기호는 한글이 아니라 따로 지우지 않아도 된다.)
+_USAGE_PLAIN_WORDS = ("식후", "식전", "식간", "공복", "직후", "직전", "즉시", "경구", "복용", "투여")
+
+
+def unread_times_text(text: str) -> str | None:
+    """용법 글자에서 복용 시점을 하나도 못 찾았는데, 정상적인 말을 빼고도 한글이 남으면 그 글자를 돌려준다.
+
+    예: 'PO 취짐 전' -> '취짐 전' (OCR이 '취침'을 틀리게 읽은 것으로 의심). 'PO 식후 30분' -> None (원래 시점이 없는 처방).
+    시점을 찾았거나 남는 한글이 없으면 None. OCR이 용법 글자를 통째로 놓친 경우는 알 수 없어 None이다.
+    """
+    if parse_times(text):
+        return None
+    rest = _nfkc(text)
+    for word in _USAGE_PLAIN_WORDS:
+        rest = rest.replace(word, " ")
+    rest = re.sub(r"\d+\s*(?:분|시간)", " ", rest)
+    rest = " ".join(re.sub(r"[^가-힣\s]", " ", rest).split())
+    return rest or None
 
 
 def _read_number(digits: list[str], column: str) -> int:
@@ -351,24 +381,44 @@ def _lowest_conf(lines: list[Line]) -> float | None:
     return min(confs) if confs else None
 
 
+def _value_confs(cells: list[Line]) -> dict[str, float]:
+    """값 칸(dose·times·days)마다의 OCR 신뢰도. 칸에 신뢰도가 없으면 그 칸은 빠진다. 같은 칸이 둘이면 낮은 쪽."""
+    confs: dict[str, float] = {}
+    for cell in cells:
+        value = classify_cell(cell["text"].strip())
+        conf = cell.get("conf")
+        if value is None or not isinstance(conf, (int, float)) or isinstance(conf, bool):
+            continue
+        confs[value[0]] = min(confs.get(value[0], conf), conf)
+    return confs
+
+
 def _read_row(anchor: Line, cells: list[Line], name_edge: float | None, ids: dict[int, int]) -> dict[str, Any]:
     columns = split_columns(cells, name_edge)
     numbers = {column: _read_number(columns[column], column) for column in COLUMN_LABELS}
     name = _clean_name(anchor["text"], columns["name"])
     if not name:
         raise StructureError("약품명을 찾지 못했습니다.")
-    return {
+    usage = " ".join(columns["other"])
+    unclear = unread_times_text(usage)
+    row = {
         "name": name,
         "printed_code": _CODE.search(_nfkc(anchor["text"])).group(),
         "count_per_dose": numbers["dose"],
         "times_per_day": numbers["times"],
         "days": numbers["days"],
-        "times": parse_times(" ".join(columns["other"])),
+        "times": parse_times(usage),
         # 이 줄을 읽는 데 쓴 모든 칸(코드 줄·이름 조각·값 칸·용법)의 A.1 line_id. 처방 결과 카드가 원문 위치를 표시한다.
         "source_line_ids": sorted(ids[id(line)] for line in [anchor, *cells]),
         # 같은 칸들의 최저 신뢰도. 낮으면 약사가 원문과 대조한다.
         "ocr_conf": _lowest_conf([anchor, *cells]),
     }
+    value_conf = _value_confs(cells)
+    if value_conf:   # 1회량·횟수·일수 칸 각각의 신뢰도. 약품 매칭이 낮은 칸을 지목한다. 신뢰도가 하나도 없으면 넣지 않는다
+        row["value_conf"] = value_conf
+    if unclear:   # 시점을 못 알아본 용법 글자. 있을 때만 넣는다 (validate가 약사 확인 이유로 바꾼다)
+        row["times_unclear"] = unclear
+    return row
 
 
 # ---------------------------------------------------------------- 처방전 하나 읽기
