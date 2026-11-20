@@ -103,6 +103,7 @@ _DUP = {"type": "ingredient_dup", "item_codes": ["202106092", "197900277"], "lev
         "message": "타이레놀정500mg과 게보린정에 아세트아미노펜이 함께 들어 있습니다. 하루 총량을 확인하세요."}
 _DANGER = {"type": "contraindication", "item_codes": ["202106092", "200200099"], "level": "danger",
            "message": "(가짜 데이터) 병용금기 조합입니다. 처방 의사에게 확인한 뒤 진행하세요."}
+_SLOT_WARNING = "3번째 약품: 복용 시점이 처방전에 없어 하루 3회 기준으로 배정했습니다."   # agent/validate.py의 문구와 같은 꼴
 SCENARIOS = ("warning", "none", "danger", "flagged", "fail", "range")
 _TIMES = ("morning", "noon", "evening")
 _TIME_LABELS = {"morning": "아침", "noon": "점심", "evening": "저녁", "bedtime": "취침 전"}
@@ -167,8 +168,11 @@ class FakeGateway:
             items.append(copy.deepcopy(_UNMATCHED))
         order_rank = ["none", "caution", "warning", "danger"]
         level = max((f["level"] for f in findings), key=order_rank.index, default="none")
-        return {"prescription_id": rx_id, "items": items,
-                "risk_check": {"scope": "rx_only", "level": level, "findings": findings}}
+        order = {"prescription_id": rx_id, "items": items, "warnings": [],
+                 "risk_check": {"scope": "rx_only", "level": level, "findings": findings}}
+        if self.scenario == "warning":
+            order["warnings"] = [copy.deepcopy(_SLOT_WARNING)]   # 화면 확인용: 복용 시점 누락 경고
+        return order
 
     def _rematch(self, rx_id: str, order: dict[str, Any]) -> dict[str, Any]:
         """edit 뒤 약품 다시 찾기·위험 신호 다시 보기의 가짜 버전: 이름으로 샘플 약품을 찾고, 없는 약의 경고는 뺀다."""

@@ -281,7 +281,9 @@
         h("td", { class: "num" }, it.count_per_dose),
         h("td", {}, times),
         h("td", { class: "num" }, `${it.days}일`),
-        h("td", {}, low ? h("span", { class: "chip low" }, "인식 신뢰도 낮음") : h("span", { class: "muted" }, "-")));
+        h("td", {}, low ? h("span", { class: "chip low" }, "낮음")
+          : (confs.length ? h("span", { class: "chip ok" }, "정상")
+            : h("span", { class: "muted", title: "처방전에서 읽은 위치 정보가 없어 신뢰도를 알 수 없습니다" }, "-"))));
       if (onSelect) {
         tr.addEventListener("click", () => onSelect(idx, tr));
         tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(idx, tr); } });
@@ -290,8 +292,16 @@
     });
     return h("div", { class: "table-wrap" }, h("table", { class: "items" },
       h("thead", {}, h("tr", {}, h("th", {}, "약품"), h("th", {}, "1회"), h("th", {}, "복용 시점"),
-        h("th", {}, "일수"), h("th", {}, "원문"))),
+        h("th", {}, "일수"), h("th", {}, "인식 신뢰도"))),
       h("tbody", {}, rows)));
+  }
+
+  // 조제지시서 warnings(A.5): 처방전을 읽는 중 Agent가 알린 내용. 복용 시점 누락·종이 잘림·API 미사용 등.
+  function warningsPanel(warnings) {
+    if (!warnings || !warnings.length) return null;
+    return h("div", { class: "risk risk-warning", role: "status" },
+      h("strong", {}, "처방전을 읽을 때 알린 내용"),
+      h("ul", {}, warnings.map((w) => h("li", {}, w))));
   }
 
   function riskPanel(risk) {
@@ -450,6 +460,7 @@
           h("p", { class: "muted" }, canLocate
             ? "항목을 누르면 처방전에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."
             : "원본과 대조한 뒤 승인하세요."),
+          warningsPanel(order.warnings),
           itemsTable(order, lines, canLocate && rx.image_url ? select : null),
           planPanel(order, plan, notice),
           riskPanel(order.risk_check || {}))),

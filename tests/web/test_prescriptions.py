@@ -308,6 +308,17 @@ def test_none_scenario_still_has_flagged_item(monkeypatch, tmp_path, fake_rx):
     assert c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]["needs_confirm"] is True
 
 
+def test_order_warnings_reach_the_card(monkeypatch, tmp_path, fake_rx):
+    """조제지시서 warnings(복용 시점 누락 등)는 카드의 order에 그대로 실려 와 화면이 보여 준다 (F-WEB-06)."""
+    c = make_client(monkeypatch, tmp_path, scenario="warning")
+    rx_id = upload(c).get_json()["id"]
+    warnings = c.get(f"/api/prescriptions/{rx_id}").get_json()["card"]["order"]["warnings"]
+    assert len(warnings) == 1 and "복용 시점" in warnings[0]
+    c2 = make_client(monkeypatch, tmp_path, scenario="none")
+    rx2 = upload(c2).get_json()["id"]
+    assert c2.get(f"/api/prescriptions/{rx2}").get_json()["card"]["order"]["warnings"] == []
+
+
 def test_unmatched_item_blocks_approval(monkeypatch, tmp_path, fake_rx):
     c = make_client(monkeypatch, tmp_path, scenario="flagged")
     rx_id = upload(c).get_json()["id"]
