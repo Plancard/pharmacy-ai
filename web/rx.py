@@ -128,14 +128,39 @@ def attach_tray(rx_id: uuid.UUID, pharmacy_id: int, storage_key: str) -> uuid.UU
     return img["id"]
 
 
-def set_done(rx_id: uuid.UUID) -> bool:
-    """처리 중 → 완료. 트레이 검수가 끝남(전 칸 일치, 또는 HITL ② 확인 완료). 조제 기록 저장은 11/20에 여기에 붙인다."""
-    row = db.execute(
-        "UPDATE prescriptions SET status = 'done', hitl_point = NULL "
-        "WHERE id = %s AND status = 'processing' RETURNING id",
-        (rx_id,),
-    )
-    return row is not None
+RISK_LEVELS = ("none", "caution", "warning", "danger")
+
+
+def risk_level_of(order: dict | None) -> str | None:
+    """조제지시서의 최종 위험 단계 (risk_check.level). 값이 없거나 목록 밖이면 None (조제 기록 CHECK에 걸리지 않게)."""
+    level = ((order or {}).get("risk_check") or {}).get("level")
+    return level if level in RISK_LEVELS else None
+
+
+def set_done(rx_id: uuid.UUID, order: dict | None = None, plan: dict | None = None,
+             inspection: dict | None = None) -> bool:
+    """처리 중 → 완료 + 조제 기록 저장 (F-WEB-12 ②). 트레이 검수가 끝남(전 칸 일치, 또는 HITL ② 확인 완료).
+
+    상태 변경과 조제 기록(최종 조제지시서 A.5 · 조제 계획 A.4 · 검수 결과 A.3 · 위험 단계 · 완료한 사용자)을
+    한 트랜잭션으로 저장한다. 하나라도 실패하면 둘 다 취소되고 예외가 올라간다 (부른 쪽이 E_DB 실패로 둔다).
+    처리 중이 아니면(취소됨 등) 아무것도 저장하지 않고 False.
+    완료한 사용자 = 마지막 HITL 응답자(승인·검수 확인), 응답 기록이 없으면 처방을 올린 사용자.
+    """
+    with db.transaction() as conn:
+        row = conn.execute(
+            "UPDATE prescriptions SET status = 'done', hitl_point = NULL "
+            "WHERE id = %s AND status = 'processing' RETURNING user_id",
+            (rx_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute(
+            "INSERT INTO dispense_records (prescription_id, rx_json, plan_json, inspection_json, risk_level, user_id) "
+            "VALUES (%s, %s, %s, %s, %s, COALESCE("
+            "(SELECT user_id FROM approvals WHERE prescription_id = %s ORDER BY created_at DESC, id DESC LIMIT 1), %s))",
+            (rx_id, _jsonb(order), _jsonb(plan), _jsonb(inspection), risk_level_of(order), rx_id, row["user_id"]),
+        )
+    return True
 
 
 def add_inspection(rx_id: uuid.UUID, image_id: uuid.UUID, result: dict) -> None:

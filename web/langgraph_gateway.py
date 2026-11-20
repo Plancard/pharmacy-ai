@@ -6,6 +6,7 @@ FakeGateway(web/agent_gateway.py)와 메서드 · 돌려주는 값이 같다. �
     pending(rx_id)                    AgentApi.pending → Pause | None
     resume(rx_id, hitl_point, reply)  AgentApi.resume → 다시 멈추면 Pause, 조제 계획까지 끝나면 Wait('waiting_tray')
     approved_order(rx_id)             AgentApi.approved_order
+    approved_plan(rx_id)              AgentApi.result의 조제 계획 A.4 (승인된 처방에만)
     tray(rx_id, image_id, image_path) AgentApi.send(…, "tray") → 불일치가 있으면 Pause(inspection), 전 칸 일치면 Wait('done')
     inspection(rx_id) · tray_error(rx_id)   AgentApi.result의 검수 결과(A.3) · 트레이 검수 실패 코드와 안내
     check_reply(rx_id, hitl_point, reply)   응답이 맞는지 미리 본다 (라우트가 백그라운드로 넘기기 전에 쓰면 400으로 거를 수 있다)
@@ -139,6 +140,12 @@ class LangGraphGateway:
 
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         return self.api.approved_order(rx_id)
+
+    def approved_plan(self, rx_id: str) -> dict[str, Any] | None:
+        """승인된 조제지시서의 조제 계획. 아직 승인 전이면(approved_order가 None) 계획이 있어도 None."""
+        if self.api.approved_order(rx_id) is None:
+            return None
+        return self.api.result(rx_id).get("plan")
 
     def tray(self, rx_id: str, image_id: str, image_path: Path) -> Pause | Wait | None:
         """트레이 사진을 검수한다. Agent는 사진 ID만 받고, CV(build_graph(inspect=…))가 ID로 사진을 찾는다.

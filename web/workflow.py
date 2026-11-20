@@ -90,7 +90,24 @@ def _apply(rx_id: uuid.UUID, outcome: Pause | Wait | None) -> None:
         if outcome.status == "waiting_tray":
             rx.set_waiting_tray(rx_id)
         elif outcome.status == "done":
-            rx.set_done(rx_id)
+            _finish(rx_id)
+
+
+def _finish(rx_id: uuid.UUID) -> None:
+    """트레이 검수가 끝난 처방을 완료로 옮기고 조제 기록을 저장한다 (F-WEB-12 ②).
+
+    최종 조제지시서·조제 계획·검수 결과 중 하나라도 없거나 저장이 실패하면 완료로 두지 않고 E_DB 실패로 둔다
+    (한 트랜잭션이라 조제 기록이 반쯤 남지 않는다).
+    """
+    sid = str(rx_id)
+    try:
+        order, plan, a3 = gateway().approved_order(sid), gateway().approved_plan(sid), gateway().inspection(sid)
+        if not (order and plan and a3):
+            raise ValueError("최종 조제지시서·조제 계획·검수 결과 중 없는 것이 있습니다")
+        rx.set_done(rx_id, order, plan, a3)
+    except Exception:
+        current_app.logger.exception("처방 %s 조제 기록 저장 실패", rx_id)
+        rx.set_failed(rx_id, "E_DB")
 
 
 def _fail(rx_id: uuid.UUID, e: Exception) -> None:

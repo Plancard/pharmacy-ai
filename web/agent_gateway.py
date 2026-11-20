@@ -4,6 +4,7 @@
     pending(rx_id)                    지금 멈춰 있는 지점과 화면에 보여 줄 내용 (없으면 None)
     resume(rx_id, hitl_point, reply)  약사 응답으로 이어 간다. 다시 멈추면 Pause
     approved_order(rx_id)             승인된 조제지시서 (트레이 대기 카드에 보여 줌)
+    approved_plan(rx_id)              그 조제지시서의 조제 계획 A.4 (조제 기록 저장에 씀, 없으면 None)
     tray(rx_id, image_id, image_path) 트레이 사진 검수 (11/18). 불일치·확인 필요 칸이 있으면 HITL ②(inspection)에서 멈춘다
     inspection(rx_id)                 마지막 검수 결과 A.3 (없으면 None)
     tray_error(rx_id)                 트레이 대기로 돌아온 이유 {code, notice} (트레이 못 찾음 등, 없으면 None)
@@ -303,3 +304,7 @@ class FakeGateway:
     def approved_order(self, rx_id: str) -> dict[str, Any] | None:
         data = self._load(rx_id)
         return data.get("approved_order") if data else None
+
+    def approved_plan(self, rx_id: str) -> dict[str, Any] | None:
+        order = self.approved_order(rx_id)
+        return self._plan(rx_id, order)[0] if order else None

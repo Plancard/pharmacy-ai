@@ -160,12 +160,14 @@ CREATE TABLE IF NOT EXISTS dispense_records (
     prescription_id UUID        NOT NULL UNIQUE REFERENCES prescriptions(id) ON DELETE CASCADE,
     rx_json         JSONB       NOT NULL,          -- A.5 승인된 조제지시서
     plan_json       JSONB       NOT NULL,          -- A.4 조제 계획
-    consult_json    JSONB,                         -- A.6 상담 결과
-    risk_level      TEXT        CHECK (risk_level IN ('none', 'caution', 'warning', 'danger')),
-    user_id         BIGINT      NOT NULL REFERENCES users(id),
+    consult_json    JSONB,                         -- A.6 상담 결과 (v1.2 삭제, 쓰지 않음. 정리는 A-2에서 결정)
+    risk_level      TEXT        CHECK (risk_level IN ('none', 'caution', 'warning', 'danger')),   -- 조제지시서 risk_check.level
+    user_id         BIGINT      NOT NULL REFERENCES users(id),   -- 마지막 HITL 응답자 (없으면 처방을 올린 사용자)
     completed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_dispense_completed ON dispense_records(completed_at);
+-- 최종 검수 결과 A.3 (11/20 F-WEB-12 ②: 최종 조제지시서·조제 계획·검수 결과를 조제 기록으로 저장). 예전 DB에도 init-db로 반영
+ALTER TABLE dispense_records ADD COLUMN IF NOT EXISTS inspection_json JSONB;
 
 -- ------------------------------------------------------------ 대화 메시지 (타임라인, 추가만)
 -- 약사 입력 1건(글 + 사진 1장) = 1행 = 슈퍼바이저 1회 실행. 시스템 응답은 card 행.

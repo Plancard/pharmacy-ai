@@ -29,13 +29,15 @@ class FakeRx:
         self.images: dict[uuid.UUID, dict] = {}
         self.approvals: list[dict] = []
         self.inspection_rows: list[dict] = []
+        self.dispense_rows: list[dict] = []       # 조제 기록 (처방당 1건, F-WEB-12 ②)
         self.fail_create = False
+        self.fail_done = False                    # 조제 기록 저장 실패 흉내 (트랜잭션이라 상태도 안 바뀐다)
 
     def create(self, pharmacy_id, user_id, rx_id, storage_key, kind="prescription"):
         if self.fail_create:
             raise RuntimeError("db down")
         n = sum(1 for r in self.rows.values() if r["pharmacy_id"] == pharmacy_id) + 1
-        row = {"id": rx_id, "pharmacy_id": pharmacy_id, "display_no": f"P{n:04d}", "status": "processing",
+        row = {"id": rx_id, "pharmacy_id": pharmacy_id, "user_id": user_id, "display_no": f"P{n:04d}", "status": "processing",
                "hitl_point": None, "error_code": None, "created_at": datetime.now(timezone.utc),
                "updated_at": datetime.now(timezone.utc)}
         self.rows[rx_id] = row
@@ -107,11 +109,18 @@ class FakeRx:
         return [{"id": i["id"], "created_at": i["created_at"]} for i in self.images.values()
                 if i["rx"] == rx_id and i["kind"] == "tray"]
 
-    def set_done(self, rx_id):
+    def set_done(self, rx_id, order=None, plan=None, inspection=None):
         r = self.rows[rx_id]
         if r["status"] != "processing":
             return False
+        if self.fail_done:
+            raise RuntimeError("db down")         # 진짜는 한 트랜잭션이라 상태도 그대로 처리 중
+        last = [a for a in self.approvals if a["rx"] == rx_id][-1:]   # 완료한 사용자 = 마지막 HITL 응답자
         r.update(status="done", hitl_point=None)
+        self.dispense_rows.append({"rx": rx_id, "order": order, "plan": plan, "inspection": inspection,
+                                   "risk_level": rx.risk_level_of(order),
+                                   "user_id": last[0]["user_id"] if last else r["user_id"],
+                                   "completed_at": datetime.now(timezone.utc)})
         return True
 
     def add_inspection(self, rx_id, image_id, result):
