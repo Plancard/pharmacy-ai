@@ -175,7 +175,7 @@ def test_a_failed_structure_is_reported_and_exits_nonzero(monkeypatch):
 def test_the_subgraph_alone_shows_the_same_result_without_the_flow(sub_graph, graph):
     code, alone = run(["rx_004", "--subgraph"], sub_graph)
     assert code == 0
-    assert f"[rx_004] 상태: {WAITING} | 흐름: -" in alone         # 슈퍼바이저를 거치지 않아 흐름이 비어 있다
+    assert f"[rx_004] 상태: {WAITING} | 흐름: -" in alone         # 라우터를 거치지 않아 흐름이 비어 있다
     _, top = run(["rx_004"], graph)
     assert alone.replace("흐름: - | 순서: -", "흐름: prescription | 순서: prescription") == top   # 그 밖에는 한 글자도 다르지 않다
 
@@ -214,7 +214,7 @@ def test_the_subgraph_alone_cannot_be_given_a_photo_kind(sub_graph, capsys):
     assert "--subgraph" in capsys.readouterr().err
 
 
-# ------------------------------------------------------------ 슈퍼바이저의 분기
+# ------------------------------------------------------------ 라우터의 분기
 
 
 @pytest.mark.parametrize("argv, status, flow, notice", [

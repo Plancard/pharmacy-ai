@@ -6,7 +6,7 @@
              (LLM·API는 호출 함수를 인자로 받아야 네트워크 없이 시험할 수 있다)
 - MCP 포장   mcp_server · mcp_client             → 바닥, 가장자리, 판단, MCP 포장
              (mcp_server는 따로 도는 서버 프로세스의 입구라 의약품 API 연결을 스스로 만들어 판단 함수에 넘긴다)
-- 그래프·입구 graph · nodes · state · supervisor · api   → 제한 없음
+- 그래프·입구 graph · nodes · state · router · api   → 제한 없음
 
 agent/ 에 새 파일을 만들면 아래 LAYERS에 이름과 층을 적는다. 일정표·설계 문서에 없는 이름이면 먼저 정한다.
 """
@@ -23,7 +23,7 @@ LAYERS = {
     **{n: "판단" for n in ("structure", "validate", "pipeline", "drug_names", "drug_dictionary", "drug_match", "accuracy",
                           "plan", "dur", "rag", "risk", "inspection", "redact", "explain", "react", "investigate")},
     "mcp_server": "MCP 포장", "mcp_client": "MCP 포장",
-    **{n: "그래프·입구" for n in ("graph", "nodes", "state", "supervisor", "api")},
+    **{n: "그래프·입구" for n in ("graph", "nodes", "state", "router", "api")},
 }
 ALLOWED = {
     "바닥": {"바닥"},

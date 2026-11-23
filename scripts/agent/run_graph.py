@@ -4,12 +4,12 @@
     python scripts/agent/run_graph.py rx8_01 --approve      # 승인 대기에서 약사가 그대로 승인 → 조제 계획 확정
     python scripts/agent/run_graph.py --all                 # 샘플 전부 (CV 처방전 5장 + 시연용 처방전 8장)
     python scripts/agent/run_graph.py --no-api              # .env에 DRUG_API_KEY가 있어도 식약처 API를 쓰지 않는다 (약품 사전만)
-    python scripts/agent/run_graph.py --subgraph --all      # 처방 서브그래프만 단독으로 (슈퍼바이저를 거치지 않는다). 결과는 상위 그래프와 같다
+    python scripts/agent/run_graph.py --subgraph --all      # 처방 서브그래프만 단독으로 (라우터를 거치지 않는다). 결과는 상위 그래프와 같다
     python scripts/agent/run_graph.py rx8_01 --db           # 멈춘 곳을 .env의 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)
     python scripts/agent/run_graph.py --all --mcp           # 약품 매칭을 MCP 도구로 부른다 (python -m agent.mcp_server를 띄운다)
     python scripts/agent/run_graph.py --all --mcp-url http://127.0.0.1:8765/mcp   # 따로 띄운 MCP 서버에 붙는다
 
-슈퍼바이저의 분기를 보려면 사진 종류를 지정한다 (명세서 v0.8: 처방전 · 트레이만). --no-ocr 은 OCR 없이 사진 종류만 보낸다.
+라우터의 분기를 보려면 사진 종류를 지정한다 (명세서 v0.8: 처방전 · 트레이만). --no-ocr 은 OCR 없이 사진 종류만 보낸다.
     python scripts/agent/run_graph.py --kind tray --no-ocr      # 조제 계획 전의 트레이 사진 -> 안내만
     python scripts/agent/run_graph.py --no-ocr                  # 종류도 OCR도 없음 -> 안내만
 
@@ -113,14 +113,14 @@ def main(argv: list[str] | None = None, *, graph=None, out: Callable[[str], None
     parser.add_argument("--no-api", action="store_true", help="의약품 API를 쓰지 않는다 (약품 사전만)")
     parser.add_argument("--kind", help="사진 종류를 지정한다: prescription · tray (그 밖의 값은 받지 않는 종류)")
     parser.add_argument("--no-ocr", action="store_true", help="OCR 결과 없이 보낸다 (트레이 사진처럼)")
-    parser.add_argument("--subgraph", action="store_true", help="처방 서브그래프만 단독으로 돌린다 (슈퍼바이저를 거치지 않는다)")
+    parser.add_argument("--subgraph", action="store_true", help="처방 서브그래프만 단독으로 돌린다 (라우터를 거치지 않는다)")
     parser.add_argument("--approve", action="store_true", help="승인 대기에서 화면의 조제지시서를 그대로 승인해 이어 간다")
     parser.add_argument("--db", action="store_true", help="멈춘 곳을 DATABASE_URL(PostgreSQL)에 저장한다 (기본은 메모리)")
     parser.add_argument("--mcp", action="store_true", help="약품 매칭을 MCP 도구(match_drug)로 부른다. 서버를 하위 프로세스로 띄운다")
     parser.add_argument("--mcp-url", help="따로 띄운 MCP 서버(python -m agent.mcp_server --http)의 주소로 붙는다. --mcp를 겸한다")
     args = parser.parse_args(argv)
     if args.subgraph and args.kind is not None:
-        parser.error("--subgraph는 슈퍼바이저를 거치지 않으므로 사진 종류(--kind)를 줄 수 없습니다")
+        parser.error("--subgraph는 라우터를 거치지 않으므로 사진 종류(--kind)를 줄 수 없습니다")
 
     tools = None
     if graph is None and (args.mcp or args.mcp_url):

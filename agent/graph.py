@@ -1,8 +1,8 @@
 """그래프 두 장 (7 ~ 11단계, 명세서 v0.8 2.2절, REQ-AG-01 · 04 · 05, REQ-WEB-03) — 상위 그래프와 처방 서브그래프.
 
-상위 그래프: 슈퍼바이저가 사진 한 장의 흐름(route)을 정하고 그 흐름을 실행한다 (v0.8: 처방전 / 트레이 두 갈래).
+상위 그래프: 라우터가 사진 한 장의 흐름(route)을 정하고 그 흐름을 실행한다 (v0.8: 처방전 / 트레이 두 갈래).
 
-    START -> supervisor -> [prescription] -> [tray (-> tray_review)] -> END
+    START -> router -> [prescription] -> [tray (-> tray_review)] -> END
     (대괄호 = route에 있을 때만 들른다. 각 노드는 route에서 자기보다 뒤에 있는 첫 흐름으로 가고, 없으면 끝난다)
     tray_review는 트레이 검수에 약사 확인이 필요할 때(status=inspecting)만 들른다 (HITL ② inspection에서 멈춤)
 
@@ -16,7 +16,7 @@
                         |      +-----------------------------------+ (edited: 약사가 고침 → 다시 매칭 · 대조 · 계획 → 다시 승인 대기)
                         +-> END                                              (구조화 실패)
 
-- 메시지 하나는 슈퍼바이저를 한 번만 지난다. 상위 그래프의 화살표는 FLOW_ORDER의 앞에서 뒤로만 간다 (되돌아가는 길이 없다).
+- 메시지 하나는 라우터를 한 번만 지난다. 상위 그래프의 화살표는 FLOW_ORDER의 앞에서 뒤로만 간다 (되돌아가는 길이 없다).
   처방 서브그래프에서 되돌아가는 길은 승인 대기에서 약사가 고칠 때 하나뿐이다. 승인 대기에서 멈추므로 끝없이 돌지 않는다.
 - 노드와 화살표는 아래 표(PRESCRIPTION_CHART · TOP_CHART)에 적혀 있고, 만드는 함수는 그 표를 LangGraph에 옮기기만 한다.
   그래서 LangGraph 없이도 표만으로 연결을 시험할 수 있다 (tests/agent/test_graph.py).
@@ -56,8 +56,8 @@ from agent.nodes import (
     match_node,
     plan_node,
     risk_node,
+    router_node,
     structure_node,
-    supervisor_node,
     tray_node,
     tray_review_node,
     InspectFn,
@@ -65,7 +65,7 @@ from agent.nodes import (
 from agent.pipeline import structure_prescription
 from agent.schema import DispensingOrder
 from agent.state import GraphState, initial_state, message_input
-from agent.supervisor import FLOW_ORDER
+from agent.router import FLOW_ORDER
 
 END = "END"              # 표에서 '끝'을 뜻한다. 만드는 함수가 LangGraph의 END로 바꿔 끼운다
 
@@ -75,7 +75,7 @@ Choose = Callable[[dict[str, Any]], str]
 # 노드 함수. 이름은 상태의 칸 이름(GraphState의 키)과 같으면 안 된다 (LangGraph가 거절한다).
 # 상위 그래프의 'prescription' 노드만 여기 없다: 그것은 함수가 아니라 처방 서브그래프다.
 STEPS: dict[str, NodeFn] = {
-    "supervisor": supervisor_node,
+    "router": router_node,
     "structure": structure_node,
     "match": match_node,
     "risk": risk_node,
@@ -121,7 +121,7 @@ def next_flow(after: str) -> Choose:
     return choose
 
 
-after_supervisor = next_flow("supervisor")
+after_router = next_flow("router")
 
 
 def _forward(after: str) -> tuple[Choose, dict[str, str]]:
@@ -168,10 +168,10 @@ def after_tray(state: dict[str, Any]) -> str:
 TRAY_REVIEW = "tray_review"
 
 TOP_CHART = Chart(
-    entry="supervisor",
-    nodes=("supervisor", *FLOW_ORDER, TRAY_REVIEW),
+    entry="router",
+    nodes=("router", *FLOW_ORDER, TRAY_REVIEW),
     edges=(),
-    branches={"supervisor": (after_supervisor, _forward("supervisor")[1]),
+    branches={"router": (after_router, _forward("router")[1]),
               **{flow: _forward(flow) for flow in FLOW_ORDER},
               "tray": (after_tray, {**_forward("tray")[1], TRAY_REVIEW: TRAY_REVIEW}),
               TRAY_REVIEW: _forward("tray")},
@@ -375,7 +375,7 @@ def run_message(
 
 
 def run_prescription(graph, prescription_id: str, ocr: dict[str, Any] | None = None) -> dict[str, Any]:
-    """처방전 한 장을 처방 서브그래프에만 넣어 돌린 상태 (슈퍼바이저를 거치지 않는다). 대화 ID = 처방 ID."""
+    """처방전 한 장을 처방 서브그래프에만 넣어 돌린 상태 (라우터를 거치지 않는다). 대화 ID = 처방 ID."""
     state = initial_state(prescription_id, {"kind": "prescription"}, prescription_id, ocr)
     return graph.invoke(state, thread_config(prescription_id))
 

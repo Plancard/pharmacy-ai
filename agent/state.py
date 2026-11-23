@@ -8,7 +8,7 @@ State에는 JSON으로 바꿀 수 있는 값(dict · list · str · None)만 담
 첫 메시지(처방전 사진)는 initial_state, 같은 처방의 다음 메시지(트레이 사진)는 message_input(이번 메시지 칸만)으로 넣는다
 (graph.run_message가 고른다).
 
-메시지는 사진 1장이다 (v0.8: 글 · 복합 입력 · 약봉투 · 포장 사진 · 사진 종류 판별 제외). 슈퍼바이저(supervisor.py)가 흐름을 정한다.
+메시지는 사진 1장이다 (v0.8: 글 · 복합 입력 · 약봉투 · 포장 사진 · 사진 종류 판별 제외). 라우터(router.py)가 흐름을 정한다.
 
     prescription   처방 서브그래프: 구조화 → 약품 매칭 → 위험 신호 대조 → 조제 계획 → 승인 대기(멈춤, 승인하면 계획 확정)
     tray           트레이 검수: CV 검수 결과(A.3)를 받아, ok가 아닌 칸이 있으면 약사 확인(HITL ② inspection)에서 멈춘다 (14단계)
@@ -23,7 +23,7 @@ from agent.structure import agent_view
 # 들어온 사진의 종류. 웹이 처방 상태로 정해 넘긴다 (새 처방이면 처방전, 승인된 처방이면 트레이. v0.8: 종류 판별 없음).
 # 처방전은 A.1의 doc_type 값과 같다. 트레이는 OCR을 거치지 않는다.
 PhotoKind = Literal["prescription", "tray"]
-# 흐름. 흐름마다 상위 그래프의 노드가 하나씩 있다. 실행 순서는 supervisor.FLOW_ORDER가 정한다.
+# 흐름. 흐름마다 상위 그래프의 노드가 하나씩 있다. 실행 순서는 router.FLOW_ORDER가 정한다.
 Flow = Literal["prescription", "tray"]
 # 진행 단계. 멈춘 것(승인 대기 · 검수 확인)은 상태 값이 아니라 그래프가 멈춘 것으로 안다 (checkpointer의 interrupts. api.py).
 # edited는 약사가 고쳐 매칭 · 대조 · 계획을 다시 하는 상태, planned는 약사가 승인해 조제 계획이 확정된 상태다 (웹: waiting_tray).
@@ -43,13 +43,13 @@ STATUSES: tuple[str, ...] = get_args(Status)
 
 class GraphState(TypedDict, total=False):
     conversation_id: str                      # 대화 ID (= 체크포인터의 thread_id). 대화 1개 = thread 1개 (11/12 결정)
-    prescription_id: str | None               # 처방 ID. conversation_id와 같다 (웹이 넣어 준다. 빠지면 슈퍼바이저가 채운다)
-    # --- 이번 메시지 (사진 1장 = 슈퍼바이저 한 번 실행). 같은 처방의 다음 메시지는 이 칸들만 바꾼다 (message_input)
+    prescription_id: str | None               # 처방 ID. conversation_id와 같다 (웹이 넣어 준다. 빠지면 라우터가 채운다)
+    # --- 이번 메시지 (사진 1장 = 라우터 한 번 실행). 같은 처방의 다음 메시지는 이 칸들만 바꾼다 (message_input)
     image_id: str | None                      # 사진의 ID (images 테이블). 사진이 없으면 None. 원본 바이트는 담지 않는다
     photo_kind: PhotoKind | None              # 들어온 사진 종류 (웹이 정한다). None이면 OCR이 있을 때만 처방전으로 본다
     ocr: dict[str, Any] | None                # CV가 보낸 A.1 형식 OCR 결과. 트레이 사진에는 없다
     # --- 흐름과 결과
-    route: list[str]                          # 슈퍼바이저가 정한 실행할 흐름 (실행 순서). 지나기 전에는 빈 목록
+    route: list[str]                          # 라우터가 정한 실행할 흐름 (실행 순서). 지나기 전에는 빈 목록
     flow: Flow | None                         # 이번 메시지의 흐름. 흐름을 돌리지 않으면 None
     order: dict[str, Any] | None              # 조제지시서 (DispensingOrder.model_dump(mode="json"))
     plan: dict[str, Any] | None               # 조제 계획 A.4 (Plan.model_dump(mode="json")). 승인 전에 만들어 승인 카드에 보인다 (v0.8)

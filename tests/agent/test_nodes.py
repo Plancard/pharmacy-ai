@@ -29,7 +29,7 @@ from agent.nodes import (
     read_reply,
     risk_node,
     structure_node,
-    supervisor_node,
+    router_node,
     tray_node,
 )
 from agent.pipeline import structure_prescription
@@ -103,7 +103,7 @@ def state_with(order=None, **extra):
     return {**first_state("P0001"), "order": order, **extra}
 
 
-# ------------------------------------------------------------ 슈퍼바이저: 사진 종류로 흐름 정하기
+# ------------------------------------------------------------ 라우터: 사진 종류로 흐름 정하기
 
 
 # ------------------------------------------------------------ 구조화
@@ -702,32 +702,32 @@ def test_plan_does_not_change_the_state_it_was_given():
     assert state == before
 
 
-# ------------------------------------------------------------ 슈퍼바이저 (v0.8: 처방전 / 트레이)
+# ------------------------------------------------------------ 라우터 (v0.8: 처방전 / 트레이)
 
 
-def test_supervisor_sends_a_prescription_photo_to_the_prescription_flow():
-    got = supervisor_node(first_state("P1", load("cv_a1", "rx_001")), deps())
+def test_router_sends_a_prescription_photo_to_the_prescription_flow():
+    got = router_node(first_state("P1", load("cv_a1", "rx_001")), deps())
     assert (got["route"], got["flow"]) == (["prescription"], "prescription") and "status" not in got
 
 
-def test_supervisor_reads_a_prescription_from_the_ocr_when_no_kind_is_given():
-    got = supervisor_node(first_state("P1", load("cv_a1", "rx_001"), photo_kind=None), deps())
+def test_router_reads_a_prescription_from_the_ocr_when_no_kind_is_given():
+    got = router_node(first_state("P1", load("cv_a1", "rx_001"), photo_kind=None), deps())
     assert got["route"] == ["prescription"]
 
 
-def test_supervisor_fills_the_prescription_id_when_the_web_left_it_out():
+def test_router_fills_the_prescription_id_when_the_web_left_it_out():
     state = {**first_state("P1", load("cv_a1", "rx_001")), "prescription_id": None}
-    assert supervisor_node(state, deps())["prescription_id"] == "P1"
+    assert router_node(state, deps())["prescription_id"] == "P1"
 
 
-def test_supervisor_ends_with_noted_and_a_note_when_nothing_can_run():
-    got = supervisor_node(first_state("P1", None, photo_kind=None), deps())
+def test_router_ends_with_noted_and_a_note_when_nothing_can_run():
+    got = router_node(first_state("P1", None, photo_kind=None), deps())
     assert got["route"] == [] and got["status"] == "noted" and got["notes"] == [got["notice"]]
 
 
-def test_supervisor_keeps_the_status_of_an_open_prescription_when_a_second_prescription_photo_comes():
+def test_router_keeps_the_status_of_an_open_prescription_when_a_second_prescription_photo_comes():
     state = {**checked("rx_001"), "status": "planned"}
-    got = supervisor_node({**state, "photo_kind": "prescription"}, deps())
+    got = router_node({**state, "photo_kind": "prescription"}, deps())
     assert got["route"] == [] and got["status"] == "planned" and "새 처방" in got["notice"]
 
 
@@ -735,7 +735,7 @@ def test_supervisor_keeps_the_status_of_an_open_prescription_when_a_second_presc
 
 
 NODE_FUNCTIONS = [
-    supervisor_node, structure_node, match_node, risk_node, plan_node, approve_node, tray_node,
+    router_node, structure_node, match_node, risk_node, plan_node, approve_node, tray_node,
 ]
 
 
@@ -760,7 +760,7 @@ def test_the_tools_cannot_be_swapped_while_the_graph_runs():
 
 def test_a_sample_goes_through_the_nodes_in_order_to_the_plan():
     state = first_state("P0001", load("rx8_a1", "rx8_01"))
-    for node in (supervisor_node, structure_node, match_node, risk_node, plan_node):
+    for node in (router_node, structure_node, match_node, risk_node, plan_node):
         state = merged(state, node(state, deps()))
     assert (state["flow"], state["status"], state["error_code"], state["errors"]) == ("prescription", "checked", None, [])
     shown = state["plan"]

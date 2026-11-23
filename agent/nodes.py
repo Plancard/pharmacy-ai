@@ -3,7 +3,7 @@
 노드는 상태를 받아 바꿀 칸만 dict로 돌려준다. LangGraph 없이도 함수로 불러 시험할 수 있다.
 실제 일은 agent/ 의 다른 파일이 하고, 노드는 상태에서 꺼내 넘기고 결과를 다시 담기만 한다.
 
-    supervisor     사진 한 장의 흐름을 정한다 (supervisor.py의 규칙: 처방전 / 트레이). 메시지 하나에 한 번만 돈다
+    router     사진 한 장의 흐름을 정한다 (router.py의 규칙: 처방전 / 트레이). 메시지 하나에 한 번만 돈다
     structure      OCR -> 조제지시서 (규칙 경로 -> 실패하면 LLM 경로)
     match          약품 -> 품목기준코드 (약품 사전 -> 사전에 없으면 식약처 의약품 API), 약사 확인 표시.
                    deps.tools(MCP 클라이언트)가 있으면 MCP 도구 match_drug로 부른다 (12단계)
@@ -49,7 +49,7 @@ from agent.rag import RagIndex
 from agent.dur import DurLookup, find_all
 from agent.risk import LEVEL_LABELS, apply_report, requires_confirmation
 from agent.schema import DispensingOrder, Inspection, Plan
-from agent.supervisor import plan_message
+from agent.router import plan_message
 
 StructureFn = Callable[[str, dict[str, Any] | None], DispensingOrder]   # OCR가 없으면(None) 구조화는 E_OCR_EMPTY로 실패한다
 AskFn = Callable[[dict[str, Any]], Any]     # 멈추고 약사에게 묻는다: 보여 줄 내용 -> 약사 응답 (실제로는 LangGraph의 interrupt)
@@ -96,10 +96,10 @@ def _order_dict(order: DispensingOrder) -> dict[str, Any]:
     return order.model_dump(mode="json")
 
 
-# ------------------------------------------------------------ 슈퍼바이저 (규칙)
+# ------------------------------------------------------------ 라우터 (규칙)
 
 
-def supervisor_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
+def router_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     """사진 한 장의 흐름을 정한다. 그래프에서 이 노드로 돌아오는 화살표는 없으므로 메시지 하나에 한 번만 돈다.
 
     실행할 흐름이 없으면(사진 종류 없음 · 이미 처방전이 있는 처방에 또 온 처방전 등) 안내만 남기고 noted로 끝난다.

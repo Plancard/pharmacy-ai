@@ -1,7 +1,7 @@
-"""슈퍼바이저의 계획 (agent/supervisor.py) — 사진 한 장의 흐름 (명세서 v0.8: 처방전 / 트레이). 그래프 없이 함수로 시험한다."""
+"""라우터의 계획 (agent/router.py) — 사진 한 장의 흐름 (명세서 v0.8: 처방전 / 트레이). 그래프 없이 함수로 시험한다."""
 import pytest
 
-from agent.supervisor import (
+from agent.router import (
     FLOW_ORDER,
     HAS_ORDER_NOTICE,
     NO_KIND_NOTICE,

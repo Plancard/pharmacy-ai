@@ -1,4 +1,4 @@
-"""그래프 두 장 (agent/graph.py) — 상위 그래프(슈퍼바이저의 규칙 분기)와 처방 서브그래프(구조화 → 매칭 → 위험 신호 대조 → 승인 대기 → 조제 계획).
+"""그래프 두 장 (agent/graph.py) — 상위 그래프(라우터의 규칙 분기)와 처방 서브그래프(구조화 → 매칭 → 위험 신호 대조 → 승인 대기 → 조제 계획).
 
 시험은 세 겹이다.
 1. 설계표(PRESCRIPTION_CHART · TOP_CHART)만 보는 시험. LangGraph가 필요 없다.
@@ -32,7 +32,7 @@ from agent.graph import (
     _subgraph_step,
     after_approve,
     after_structure,
-    after_supervisor,
+    after_router,
     build_graph,
     build_prescription_graph,
     resume_run,
@@ -131,7 +131,7 @@ def without_the_ways_back_through_the_approval(chart):
     return nxt
 
 
-def test_the_only_ways_back_go_through_the_approval_so_the_supervisor_runs_once_per_message(chart):
+def test_the_only_ways_back_go_through_the_approval_so_the_router_runs_once_per_message(chart):
     nxt = without_the_ways_back_through_the_approval(chart)
     assert not any(chart.entry in targets for targets in chart.successors().values())   # 시작 노드로 돌아오는 화살표가 없다
 
@@ -160,12 +160,12 @@ def test_every_node_function_belongs_to_one_graph_and_the_subgraph_node_has_none
     assert SUBGRAPH_NODE in TOP_CHART.nodes and SUBGRAPH_NODE not in STEPS
 
 
-def test_the_top_graph_starts_at_the_supervisor_and_the_subgraph_at_structure():
-    assert (TOP_CHART.entry, PRESCRIPTION_CHART.entry) == ("supervisor", "structure")
+def test_the_top_graph_starts_at_the_router_and_the_subgraph_at_structure():
+    assert (TOP_CHART.entry, PRESCRIPTION_CHART.entry) == ("router", "structure")
 
 
-def test_the_supervisor_can_start_any_flow_and_the_flows_only_go_forward():
-    from agent.supervisor import FLOW_ORDER
+def test_the_router_can_start_any_flow_and_the_flows_only_go_forward():
+    from agent.router import FLOW_ORDER
 
     _, targets = TOP_CHART.branches[TOP_CHART.entry]
     assert set(targets) - {"end"} == set(FLOWS) == set(FLOW_ORDER)
@@ -177,7 +177,7 @@ def test_the_supervisor_can_start_any_flow_and_the_flows_only_go_forward():
     _, after_review = TOP_CHART.branches["tray_review"]               # 검수 확인 뒤에는 트레이 다음 흐름으로만
     assert set(after_review) == {*FLOW_ORDER[FLOW_ORDER.index("tray") + 1:], "end"}
     assert [n for n, targets in TOP_CHART.successors().items() if "tray_review" in targets] == ["tray"]
-    assert TOP_CHART.nodes == ("supervisor", "prescription", "tray", "tray_review")   # v0.8: 처방 · 트레이 흐름만
+    assert TOP_CHART.nodes == ("router", "prescription", "tray", "tray_review")   # v0.8: 처방 · 트레이 흐름만
 
 
 def test_the_prescription_flow_is_a_subgraph_that_goes_structure_match_risk_plan_approve():
@@ -218,9 +218,9 @@ def test_the_risk_check_sits_between_matching_and_approval():
     ([], "end"), (None, "end"), ("prescription", "end"), (["unknown"], "end"),   # 모르는 값은 건너뛴다
     (["consult"], "end"), (["recheck"], "end"), (["ask_type"], "end"),  # v0.8에서 뺀 흐름은 없다
 ])
-def test_after_the_supervisor_goes_to_the_first_flow_of_the_route(route, step):
-    choose, targets = TOP_CHART.branches["supervisor"]
-    assert after_supervisor({"route": route}) == choose({"route": route}) == step
+def test_after_the_router_goes_to_the_first_flow_of_the_route(route, step):
+    choose, targets = TOP_CHART.branches["router"]
+    assert after_router({"route": route}) == choose({"route": route}) == step
     assert step in targets
 
 
@@ -234,8 +234,8 @@ def test_each_flow_goes_to_the_next_flow_of_the_route(after, route, step):
     assert choose({"route": route}) == step and step in targets
 
 
-def test_after_the_supervisor_without_a_route_ends():
-    assert after_supervisor({}) == "end"
+def test_after_the_router_without_a_route_ends():
+    assert after_router({}) == "end"
 
 
 @pytest.mark.parametrize("state, step", [
@@ -319,7 +319,7 @@ def approve(compiled, prescription_id, state):
 def test_a_sample_prescription_stops_at_the_approval(backend, calls, sample_id):
     compiled = make()
     state = send(compiled, f"P-{sample_id}", load("cv_a1", sample_id))
-    assert calls == ["supervisor", "structure", "match", "risk", "make_plan", "approve"]
+    assert calls == ["router", "structure", "match", "risk", "make_plan", "approve"]
     shown = paused(state)
     assert shown["hitl_point"] == "rx_approval"
     order = DispensingOrder.model_validate(shown["order"])
@@ -375,7 +375,7 @@ def test_a_structure_failure_ends_the_run_before_matching(backend, calls, code):
         raise StructureError("자동 구조화에 실패했습니다.", code=code)
 
     final = send(make(structure=fails), "P0001", EMPTY_OCR)
-    assert calls == ["supervisor", "structure"] and paused(final) is None
+    assert calls == ["router", "structure"] and paused(final) is None
     assert (final["status"], final["order"], final["error_code"], final["notice"]) == ("failed", None, code, "자동 구조화에 실패했습니다.")
     assert final["errors"] == [f"[structure] {code} 자동 구조화에 실패했습니다."]
 
@@ -391,7 +391,7 @@ def test_the_dictionary_that_is_given_is_the_one_used(backend, builder, run):
 
 def test_an_ocr_without_text_fails_with_the_empty_ocr_code(backend, calls):
     final = send(make(), "P0001", EMPTY_OCR)
-    assert calls == ["supervisor", "structure"]
+    assert calls == ["router", "structure"]
     assert final["status"] == "failed" and final["error_code"] == E_OCR_EMPTY and final["flow"] == "prescription"
 
 
@@ -556,11 +556,11 @@ def test_the_subgraph_alone_gives_the_same_plan_as_the_top_graph(backend, names)
     assert finding["type"] == "ingredient_dup" and finding["level"] == "warning"
 
 
-def test_the_subgraph_alone_does_not_pass_the_supervisor(backend, calls):
+def test_the_subgraph_alone_does_not_pass_the_router(backend, calls):
     state = run_prescription(make_sub(), "P0001", load("cv_a1", "rx_004"))
     assert calls == ["structure", "match", "risk", "make_plan", "approve"]
     assert paused(state)["hitl_point"] == "rx_approval"
-    assert state["flow"] is None                                        # 흐름을 정하는 일은 슈퍼바이저의 몫이다
+    assert state["flow"] is None                                        # 흐름을 정하는 일은 라우터의 몫이다
 
 
 def test_the_subgraph_alone_stops_at_a_structure_failure_too(backend, calls):
@@ -583,7 +583,7 @@ def test_errors_that_were_already_in_the_state_are_kept_and_not_repeated(backend
 
 ROUTES = [
     # photo_kind, ocr, 지난 노드, 흐름, 상태
-    ("tray", None, ["supervisor", "tray"], "tray", "noted"),         # 조제 계획이 없으면 검수하지 않고 안내만 (14단계)
+    ("tray", None, ["router", "tray"], "tray", "noted"),         # 조제 계획이 없으면 검수하지 않고 안내만 (14단계)
 ]
 NOT_RUN = [                                                          # v0.8: 흐름을 돌리지 않고 안내만
     (None, None, "사진 종류 정보가 없습니다."),
@@ -594,7 +594,7 @@ NOT_RUN = [                                                          # v0.8: 흐
 
 
 @pytest.mark.parametrize("photo_kind, ocr, path, flow, status", ROUTES)
-def test_the_supervisor_sends_each_kind_of_photo_to_its_flow(backend, calls, photo_kind, ocr, path, flow, status):
+def test_the_router_sends_each_kind_of_photo_to_its_flow(backend, calls, photo_kind, ocr, path, flow, status):
     final = send(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
     assert calls == path
     assert (final["flow"], final["status"], final["route"]) == (flow, status, [flow])
@@ -604,22 +604,22 @@ def test_the_supervisor_sends_each_kind_of_photo_to_its_flow(backend, calls, pho
 @pytest.mark.parametrize("photo_kind, ocr, notice", NOT_RUN)
 def test_photos_out_of_scope_only_leave_a_notice(backend, calls, photo_kind, ocr, notice):
     final = send(make(structure=lambda pid, o: pytest.fail("처방 구조화가 불리면 안 됩니다")), "P0001", ocr, photo_kind)
-    assert calls == ["supervisor"]
+    assert calls == ["router"]
     assert (final["flow"], final["status"], final["route"]) == (None, "noted", [])
     assert notice in final["notice"] and final["notes"] == [final["notice"]] and paused(final) is None
 
 
 @pytest.mark.parametrize("photo_kind, ocr", [("prescription", load("cv_a1", "rx_001")), ("med_bag", None), ("tray", None), (None, None)])
-def test_the_supervisor_runs_once_per_message(backend, calls, photo_kind, ocr):
+def test_the_router_runs_once_per_message(backend, calls, photo_kind, ocr):
     send(make(), "P0001", ocr, photo_kind)
-    assert calls.count("supervisor") == 1 and calls[0] == "supervisor"
+    assert calls.count("router") == 1 and calls[0] == "router"
 
 
-def test_the_supervisor_does_not_run_again_when_the_approval_resumes(backend, calls):
+def test_the_router_does_not_run_again_when_the_approval_resumes(backend, calls):
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정"))
     state = send(compiled, "P0001", load("cv_a1", "rx_001"))
     approve(compiled, "P0001", state)
-    assert calls.count("supervisor") == 1
+    assert calls.count("router") == 1
 
 
 def test_run_message_is_the_same_as_invoking_with_the_first_state_and_the_thread(backend):
@@ -796,7 +796,7 @@ def test_the_subgraph_inside_the_top_graph_has_no_checkpointer_of_its_own(monkey
     monkeypatch.setattr(graph, "_compile", spy)
     saver = memory_checkpointer()
     build_graph(dictionary=DICT, structure=real_structure, api=None, checkpointer=saver)
-    assert seen == [("structure", None), ("supervisor", saver)]
+    assert seen == [("structure", None), ("router", saver)]
 
 
 def lg(target):

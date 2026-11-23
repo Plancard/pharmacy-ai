@@ -93,8 +93,8 @@ def test_the_values_the_state_can_take():
     )
 
 
-def test_every_flow_has_a_place_in_the_order_of_the_supervisor():
-    from agent.supervisor import FLOW_ORDER
+def test_every_flow_has_a_place_in_the_order_of_the_router():
+    from agent.router import FLOW_ORDER
 
     assert sorted(FLOW_ORDER) == sorted(FLOWS)
 
