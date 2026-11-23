@@ -375,6 +375,8 @@
         title: onSelect ? "누르면 원본에서 위치를 표시합니다" : null },
         h("td", {}, h("div", {}, it.name),
           h("div", { class: "muted mono" }, it.item_code || "품목 없음"),
+          // 약을 사전에서 정해 표준 이름으로 바꾼 줄: 처방전에서 읽은 글자도 보인다 (Agent printed_name, 11/23 [N])
+          it.printed_name ? h("div", { class: "muted printed-name" }, `처방전 표기: ${it.printed_name}`) : null,
           changedSet.has(idx) ? h("div", {}, h("span", { class: "chip caution" }, "수정 후 다시 검수")) : null,
           ...(it.check_reasons || []).map((r) => h("div", { class: "reason" }, r))),
         h("td", { class: "num" }, it.count_per_dose),

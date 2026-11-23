@@ -27,7 +27,8 @@ def row(n=1, **kw):
 
 def order():
     return {"prescription_id": str(RX_ID), "warnings": ["타이레놀정500mg: 복용 시점이 처방전에 없어 하루 3회 기준으로 배정했습니다."],
-            "items": [{"item_code": TYL, "name": "타이레놀정500mg", "count_per_dose": 1, "times": ["morning", "evening"],
+            "items": [{"item_code": TYL, "name": "타이레놀정500mg", "printed_name": "타이레놀정 50Orng", "count_per_dose": 1,
+                       "times": ["morning", "evening"],
                        "days": 3, "needs_pharmacist_check": True, "check_reasons": ["1회량 칸 OCR 신뢰도 낮음"]},
                       {"item_code": GEB, "name": "게보린정", "count_per_dose": 1, "times": ["noon"], "days": 3}],
             "risk_check": {"scope": "rx_only", "level": "warning", "findings": [
@@ -143,6 +144,8 @@ def test_detail_shows_every_part_of_the_record(client, db_history):
     # 최종 조제지시서 (복용 시점 문구 · 확인 이유 · 경고)
     assert "타이레놀정500mg" in html and "아침 · 저녁" in html and "1회량 칸 OCR 신뢰도 낮음" in html
     assert "복용 시점이 처방전에 없어" in html
+    assert "처방전 표기: 타이레놀정 50Orng" in html                    # 표준 이름으로 바꾼 줄은 원래 글자도 (Agent printed_name)
+    assert html.count("처방전 표기") == 1                               # 이름이 같았던 줄(게보린)에는 없다
     # 위험 단계와 대조 근거 (근거가 없으면 '근거 없음')
     assert "아세트아미노펜 성분 중복" in html and "타이레놀정 복약 정보" in html and "e약은요" in html
     assert "타이레놀정500mg, 게보린정" in html and "근거 없음" in html

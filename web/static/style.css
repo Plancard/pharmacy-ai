@@ -176,3 +176,4 @@ button.secondary { background: var(--card); color: var(--ink); border: 1px solid
 .manual-inspection { border: 1px dashed var(--line); border-radius: 6px; padding: 8px 12px; display: grid; gap: 6px; }
 .manual-inspection summary { cursor: pointer; color: var(--warn); }
 .manual-inspection p { margin: 0; }
+.printed-name { font-size: 12px; }
