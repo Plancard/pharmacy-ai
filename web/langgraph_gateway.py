@@ -97,8 +97,11 @@ def real_inspect(image_id: str, plan: dict[str, Any]) -> dict[str, Any]:
     (웹이 검수 결과를 inspections에 남길 때 이 ID로 사진과 잇는다). 처음 부를 때 모델 두 개를 읽어 몇 초 걸린다.
     """
     from cv.tray_inspect import inspect_tray
+    from web import storage
 
-    return inspect_tray(tray_path(image_id), plan, image_id=image_id)
+    path = tray_path(image_id)
+    # 결과 오버레이 그림(11/23, 기능분석서 [K])은 사진 옆 파생 파일. 이미지 API ?view=overlay로 보인다
+    return inspect_tray(path, plan, image_id=image_id, overlay_path=storage.overlay_path(path))
 
 
 class LangGraphGateway:

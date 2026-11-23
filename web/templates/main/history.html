@@ -1,22 +1,58 @@
 {% extends "base.html" %}
 {% block title %}조제 이력 · 조제 보조{% endblock %}
 {% block content %}
-<section class="card">
+<section class="card history">
   <h2>조제 이력</h2>
+  {# F-WEB-13 ①: 기간 · 위험 단계 · 검수 결과로 거르기 (이력에는 완료된 처방만 있다) #}
+  <form method="get" action="{{ url_for('main.history') }}" class="filters">
+    <label>기간 <input type="date" name="from" value="{{ f['from'] }}" aria-label="시작일"></label>
+    <span aria-hidden="true">~</span>
+    <input type="date" name="to" value="{{ f['to'] }}" aria-label="종료일">
+    <label>위험 단계
+      <select name="risk">
+        <option value="">전체</option>
+        {% for k, v in labels.risk.items() %}<option value="{{ k }}" {% if f.risk == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>검수 결과
+      <select name="review">
+        <option value="">전체</option>
+        {% for k, v in labels.review.items() %}<option value="{{ k }}" {% if f.review == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">조회</button>
+    {% if filtered %}<a href="{{ url_for('main.history') }}">조건 지우기</a>{% endif %}
+  </form>
+
   {% if records %}
-  <table>
-    <thead><tr><th>처방 번호</th><th>완료 시각</th><th>위험 단계</th><th>승인 약사</th></tr></thead>
+  <p class="muted">{{ total }}건{% if pages > 1 %} · {{ f.page }}/{{ pages }}쪽{% endif %}</p>
+  <div class="table-wrap">
+  <table class="items">
+    <thead><tr><th>처방 번호</th><th>접수 시각</th><th>완료 시각</th><th>위험 단계</th><th>검수 결과</th><th>완료 약사</th></tr></thead>
     <tbody>
       {% for r in records %}
+      {% set level = r.risk_level or 'none' %}
       <tr>
-        <td>{{ r.display_no }}</td>
+        <td><a href="{{ url_for('main.history_detail', rx_id=r.id) }}"><strong>{{ r.display_no }}</strong></a></td>
+        <td>{{ r.created_at | kst }}</td>
         <td>{{ r.completed_at | kst }}</td>
-        <td>{{ r.risk_level or '-' }}</td>
+        <td><span class="chip {{ level }}">{{ labels.risk[level] }}</span></td>
+        <td>{{ labels.review['checked' if r.hitl_required else 'auto'] }}{% if r.attempts and r.attempts > 1 %} <span class="muted">(촬영 {{ r.attempts }}회)</span>{% endif %}</td>
         <td>{{ r.username }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
+  {% if pages > 1 %}
+  <nav class="pager" aria-label="쪽 이동">
+    {% if f.page > 1 %}<a href="{{ url_for('main.history', page=f.page - 1, **query) }}">← 이전</a>{% endif %}
+    <span>{{ f.page }} / {{ pages }}</span>
+    {% if f.page < pages %}<a href="{{ url_for('main.history', page=f.page + 1, **query) }}">다음 →</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% elif filtered %}
+    <p class="muted">조건에 맞는 조제 기록이 없습니다.</p>
   {% else %}
     <p class="muted">저장된 조제 기록이 없습니다.</p>
   {% endif %}

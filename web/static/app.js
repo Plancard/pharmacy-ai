@@ -621,7 +621,14 @@
   function trayLayout(rx, a3, names, extra) {
     const detail = h("div", { class: "cell-detail", "aria-live": "polite" });
     const url = rx.card.tray_image_url;
+    // 검수 결과 그림(보정한 트레이 위 칸 판정 색·검출 박스, 11/23 [K])이 있으면 그것을 보이고 원본은 링크로 둔다
+    const overlay = rx.card.tray_overlay_url;
     return h("div", { class: "approval-grid" },
+      overlay ? h("figure", { class: "rx-image" },
+        h("a", { href: overlay, target: "_blank", rel: "noopener", class: "img-wrap" },
+          h("img", { src: overlay, alt: `처방 ${rx.display_no} 트레이 검수 결과 그림` })),
+        h("figcaption", { class: "muted" }, "검수 결과: 빨강 불일치 · 주황 확인 필요 · 초록 일치 (누르면 크게 보기) · ",
+          h("a", { href: url, target: "_blank", rel: "noopener" }, "원본 사진"))) :
       url ? h("figure", { class: "rx-image" },
         h("a", { href: url, target: "_blank", rel: "noopener", class: "img-wrap" },
           h("img", { src: url, alt: `처방 ${rx.display_no} 트레이 사진` })),

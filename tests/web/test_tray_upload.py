@@ -87,6 +87,41 @@ def test_tray_not_found_goes_back_to_waiting_tray_and_a_retake_works(client, fak
     assert d["status"] == "done" and len(fake_rx.inspection_rows) == 1
 
 
+def tray_file(fake_rx, tmp_path, image_id):
+    return tmp_path / fake_rx.images[uuid.UUID(image_id)]["storage_key"]
+
+
+def test_overlay_url_only_when_the_overlay_file_exists(client, fake_rx, monkeypatch, tmp_path):
+    """검수 결과 그림(11/23 [K]): 트레이 사진 옆 <사진>.overlay.jpg가 있을 때만 주소를 주고, 없으면 원본으로 대신하지 않는다."""
+    rx_id = waiting_tray(client)
+    monkeypatch.setenv("CV_STUB_SCENARIO", "mismatch")
+    image_id = tray(client, rx_id).get_json()["image_id"]
+
+    card = detail(client, rx_id)["card"]                                # 가짜 CV는 그림을 만들지 않는다
+    assert card["tray_overlay_url"] is None
+    assert client.get(f"{card['tray_image_url']}?view=overlay").status_code == 404
+
+    overlay = tray_file(fake_rx, tmp_path, image_id).with_name(tray_file(fake_rx, tmp_path, image_id).name + ".overlay.jpg")
+    overlay.write_bytes(JPG + b"overlay")
+    card = detail(client, rx_id)["card"]
+    assert card["tray_overlay_url"] == f"{card['tray_image_url']}?view=overlay"
+    assert client.get(card["tray_overlay_url"]).data == JPG + b"overlay"
+    assert client.get(card["tray_image_url"]).data == JPG                # 원본은 그대로
+
+    assert inspect_reply(client, rx_id, action="confirm").status_code == 202
+    d = detail(client, rx_id)                                            # 완료 카드도 같은 그림
+    assert d["status"] == "done" and d["card"]["tray_overlay_url"] == card["tray_overlay_url"]
+
+
+def test_overlay_of_other_pharmacy_is_404(client, fake_rx, monkeypatch, tmp_path):
+    rx_id = waiting_tray(client)
+    image_id = tray(client, rx_id).get_json()["image_id"]
+    f = tray_file(fake_rx, tmp_path, image_id)
+    f.with_name(f.name + ".overlay.jpg").write_bytes(JPG)
+    fake_rx.rows[uuid.UUID(rx_id)]["pharmacy_id"] = 2
+    assert client.get(f"/api/prescriptions/{rx_id}/images/{image_id}?view=overlay").status_code == 404
+
+
 def test_waiting_tray_card_has_no_retake_after_approval(client):
     rx_id = waiting_tray(client)
     assert detail(client, rx_id)["card"]["retake"] is None
@@ -349,8 +384,9 @@ def test_real_cv_gets_the_saved_tray_file_and_the_web_image_id(backend, monkeypa
 
     seen = []
 
-    def fake_inspect_tray(path, plan, *, image_id=None):
+    def fake_inspect_tray(path, plan, *, image_id=None, overlay_path=None):
         seen.append((Path(path), image_id))
+        assert Path(overlay_path) == Path(path).with_name(Path(path).name + ".overlay.jpg")   # 결과 그림은 사진 옆 (11/23)
         return {**stub.inspect(path, plan, scenario="mismatch"), "image_id": image_id}
 
     monkeypatch.setattr("cv.tray_inspect.inspect_tray", fake_inspect_tray)

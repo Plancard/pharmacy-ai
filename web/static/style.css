@@ -162,3 +162,12 @@ table.tray-grid td { padding: 3px; border: 0; }
 .cell-detail dt { color: var(--muted); }
 .cell-detail dd { margin: 0; }
 button.secondary { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+
+/* 조제 이력 (F-WEB-13) */
+.filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+.filters label { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+.filters input, .filters select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.pager { display: flex; gap: 16px; justify-content: center; align-items: center; margin-top: 12px; }
+.history-detail { display: grid; gap: 12px; }
+.history-detail h3 { margin: 12px 0 0; font-size: 16px; }
+.history-detail .evidence { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }

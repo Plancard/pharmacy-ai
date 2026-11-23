@@ -253,3 +253,67 @@ def respond(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, hitl_point: str, a
             (rx_id, hitl_point, action, user_id, _jsonb(before), _jsonb(after), reason, warning_ack),
         )
     return True
+
+
+# ------------------------------------------------------------ 조제 이력 (F-WEB-13, REQ-WEB-10, 11/23)
+HISTORY_PAGE_SIZE = 20
+REVIEW_FILTERS = ("auto", "checked")      # 검수: 전 칸 일치로 바로 완료 · 불일치/확인 필요를 약사가 확인하고 완료
+
+_HISTORY_FROM = (
+    "FROM dispense_records d "
+    "JOIN prescriptions p ON p.id = d.prescription_id "
+    "JOIN users u ON u.id = d.user_id "
+    "WHERE p.pharmacy_id = %s"
+)
+
+
+def dispense_list(pharmacy_id: int, *, since=None, until=None, risk: str | None = None,
+                  review: str | None = None, page: int = 1) -> tuple[list[dict], int]:
+    """조제 기록 목록(최신순, 20건씩)과 조건에 맞는 전체 건수. 이력에는 완료(done)된 처방만 있다 (F-5).
+
+    since · until: 완료 시각의 범위 [since, until) — 화면 날짜를 화면 시간대 기준 시각으로 바꿔서 넘긴다.
+    risk: 최종 위험 단계(none · caution · warning · danger, 값이 없는 기록은 none으로 본다).
+    review: auto(전 칸 일치로 바로 완료) · checked(HITL ②에서 약사가 확인하고 완료). 최종 검수 결과의 hitl_required로 가른다.
+    """
+    where, params = [], [pharmacy_id]
+    if since is not None:
+        where.append("d.completed_at >= %s")
+        params.append(since)
+    if until is not None:
+        where.append("d.completed_at < %s")
+        params.append(until)
+    if risk in RISK_LEVELS:
+        where.append("COALESCE(d.risk_level, 'none') = %s")
+        params.append(risk)
+    if review in REVIEW_FILTERS:
+        where.append("COALESCE(d.inspection_json->'summary'->>'hitl_required', 'false') = %s")
+        params.append("true" if review == "checked" else "false")
+    cond = "".join(f" AND {w}" for w in where)
+    total = db.query_one(f"SELECT count(*) AS n {_HISTORY_FROM}{cond}", tuple(params))["n"]
+    rows = db.query_all(
+        "SELECT p.id, p.display_no, p.created_at, d.risk_level, d.completed_at, u.username, "
+        "COALESCE(d.inspection_json->'summary'->>'hitl_required', 'false') = 'true' AS hitl_required, "
+        "(SELECT count(*) FROM inspections i WHERE i.prescription_id = p.id) AS attempts "
+        f"{_HISTORY_FROM}{cond} ORDER BY d.completed_at DESC, d.id DESC LIMIT %s OFFSET %s",
+        (*params, HISTORY_PAGE_SIZE, (max(page, 1) - 1) * HISTORY_PAGE_SIZE),
+    )
+    return rows, total
+
+
+def dispense_record(rx_id: uuid.UUID, pharmacy_id: int) -> dict | None:
+    """조제 기록 하나 (이력 상세). 다른 약국의 기록이거나 완료되지 않은 처방이면 None."""
+    return db.query_one(
+        "SELECT p.id, p.display_no, p.created_at, d.rx_json, d.plan_json, d.inspection_json, d.risk_level, "
+        f"d.completed_at, u.username {_HISTORY_FROM} AND d.prescription_id = %s",
+        (pharmacy_id, rx_id),
+    )
+
+
+def approval_log(rx_id: uuid.UUID) -> list[dict]:
+    """승인 이력(시간순, F-WEB-13 ②): 지점 · 응답 · 약사 · 경고 확인 · 사유."""
+    return db.query_all(
+        "SELECT a.hitl_point, a.action, a.reason, a.warning_ack, a.created_at, u.username "
+        "FROM approvals a JOIN users u ON u.id = a.user_id WHERE a.prescription_id = %s "
+        "ORDER BY a.created_at, a.id",
+        (rx_id,),
+    )

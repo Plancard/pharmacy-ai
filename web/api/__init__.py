@@ -2,7 +2,7 @@
 
     POST /api/prescriptions                       처방전 이미지 업로드 (multipart, 필드 image)
     GET  /api/prescriptions/<id>                  상태·카드 내용·타임라인 사건 (화면이 2초마다 다시 읽음)
-    GET  /api/prescriptions/<id>/images/<img_id>  원본 이미지
+    GET  /api/prescriptions/<id>/images/<img_id>  원본 이미지 (?view=rect 펴진 처방전, ?view=overlay 트레이 검수 결과 그림)
     POST /api/prescriptions/<id>/approve          HITL ① 조제지시서 승인
     POST /api/prescriptions/<id>/tray             트레이 사진 업로드 (multipart, 필드 image. 트레이 대기 처방에만)
     POST /api/prescriptions/<id>/inspection       HITL ② 검수 확인 {action: confirm | redo}
@@ -126,6 +126,17 @@ def _image_url(rx_id: str, image_id: Any) -> str | None:
     return f"/api/prescriptions/{rx_id}/images/{image_id}" if image_id else None
 
 
+def _overlay_url(rx_id: str, image_id: Any) -> str | None:
+    """트레이 검수 결과 그림(cv/pipeline.py, 기능분석서 [K])이 있으면 그 주소. 없으면(가짜 CV·뒤집힘·저장 실패) None."""
+    try:
+        key = rx.tray_image_key(uuid.UUID(str(image_id))) if image_id else None
+    except ValueError:
+        key = None
+    if key is None or not storage.overlay_path(storage.path_of(key)).is_file():
+        return None
+    return f"{_image_url(rx_id, image_id)}?view=overlay"
+
+
 def _timeline(row: dict, inspections: list[dict]) -> list[dict]:
     """처방 타임라인에 시각을 붙일 사건: 접수, 약사의 HITL 응답, 트레이 사진 업로드, 트레이 검수 결과. 오래된 것부터.
 
@@ -180,7 +191,8 @@ def detail(rx_id: str):
         elif pause is not None and pause.hitl_point == row["hitl_point"] == "inspection":
             # HITL ② 검수 결과 카드 (F-WEB-09): A.3 + 조제 계획 + 칸별 안내 + 트레이 사진
             a3 = pause.payload.get("inspection") or {}
-            body["card"] = {**pause.payload, "tray_image_url": _image_url(sid, a3.get("image_id"))}
+            body["card"] = {**pause.payload, "tray_image_url": _image_url(sid, a3.get("image_id")),
+                            "tray_overlay_url": _overlay_url(sid, a3.get("image_id"))}
     elif row["status"] == "waiting_tray":
         card: dict[str, Any] = {"order": gateway().approved_order(sid), "retake": None}
         err = gateway().tray_error(sid)
@@ -191,6 +203,7 @@ def detail(rx_id: str):
     elif row["status"] == "done" and inspections:
         last = inspections[-1]
         body["card"] = {"inspection": last["result_json"], "tray_image_url": _image_url(sid, last["image_id"]),
+                        "tray_overlay_url": _overlay_url(sid, last["image_id"]),
                         "order": gateway().approved_order(sid)}
     return jsonify(body)
 
@@ -204,10 +217,15 @@ def image(rx_id: str, image_id: str):
     from flask import request
 
     path = storage.path_of(row["storage_key"])
-    if request.args.get("view") == "rect":    # F-WEB-06: OCR 좌표 기준인 펴진 이미지. 없으면(가짜 연결부 등) 원본
+    view = request.args.get("view")
+    if view == "rect":    # F-WEB-06: OCR 좌표 기준인 펴진 이미지. 없으면(가짜 연결부 등) 원본
         rect = path.with_name(path.name + ".rect.jpg")
         if rect.is_file():
             path = rect
+    elif view == "overlay":   # F-WEB-09·13: 트레이 검수 결과 그림. 원본으로 대신하지 않는다 (판정 색이 없는 사진을 결과로 오인)
+        path = storage.overlay_path(path)
+        if not path.is_file():
+            abort(404)
     return send_file(path, max_age=3600)
 
 

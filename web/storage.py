@@ -39,3 +39,11 @@ def path_of(key: str) -> Path:
 
 def read(key: str) -> bytes:
     return path_of(key).read_bytes()
+
+
+def overlay_path(path: Path) -> Path:
+    """트레이 사진 파일 → 검수 결과 오버레이 그림 파일 (같은 폴더, 이름 뒤에 .overlay.jpg, cv/pipeline.py가 만든다).
+
+    처방전의 펴진 이미지(.rect.jpg)와 같은 파생 파일 방식이다. 검수 전이거나 뒤집힘 판정·저장 실패면 파일이 없다.
+    """
+    return path.with_name(path.name + ".overlay.jpg")

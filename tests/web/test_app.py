@@ -33,6 +33,8 @@ class FakeDB:
             return {"?column?": 1} if any(u["username"] == params[0] for u in self.users.values()) else None
         if "FROM pharmacies WHERE name" in sql:
             return next(({"id": k} for k, v in self.pharmacies.items() if v == params[0]), None)
+        if "count(*) AS n FROM dispense_records" in sql:   # 조제 이력 건수 (빈 이력)
+            return {"n": 0}
         if "SELECT 1 AS ok" in sql:
             if not self.up:
                 raise ConnectionError("db down")
