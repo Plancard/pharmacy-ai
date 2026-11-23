@@ -20,7 +20,12 @@ ERROR_CODES = {"E_OCR_EMPTY", "E_TRAY_NOT_FOUND", "E_CV_INFER", "E_PLAN_RANGE",
                "E_BARCODE_FAIL", "E_LLM", "E_EXT_API", "E_DB", "E_INTERRUPTED"}
 
 # 일시 오류: 같은 처방전 이미지로 처음부터 다시 시도할 수 있다 (11/17 회의 Q6 [재시도]). 그 밖의 실패는 다시 찍어 올려야 한다
-RETRY_CODES = {"E_LLM", "E_EXT_API", "E_INTERRUPTED"}
+# [다시 시도](같은 처방전 사진으로 새 처방): 일시 오류. E_CV_INFER(OCR 모델 추론 오류)는 11/23 추가 (6장: 재시도)
+RETRY_CODES = {"E_LLM", "E_EXT_API", "E_INTERRUPTED", "E_CV_INFER"}
+# [저장 다시 시도](같은 처방): 조제 기록 저장 실패. 검수까지 끝났으므로 처음부터 다시 하지 않는다 (6장: E_DB 재시도)
+SAVE_RETRY_CODES = {"E_DB"}
+# 트레이 대기에서 [육안 검수 후 수동 진행]을 열어 주는 오류: 검출 모델 오류 (6장). 트레이를 못 찾음은 다시 찍으면 된다
+MANUAL_TRAY_CODES = {"E_CV_INFER"}
 
 # 화면 안내 문구 (기능분석서 6장과 맞춘다)
 ERROR_MESSAGES = {
@@ -33,6 +38,11 @@ ERROR_MESSAGES = {
     "E_INTERRUPTED": "처리 중에 서버가 다시 시작되어 중단되었습니다. 처방전을 다시 올려 주세요.",
 }
 UNKNOWN_ERROR = "처리 중 알 수 없는 오류가 났습니다. 다시 올려 주세요."
+# 트레이 검수 단계에서는 같은 코드라도 할 수 있는 일이 달라 문구를 따로 둔다
+TRAY_ERROR_MESSAGES = {
+    "E_CV_INFER": "트레이 사진을 분석하는 중 오류가 났습니다. 다시 올려 주세요. 계속 실패하면 트레이를 육안으로 확인하고 "
+                  "사유를 적어 수동으로 진행할 수 있습니다.",
+}
 
 # 트레이 검수가 이 코드로 실패하면 처방을 실패로 두지 않고 트레이 대기로 돌려 다시 찍게 한다 (Agent도 planned에 머문다)
 TRAY_RETRY_CODES = {"E_TRAY_NOT_FOUND", "E_CV_INFER"}
@@ -80,6 +90,38 @@ def retry(row: dict, pharmacy_id: int, user_id: int) -> dict | None:
     if not path.is_file() or not rx.set_cancelled(row["id"]):
         return None
     return receive(pharmacy_id, user_id, path.read_bytes(), path.suffix)
+
+
+def retake(row: dict, pharmacy_id: int, user_id: int, data: bytes, ext: str) -> dict | None:
+    """실패한 처방을 새로 찍은 처방전 사진으로 다시 접수한다 (6장 재촬영: E_OCR_EMPTY 등). → 새 처방 행, 못 하면 None.
+
+    [다시 시도]와 같이 새 처방을 만들고 실패한 처방은 취소됨으로 남긴다. 취소가 먼저라 두 번 눌러도 새 처방은 하나다.
+    조제 기록 저장 실패(E_DB)는 검수까지 끝난 처방이라 여기로 오지 않는다 ([저장 다시 시도]).
+    """
+    if row["error_code"] in SAVE_RETRY_CODES or not rx.set_cancelled(row["id"]):
+        return None
+    return receive(pharmacy_id, user_id, data, ext)
+
+
+def retry_save(rx_id: uuid.UUID, pharmacy_id: int) -> bool:
+    """조제 기록 저장 실패(E_DB)한 처방의 저장만 다시 한다 (6장). 실패 → 처리 중 → (백그라운드) 완료 또는 다시 E_DB."""
+    if not rx.reopen_for_save(rx_id, pharmacy_id):
+        return False
+    jobs.submit(_finish, rx_id)
+    return True
+
+
+def finish_manual_inspection(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, reason: str) -> bool:
+    """육안 검수 후 수동 진행 (6장 E_CV_INFER). 트레이 대기에서 검출 모델 오류로 멈춘 처방만. 승인된 조제지시서 · 조제 계획으로
+    조제 기록을 남기고 완료한다 (검수 결과는 없음, 승인 기록에 'inspection · manual'과 사유)."""
+    sid = str(rx_id)
+    err = gateway().tray_error(sid) or {}
+    if err.get("code") not in MANUAL_TRAY_CODES:
+        return False
+    order, plan = gateway().approved_order(sid), gateway().approved_plan(sid)
+    if not (order and plan):
+        return False
+    return rx.finish_manual_inspection(rx_id, pharmacy_id, user_id, reason, order, plan)
 
 
 def receive_tray(rx_id: uuid.UUID, pharmacy_id: int, data: bytes, ext: str) -> uuid.UUID | None:

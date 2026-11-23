@@ -6,6 +6,10 @@
     POST /api/prescriptions/<id>/approve          HITL ① 조제지시서 승인
     POST /api/prescriptions/<id>/tray             트레이 사진 업로드 (multipart, 필드 image. 트레이 대기 처방에만)
     POST /api/prescriptions/<id>/inspection       HITL ② 검수 확인 {action: confirm | redo}
+    POST /api/prescriptions/<id>/retry            실패: 같은 처방전 사진으로 새 처방 (일시 오류)
+    POST /api/prescriptions/<id>/retake           실패: 새로 찍은 처방전 사진으로 새 처방 (multipart, 필드 image)
+    POST /api/prescriptions/<id>/save-retry       실패(E_DB): 조제 기록 저장만 다시
+    POST /api/prescriptions/<id>/manual-inspection  트레이 검출 모델 오류(E_CV_INFER): 육안 검수 후 수동 진행 {reason}
 
 로그인 안 됨은 401, 다른 약국의 처방은 404, 상태가 맞지 않으면 409로 답한다.
 """
@@ -179,6 +183,8 @@ def detail(rx_id: str):
     if row["status"] == "failed":
         body["error_message"] = workflow.ERROR_MESSAGES.get(row["error_code"], workflow.UNKNOWN_ERROR)
         body["retryable"] = row["error_code"] in workflow.RETRY_CODES and img is not None   # [재시도] (Q6)
+        body["save_retryable"] = row["error_code"] in workflow.SAVE_RETRY_CODES             # [저장 다시 시도] (6장)
+        body["retake_allowed"] = row["error_code"] not in workflow.SAVE_RETRY_CODES          # [다른 사진으로 다시 올리기]
         body["failed_lines"] = gateway().failed_lines(sid)   # 구조화 실패 때 처방전 위에 강조할 줄 {ocr_size, lines} (Q6)
     elif row["status"] == "waiting_approval":
         pause = gateway().pending(sid)
@@ -196,15 +202,20 @@ def detail(rx_id: str):
     elif row["status"] == "waiting_tray":
         card: dict[str, Any] = {"order": gateway().approved_order(sid), "retake": None}
         err = gateway().tray_error(sid)
-        if err:   # 트레이를 못 찾는 등으로 다시 찍어야 함
-            card["retake"] = {"code": err.get("code"),
-                              "message": workflow.ERROR_MESSAGES.get(err.get("code"), err.get("notice") or workflow.UNKNOWN_ERROR)}
+        if err:   # 트레이를 못 찾는 등으로 다시 찍어야 함. 검출 모델 오류면 육안 검수 후 수동 진행도 열어 준다 (6장)
+            code = err.get("code")
+            card["retake"] = {"code": code,
+                              "message": workflow.TRAY_ERROR_MESSAGES.get(code) or workflow.ERROR_MESSAGES.get(
+                                  code, err.get("notice") or workflow.UNKNOWN_ERROR),
+                              "manual_allowed": code in workflow.MANUAL_TRAY_CODES}
         body["card"] = card
     elif row["status"] == "done" and inspections:
         last = inspections[-1]
         body["card"] = {"inspection": last["result_json"], "tray_image_url": _image_url(sid, last["image_id"]),
                         "tray_overlay_url": _overlay_url(sid, last["image_id"]),
                         "order": gateway().approved_order(sid)}
+    elif row["status"] == "done":   # 육안 검수 후 수동 진행으로 끝난 처방 (검수 결과 없음, 6장)
+        body["card"] = {"inspection": None, "order": gateway().approved_order(sid)}
     return jsonify(body)
 
 
@@ -304,7 +315,7 @@ def cancel(rx_id: str):
 @bp.post("/prescriptions/<rx_id>/retry")
 @api_login_required
 def retry(rx_id: str):
-    """실패한 처방 다시 시도 (Q6). 일시 오류(E_LLM·E_EXT_API·E_INTERRUPTED)로 실패한 처방만. 같은 처방전 이미지로 새 처방을
+    """실패한 처방 다시 시도 (Q6). 일시 오류(E_LLM·E_EXT_API·E_INTERRUPTED·E_CV_INFER)로 실패한 처방만. 같은 처방전 이미지로 새 처방을
     만들어 처음부터 다시 돌리고, 실패한 처방은 취소됨으로 남긴다. 새 처방의 ID·번호를 202로 돌려준다.
     """
     row = _load(rx_id)
@@ -314,6 +325,56 @@ def retry(rx_id: str):
     if new is None:
         return _error(409, "이미 다시 시도했거나 처방전 사진을 찾을 수 없습니다. 화면을 새로고침해 주세요.")
     return jsonify(id=str(new["id"]), display_no=new["display_no"], status=new["status"]), 202
+
+
+@bp.post("/prescriptions/<rx_id>/retake")
+@api_login_required
+def retake(rx_id: str):
+    """실패한 처방을 새로 찍은 처방전 사진으로 다시 접수 (6장 재촬영). 실패한 처방은 취소됨으로 남고 새 처방 번호가 생긴다.
+    조제 기록 저장 실패(E_DB)는 여기서 받지 않는다 (검수까지 끝난 처방이라 [저장 다시 시도])."""
+    row = _load(rx_id)
+    if row["status"] != "failed" or row["error_code"] in workflow.SAVE_RETRY_CODES:
+        return _error(409, "다시 올릴 수 없는 처방입니다. 화면을 새로고침해 주세요.")
+    got = _read_image("처방전")
+    if not isinstance(got[0], bytes):
+        return got
+    data, ext = got
+    new = workflow.retake(row, g.user["pharmacy_id"], g.user["id"], data, ext)
+    if new is None:
+        return _error(409, "이미 다시 올렸거나 취소된 처방입니다. 화면을 새로고침해 주세요.")
+    return jsonify(id=str(new["id"]), display_no=new["display_no"], status=new["status"]), 202
+
+
+@bp.post("/prescriptions/<rx_id>/save-retry")
+@api_login_required
+def save_retry(rx_id: str):
+    """조제 기록 저장 실패(E_DB) 처방의 저장만 다시 한다 (6장). 결과는 상세 조회로 본다 (완료 또는 다시 E_DB)."""
+    row = _load(rx_id)
+    if not workflow.retry_save(row["id"], g.user["pharmacy_id"]):
+        return _error(409, "저장을 다시 시도할 수 없는 처방입니다. 화면을 새로고침해 주세요.")
+    return jsonify(id=str(row["id"]), status="processing"), 202
+
+
+MANUAL_REASON_MAX = 500
+
+
+@bp.post("/prescriptions/<rx_id>/manual-inspection")
+@api_login_required
+def manual_inspection(rx_id: str):
+    """육안 검수 후 수동 진행 (6장 E_CV_INFER). 트레이 검출 모델 오류로 트레이 대기에 멈춘 처방만, 사유 필수.
+    승인 기록에 'inspection · manual'과 사유를, 조제 기록에 검수 결과 없이 남기고 완료한다."""
+    row = _load(rx_id)
+    body = request.get_json(silent=True) or {}
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return _error(400, "육안으로 확인한 내용(사유)을 적어 주세요.")
+    reason = reason.strip()
+    if len(reason) > MANUAL_REASON_MAX:
+        return _error(400, f"사유는 {MANUAL_REASON_MAX}자까지 적을 수 있습니다.")
+    if row["status"] != "waiting_tray" or not workflow.finish_manual_inspection(
+            row["id"], g.user["pharmacy_id"], g.user["id"], reason):
+        return _error(409, "검출 모델 오류로 멈춘 처방에서만 수동으로 진행할 수 있습니다. 화면을 새로고침해 주세요.")
+    return jsonify(id=str(row["id"]), status="done")
 
 
 @bp.post("/prescriptions/<rx_id>/inspection")

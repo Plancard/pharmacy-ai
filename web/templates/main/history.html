@@ -37,7 +37,7 @@
         <td>{{ r.created_at | kst }}</td>
         <td>{{ r.completed_at | kst }}</td>
         <td><span class="chip {{ level }}">{{ labels.risk[level] }}</span></td>
-        <td>{{ labels.review['checked' if r.hitl_required else 'auto'] }}{% if r.attempts and r.attempts > 1 %} <span class="muted">(촬영 {{ r.attempts }}회)</span>{% endif %}</td>
+        <td>{{ labels.review['manual' if r.manual_inspection else ('checked' if r.hitl_required else 'auto')] }}{% if r.attempts and r.attempts > 1 %} <span class="muted">(촬영 {{ r.attempts }}회)</span>{% endif %}</td>
         <td>{{ r.username }}</td>
       </tr>
       {% endfor %}

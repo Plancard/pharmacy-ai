@@ -255,9 +255,48 @@ def respond(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, hitl_point: str, a
     return True
 
 
+# ------------------------------------------------------------ 오류 처리 (기능분석서 6장, REQ-NF-06, 11/23)
+def finish_manual_inspection(rx_id: uuid.UUID, pharmacy_id: int, user_id: int, reason: str,
+                             order: dict | None, plan: dict | None) -> bool:
+    """육안 검수 후 수동 진행: 트레이 대기 → 완료 + 승인 기록(inspection · manual · 사유) + 조제 기록(검수 결과 없음).
+
+    검출 모델 오류(E_CV_INFER)로 자동 검수를 못 한 처방에서 약사가 트레이를 직접 보고 끝낼 때 (6장).
+    한 트랜잭션이다. 트레이 대기가 아니면(이미 다른 요청이 처리 등) 아무것도 바꾸지 않고 False.
+    """
+    with db.transaction() as conn:
+        row = conn.execute(
+            "UPDATE prescriptions SET status = 'done', hitl_point = NULL "
+            "WHERE id = %s AND pharmacy_id = %s AND status = 'waiting_tray' RETURNING id",
+            (rx_id, pharmacy_id),
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute(
+            "INSERT INTO approvals (prescription_id, hitl_point, action, user_id, before_json, after_json, reason) "
+            "VALUES (%s, 'inspection', 'manual', %s, NULL, NULL, %s)",
+            (rx_id, user_id, reason),
+        )
+        conn.execute(
+            "INSERT INTO dispense_records (prescription_id, rx_json, plan_json, inspection_json, risk_level, user_id) "
+            "VALUES (%s, %s, %s, NULL, %s, %s)",
+            (rx_id, _jsonb(order), _jsonb(plan), risk_level_of(order), user_id),
+        )
+    return True
+
+
+def reopen_for_save(rx_id: uuid.UUID, pharmacy_id: int) -> bool:
+    """조제 기록 저장 실패(E_DB) → 처리 중. 저장을 다시 시도하기 전에 부른다 (두 번 눌러도 한 번만 True)."""
+    row = db.execute(
+        "UPDATE prescriptions SET status = 'processing', error_code = NULL "
+        "WHERE id = %s AND pharmacy_id = %s AND status = 'failed' AND error_code = 'E_DB' RETURNING id",
+        (rx_id, pharmacy_id),
+    )
+    return row is not None
+
+
 # ------------------------------------------------------------ 조제 이력 (F-WEB-13, REQ-WEB-10, 11/23)
 HISTORY_PAGE_SIZE = 20
-REVIEW_FILTERS = ("auto", "checked")      # 검수: 전 칸 일치로 바로 완료 · 불일치/확인 필요를 약사가 확인하고 완료
+REVIEW_FILTERS = ("auto", "checked", "manual")   # 검수: 전 칸 일치로 바로 완료 · 약사가 확인하고 완료 · 육안 검수(검수 결과 없음)
 
 _HISTORY_FROM = (
     "FROM dispense_records d "
@@ -273,7 +312,8 @@ def dispense_list(pharmacy_id: int, *, since=None, until=None, risk: str | None 
 
     since · until: 완료 시각의 범위 [since, until) — 화면 날짜를 화면 시간대 기준 시각으로 바꿔서 넘긴다.
     risk: 최종 위험 단계(none · caution · warning · danger, 값이 없는 기록은 none으로 본다).
-    review: auto(전 칸 일치로 바로 완료) · checked(HITL ②에서 약사가 확인하고 완료). 최종 검수 결과의 hitl_required로 가른다.
+    review: auto(전 칸 일치로 바로 완료) · checked(HITL ②에서 약사가 확인하고 완료) · manual(검출 모델 오류로 육안 검수 후
+    수동 진행, 검수 결과 없음). 최종 검수 결과의 hitl_required와 검수 결과 유무로 가른다.
     """
     where, params = [], [pharmacy_id]
     if since is not None:
@@ -285,14 +325,18 @@ def dispense_list(pharmacy_id: int, *, since=None, until=None, risk: str | None 
     if risk in RISK_LEVELS:
         where.append("COALESCE(d.risk_level, 'none') = %s")
         params.append(risk)
-    if review in REVIEW_FILTERS:
-        where.append("COALESCE(d.inspection_json->'summary'->>'hitl_required', 'false') = %s")
+    if review == "manual":
+        where.append("d.inspection_json IS NULL")
+    elif review in REVIEW_FILTERS:
+        where.append("d.inspection_json IS NOT NULL "
+                     "AND COALESCE(d.inspection_json->'summary'->>'hitl_required', 'false') = %s")
         params.append("true" if review == "checked" else "false")
     cond = "".join(f" AND {w}" for w in where)
     total = db.query_one(f"SELECT count(*) AS n {_HISTORY_FROM}{cond}", tuple(params))["n"]
     rows = db.query_all(
         "SELECT p.id, p.display_no, p.created_at, d.risk_level, d.completed_at, u.username, "
         "COALESCE(d.inspection_json->'summary'->>'hitl_required', 'false') = 'true' AS hitl_required, "
+        "d.inspection_json IS NULL AS manual_inspection, "
         "(SELECT count(*) FROM inspections i WHERE i.prescription_id = p.id) AS attempts "
         f"{_HISTORY_FROM}{cond} ORDER BY d.completed_at DESC, d.id DESC LIMIT %s OFFSET %s",
         (*params, HISTORY_PAGE_SIZE, (max(page, 1) - 1) * HISTORY_PAGE_SIZE),

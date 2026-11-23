@@ -78,6 +78,15 @@
 
   {# 검수 결과 그림과 칸별 판정 (최종 검수만, 촬영 횟수 함께) #}
   <h3>트레이 검수</h3>
+  {% if not a3 %}
+  {% set manual = approvals | selectattr('hitl_point', 'equalto', 'inspection') | selectattr('action', 'equalto', 'manual') | list | last %}
+  <div class="risk risk-warning">
+    <strong>{{ labels.review.manual }}</strong>
+    <p>검출 모델 오류로 자동 검수를 하지 못해 약사가 트레이를 육안으로 확인하고 완료했습니다. 검수 결과는 없습니다.</p>
+    {% if manual %}<p>확인 내용: {{ manual.reason }} <span class="muted">({{ manual.username }}, {{ manual.created_at | kst }})</span></p>{% endif %}
+    {% if tray_image_url %}<p><a href="{{ tray_image_url }}" target="_blank" rel="noopener">올린 트레이 사진</a></p>{% endif %}
+  </div>
+  {% else %}
   {% set s = a3.get('summary') or {} %}
   <p class="tray-summary">
     <span class="chip ok">일치 {{ s.get('ok', 0) }}</span>
@@ -130,6 +139,7 @@
       {% endif %}
     </div>
   </div>
+  {% endif %}
 
   {# 승인 이력 (시간순) #}
   <h3>승인 이력</h3>

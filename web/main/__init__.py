@@ -34,7 +34,7 @@ DAYS = (1, 2, 3)
 RISK = {"none": "해당 없음", "caution": "주의", "warning": "경고", "danger": "위험"}
 CELL = {"ok": "일치", "mismatch": "불일치", "need_review": "확인 필요"}
 CELL_REASON = {"boundary": "칸 경계에 걸침", "overlap": "알약 겹침", "rotated": "트레이가 뒤집혀 찍힘"}
-REVIEW = {"auto": "전 칸 일치", "checked": "약사 확인 후 완료"}
+REVIEW = {"auto": "전 칸 일치", "checked": "약사 확인 후 완료", "manual": "육안 검수(수동 진행)"}
 POINT = {"rx_approval": "① 조제지시서 승인", "inspection": "② 검수 확인"}
 ACTION = {"approve": "승인", "edit": "수정 후 다시 검수", "manual": "사유 입력 후 진행",
           "confirm": "확인 완료", "redo": "재조제"}
@@ -121,6 +121,9 @@ def history_detail(rx_id: str):
     grid = [(t, [cells.get((d, t)) for d in DAYS]) for t in TIME_ORDER]
     rx_img = rx.first_image(rid)
     tray_id = a3.get("image_id")
+    if not tray_id:   # 육안 검수로 끝난 기록은 검수 결과가 없다: 마지막으로 올린 트레이 사진을 보인다
+        trays = rx.tray_images(rid)
+        tray_id = str(trays[-1]["id"]) if trays else None
     return render_template(
         "main/history_detail.html", rec=rec, order=order, a3=a3, names=names, grid=grid, days=DAYS,
         risk=(order.get("risk_check") or {}), approvals=rx.approval_log(rid), attempts=len(rx.inspections(rid)),

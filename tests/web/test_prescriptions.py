@@ -131,6 +131,26 @@ class FakeRx:
     def inspections(self, rx_id):
         return [dict(i) for i in self.inspection_rows if i["rx"] == rx_id]
 
+    def finish_manual_inspection(self, rx_id, pharmacy_id, user_id, reason, order, plan):
+        r = self.rows.get(rx_id)
+        if not r or r["pharmacy_id"] != pharmacy_id or r["status"] != "waiting_tray":
+            return False
+        r.update(status="done", hitl_point=None)
+        self.approvals.append({"rx": rx_id, "hitl_point": "inspection", "action": "manual", "user_id": user_id,
+                               "before": None, "after": None, "reason": reason, "warning_ack": None,
+                               "created_at": datetime.now(timezone.utc)})
+        self.dispense_rows.append({"rx": rx_id, "order": order, "plan": plan, "inspection": None,
+                                   "risk_level": rx.risk_level_of(order), "user_id": user_id,
+                                   "completed_at": datetime.now(timezone.utc)})
+        return True
+
+    def reopen_for_save(self, rx_id, pharmacy_id):
+        r = self.rows.get(rx_id)
+        if not r or r["pharmacy_id"] != pharmacy_id or r["status"] != "failed" or r["error_code"] != "E_DB":
+            return False
+        r.update(status="processing", error_code=None)
+        return True
+
     def respond(self, rx_id, pharmacy_id, user_id, hitl_point, action, before, after, reason=None, warning_ack=None):
         r = self.rows.get(rx_id)
         if not r or r["pharmacy_id"] != pharmacy_id or r["status"] != "waiting_approval" or r["hitl_point"] != hitl_point:
@@ -146,7 +166,8 @@ class FakeRx:
 def fake_rx(monkeypatch):
     f = FakeRx()
     for name in ("create", "get", "first_image", "image", "history", "set_waiting", "set_waiting_tray", "set_failed", "respond",
-                 "attach_tray", "set_done", "set_cancelled", "add_inspection", "inspections", "tray_images", "tray_image_key"):
+                 "attach_tray", "set_done", "set_cancelled", "add_inspection", "inspections", "tray_images", "tray_image_key",
+                 "finish_manual_inspection", "reopen_for_save"):
         monkeypatch.setattr(rx, name, getattr(f, name))
     return f
 

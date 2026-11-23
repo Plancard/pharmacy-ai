@@ -239,11 +239,60 @@
       h("small", { class: "muted" }, "같은 처방전 사진으로 처음부터 다시 처리합니다. 이 처방은 삭제되고 새 처방 번호가 생깁니다.")), err);
   }
 
+  // 6장 E_DB [저장 다시 시도]: 검수까지 끝난 처방이라 처음부터 다시 하지 않고 조제 기록 저장만 다시 한다
+  function saveRetryButton(rx) {
+    if (!rx.save_retryable) return null;
+    const err = h("p", { class: "form-error", role: "alert", hidden: true });
+    const btn = h("button", { type: "button" }, "저장 다시 시도");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      err.hidden = true;
+      try {
+        await api(`/api/prescriptions/${rx.id}/save-retry`, { method: "POST" });
+        await refresh();
+      } catch (e) {
+        err.textContent = e.message;
+        err.hidden = false;
+        btn.disabled = false;
+      }
+    });
+    return h("div", {}, h("div", { class: "actions" }, btn,
+      h("small", { class: "muted" }, "검수까지 끝난 내용으로 조제 기록 저장만 다시 합니다.")), err);
+  }
+
+  // 6장 재촬영: 실패한 처방을 새로 찍은 처방전 사진으로 다시 접수한다 (새 처방 번호, 이 처방은 삭제 = 취소됨)
+  function retakeForm(rx) {
+    if (!rx.retake_allowed) return null;
+    const err = h("p", { class: "form-error", role: "alert", hidden: true });
+    const file = h("input", { type: "file", name: "image", accept: "image/jpeg,image/png", required: true,
+      id: `retake-${rx.id}` });
+    const btn = h("button", { type: "submit", class: rx.retryable ? "secondary" : null }, "새 사진으로 다시 올리기");
+    const form = h("form", { class: "upload" },
+      h("label", { for: `retake-${rx.id}` }, "처방전을 다시 찍어 올리기 (JPG·PNG)"),
+      h("div", { class: "upload-row" }, file, btn),
+      h("small", { class: "muted" }, "새 처방 번호로 처음부터 처리하고, 이 처방은 삭제(취소됨)로 남습니다."), err);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      err.hidden = true;
+      try {
+        const next = await api(`/api/prescriptions/${rx.id}/retake`, { method: "POST", body: new FormData(form) });
+        upsertListItem(next);
+        await open(next.id);
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+        btn.disabled = false;
+      }
+    });
+    return form;
+  }
+
   function failure(rx, withLines) {
     return [h("p", { class: "form-error" }, rx.error_message || "처리 중 오류가 났습니다."),
       rx.error_code ? h("p", { class: "muted mono" }, rx.error_code) : null,
       withLines ? failedImage(rx) : null,
-      retryButton(rx)];
+      retryButton(rx), saveRetryButton(rx), retakeForm(rx)];
   }
 
   function view(rx) {
@@ -295,8 +344,10 @@
         inspectionCard(rx)));
     } else if (s === "done") {
       const last = inspected[inspected.length - 1];
+      const manual = events.some((e) => e.event === "response" && e.hitl_point === "inspection" && e.action === "manual");
       steps.push(step("done", `트레이 검수${attempt}`, last && last.at, rx.card && rx.card.inspection
-        ? doneInspection(rx) : null));
+        ? doneInspection(rx)
+        : manual ? h("p", { class: "ok-note" }, "검출 모델 오류로 약사가 육안 검수 후 수동으로 진행했습니다.") : null));
     } else if (s === "failed") {
       steps.push(step("error", "승인 이후 처리", rx.updated_at, ...failure(rx)));
     } else if (s === "cancelled") {
@@ -570,7 +621,41 @@
           : "조제지시서를 승인했습니다. 조제 계획대로 트레이를 채운 뒤 사진을 올려 주세요."),
       retake ? null : h("p", { class: "muted", id: "tray-help" }, "트레이 전체가 보이고 아침 줄이 위로 오게 찍어 주세요."),
       form,
+      retake && retake.manual_allowed ? manualInspection(rx) : null,
       order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null);
+  }
+
+  // 6장 E_CV_INFER: 검출 모델 오류로 자동 검수를 못 할 때 약사가 트레이를 직접 보고 사유를 적어 완료한다
+  function manualInspection(rx) {
+    const err = h("p", { class: "form-error", role: "alert", hidden: true });
+    const reason = h("textarea", { class: "reason-input", rows: 2, maxlength: 500, id: `manual-${rx.id}`,
+      placeholder: "예: 조제 계획과 12칸을 육안으로 대조함, 이상 없음" });
+    const btn = h("button", { type: "button", class: "secondary" }, "육안 검수로 완료");
+    btn.addEventListener("click", async () => {
+      err.hidden = true;
+      if (!reason.value.trim()) {
+        err.textContent = "육안으로 확인한 내용(사유)을 적어 주세요.";
+        err.hidden = false;
+        return;
+      }
+      if (!window.confirm("자동 검수 없이 육안 검수로 완료할까요? 조제 기록에 검수 결과 없이 사유가 남습니다.")) return;
+      btn.disabled = true;
+      try {
+        await api(`/api/prescriptions/${rx.id}/manual-inspection`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: reason.value }) });
+        await refresh();
+      } catch (e) {
+        err.textContent = e.message;
+        err.hidden = false;
+        btn.disabled = false;
+      }
+    });
+    return h("details", { class: "manual-inspection" },
+      h("summary", {}, "계속 실패하면: 육안 검수 후 수동 진행"),
+      h("p", { class: "muted" }, "조제 계획 표와 트레이 12칸을 직접 대조한 뒤 확인한 내용을 적어 주세요."),
+      h("label", { for: `manual-${rx.id}` }, "확인 내용(사유)"), reason,
+      h("div", { class: "actions" }, btn), err);
   }
 
   // 4행(아침·점심·저녁·취침 전) × 3열(1~3일) 격자. 칸마다 판정 글자를 함께 써서 색만으로 구분하지 않는다.

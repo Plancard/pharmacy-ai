@@ -171,3 +171,8 @@ button.secondary { background: var(--card); color: var(--ink); border: 1px solid
 .history-detail { display: grid; gap: 12px; }
 .history-detail h3 { margin: 12px 0 0; font-size: 16px; }
 .history-detail .evidence { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+
+/* 오류 처리 (기능분석서 6장) */
+.manual-inspection { border: 1px dashed var(--line); border-radius: 6px; padding: 8px 12px; display: grid; gap: 6px; }
+.manual-inspection summary { cursor: pointer; color: var(--warn); }
+.manual-inspection p { margin: 0; }

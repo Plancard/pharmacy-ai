@@ -121,12 +121,15 @@ CREATE INDEX IF NOT EXISTS idx_approvals_rx ON approvals(prescription_id, create
 -- 응답 종류 (기능분석서 F-WEB-07 · 09). 이미 만든 DB에도 앱 시작(init-db) 때 반영되도록 따로 건다 (11/18 HITL ② 추가)
 --   rx_approval(HITL ①): approve 승인 · edit 수정 후 다시 계산 · manual 사유 입력 후 진행
 --   inspection(HITL ②):  confirm 검수 확인 완료 · redo 재조제 (트레이를 다시 채워 사진 대기)
+--                        manual 육안 검수 후 수동 진행 (11/23, 기능분석서 6장 E_CV_INFER: 검출 모델 오류로 자동 검수를
+--                        못 할 때 사유를 적고 완료. 이때 조제 기록의 inspection_json은 비어 있다)
 ALTER TABLE approvals DROP CONSTRAINT IF EXISTS approvals_action_check;
 ALTER TABLE approvals ADD CONSTRAINT approvals_action_check
     CHECK (action IN ('approve', 'edit', 'manual', 'confirm', 'redo'));
 ALTER TABLE approvals DROP CONSTRAINT IF EXISTS approvals_action_point_check;
 ALTER TABLE approvals ADD CONSTRAINT approvals_action_point_check
-    CHECK ((hitl_point = 'inspection') = (action IN ('confirm', 'redo')));
+    CHECK ((hitl_point = 'rx_approval' AND action IN ('approve', 'edit', 'manual'))
+        OR (hitl_point = 'inspection' AND action IN ('confirm', 'redo', 'manual')));
 -- 경고 확인 체크 (11/17 회의 Q11, 기능분석서 F-WEB-07 ④ · 5.3절). HITL ① 승인 때만 값이 있다 (확인할 경고가 없으면 false)
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS warning_ack BOOLEAN;
 
