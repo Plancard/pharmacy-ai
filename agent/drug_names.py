@@ -52,6 +52,20 @@ _UNITS = r"(?:mg|mcg|\u03bcg|g|ml|iu|%|밀리그[램람]|마이크로그[램람]
 _OCR_ZERO_RUN = re.compile(rf"(?<![0-9A-Za-z])([0-9oO]*[0-9][0-9oO]*)(?=\s*{_UNITS})", re.IGNORECASE)
 
 
+# OCR이 함량 단위 mg의 m을 rn으로 읽는 일이 있다 (500mg -> 500rng, 인쇄 글자 rn과 m이 닮았다). 숫자(5oO처럼 o가 섞여도) 바로 뒤의
+# rn이 g나 l 앞에 올 때만 m으로 되돌린다. 영문 이름 안의 rn(Cornrng정 등)이나 숫자 없는 rn은 건드리지 않는다.
+_OCR_RN_UNIT = re.compile(r"(?<![0-9A-Za-z])([0-9oO]*[0-9][0-9oO]*)(\s*)rn(?=[gl](?![A-Za-z]))", re.IGNORECASE)
+
+
+def fix_ocr_units(name: str | None) -> str:
+    """함량 단위의 rn을 m으로 되돌린다. '타이레놀정 500rng' -> '타이레놀정 500mg', '250rnl' -> '250ml'
+
+    fix_ocr_digits보다 먼저 적용한다 ('5oOrng' -> '5oOmg' -> '500mg'). 숫자 자체를 잘못 읽은 것은 고치지 않는다.
+    """
+    text = unicodedata.normalize("NFKC", name or "")
+    return _OCR_RN_UNIT.sub(lambda m: f"{m.group(1)}{m.group(2)}m", text)
+
+
 def fix_ocr_digits(name: str | None) -> str:
     """함량 안의 알파벳 o/O를 0으로 되돌린다. '타이레놀정 5oOmg' -> '타이레놀정 500mg', '에스코렌정 1Omg' -> '에스코렌정 10mg'
 
@@ -64,7 +78,7 @@ def fix_ocr_digits(name: str | None) -> str:
 # OCR(EasyOCR)이 약 이름의 한글을 헷갈려 읽은 것 (CV 처방전 5장에서 실제로 나온 것만, 11/12).
 #   캡슐 -> 캠술 · 램술 (rx_002 · 003 · 004), 트리스펜 -> 트리스편 (rx_003)
 # 비교 열쇠에서만 같은 글자로 맞춘다. 사전 · API 이름도 같은 열쇠를 쓰므로 양쪽에 똑같이 적용된다 (한쪽만 바뀌지 않는다).
-# 화면에 보이는 이름(DrugLine.name)은 바꾸지 않는다. 여기 없는 오인식(알모란정 등)은 그대로 후보로만 보인다.
+# 이 열쇠는 비교에만 쓴다. 화면 이름은 약을 정한 뒤 사전의 표준 이름으로 바뀐다(drug_match.match_line, 처방전 글자는 DrugLine.printed_name). 여기 없는 오인식(알모란정 등)은 그대로 후보로만 보인다.
 _OCR_LETTERS = (
     (re.compile(r"[캡캠램랩]\s*[슐술숄]"), "캡슐"),
     (re.compile(r"편"), "펜"),
@@ -80,8 +94,8 @@ def fix_ocr_letters(name: str | None) -> str:
 
 
 def match_key(name: str | None) -> str:
-    """약품 매칭에서 이름을 견줄 때 쓰는 열쇠: OCR 숫자 보정 + OCR 한글 보정 + 표기 정규화."""
-    return normalize_name(fix_ocr_letters(fix_ocr_digits(name)))
+    """약품 매칭에서 이름을 견줄 때 쓰는 열쇠: OCR 단위·숫자 보정 + OCR 한글 보정 + 표기 정규화."""
+    return normalize_name(fix_ocr_letters(fix_ocr_digits(fix_ocr_units(name))))
 
 
 # 의약품 API 검색에 쓰는 말 만들기. API의 item_name 검색은 이름의 일부로 찾는다. 그래서 함량·'/'·괄호를 뺀 이름 앞부분으로
@@ -93,7 +107,7 @@ _PARENS = re.compile(r"\([^)]*\)")
 
 def search_term(name: str | None) -> str:
     """API에 보낼 검색어: 함량·괄호·'/'·공백을 뺀 이름. '타이레놀정 5oOmg' -> '타이레놀정'"""
-    text = unicodedata.normalize("NFKC", fix_ocr_digits(name))
+    text = unicodedata.normalize("NFKC", fix_ocr_digits(fix_ocr_units(name)))
     text = _PARENS.sub(" ", text)
     text = _STRENGTH_ANY.sub(" ", text)
     return "".join(text.replace("/", " ").split())

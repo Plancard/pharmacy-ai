@@ -89,8 +89,14 @@ def test_each_prescription_reads_matches_and_checks_as_expected(rx_id):
     order = checked(rx_id)
     assert order.source == "rule"
     keys = ("item_code", "name", "count_per_dose", "times", "days")
-    got = [{k: getattr(d, k) for k in keys} for d in order.items]
-    assert got == [{k: item[k] for k in keys} for item in expected["items"]]
+    squash = lambda text: "".join(text.split())      # 표준 이름은 공백이 없고 처방전 글자는 있다
+    got = [{k: squash(d.printed_name or d.name) if k == "name" else getattr(d, k) for k in keys} for d in order.items]    # 이름은 처방전에서 읽은 글자
+    assert got == [{k: squash(item[k]) if k == "name" else item[k] for k in keys} for item in expected["items"]]
+    # 코드로 정한 대상 약은 표준 이름으로 보이고, 처방전 글자가 다르면 printed_name에 남는다
+    for d, item in zip(order.items, expected["items"]):
+        if item["target"]:
+            assert d.name == DICT.by_item_code(item["item_code"]).name
+            assert d.printed_name in (None, item["name"]) and (d.printed_name is None) == (squash(d.name) == squash(item["name"]))
     # 대상 8종은 인쇄된 품목기준코드로 자동 확정, 대상 외 약품은 정하지 못하고 약사 확인 (REQ-AG-03)
     assert [d.match_method for d in order.items] == ["code" if item["target"] else "none" for item in expected["items"]]
     assert order.flagged_indices == expected["flagged"]

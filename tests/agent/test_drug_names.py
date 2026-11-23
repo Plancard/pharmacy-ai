@@ -1,6 +1,7 @@
 import pytest
 
 from agent.drug_names import (
+    fix_ocr_units,
     extract_strengths, fix_ocr_digits, fix_ocr_letters, jamo, match_key, normalize_name, product_key, search_term, similarity,
 )
 
@@ -336,3 +337,28 @@ def test_the_other_spelling_of_unit_words_is_unified_too(written, expected):
 def test_the_other_spelling_works_after_an_ocr_zero_fix_as_well():
     assert fix_ocr_digits("타이레놀정 5oO밀리그람") == "타이레놀정 500밀리그람"
     assert match_key("타이레놀정 5oO밀리그람") == "타이레놀정500mg"
+
+
+# ------------------------------------------------------------ 단위 rn -> m (OCR이 mg의 m을 rn으로 읽는다)
+
+
+@pytest.mark.parametrize(
+    "written, expected",
+    [
+        ("타이레놀정 500rng", "타이레놀정 500mg"), ("타이레놀정500rng", "타이레놀정500mg"), ("250rng", "250mg"),
+        ("시럽 250rnl", "시럽 250ml"), ("타이레놀정 500 rng", "타이레놀정 500 mg"), ("5oOrng", "5oOmg"), ("500RNG", "500mG"),
+    ],
+)
+def test_rn_before_g_or_l_after_a_number_is_m(written, expected):
+    assert fix_ocr_units(written) == expected
+
+
+@pytest.mark.parametrize("written", ["Cornrng정", "rng", "정rng", "500rnx", "500rnga", "정500mg", "A1rn정", "500rn"])
+def test_rn_elsewhere_is_left_alone(written):
+    assert fix_ocr_units(written) == written
+
+
+def test_the_unit_fix_comes_before_the_zero_fix():
+    assert match_key("타이레놀정 5oOrng") == "타이레놀정500mg"
+    assert match_key("타이레놀정 500rng") == match_key("타이레놀정 500mg") == "타이레놀정500mg"
+    assert extract_strengths(match_key("타이레놀정 250rng")) == {"250mg"}

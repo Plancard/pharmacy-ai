@@ -145,7 +145,7 @@ def test_llm_mistakes_and_failures_are_counted_and_listed():
     assert "약품명 60.0% (9/15)" in llm_part                   # 틀린 이름 2개 + 읽지 못한 처방전(rx_005)의 이름 4개
     # 틀린 약이 정해진 줄은 따로 알려 준다
     assert "약품 매칭 - 잘못 정함:" in llm_part
-    assert "rx_002 1번째 약품 '타이레놀정 500mg': 정답 197900277, 결과 202106092 (잘못 정함)" in llm_part
+    assert "rx_002 1번째 약품 '타이레놀정500mg': 정답 197900277, 결과 202106092 (잘못 정함)" in llm_part
     assert "rx_005 1번째 약품 '필루비서방정 145mg': 정답 없음(대상 약 아님), 결과 정하지 않음 (줄 못 읽음)" in llm_part
     record = text.split("== 일정표 정확도 기록 (그대로 붙여 넣으세요) ==\n")[1].strip().split("\n")[1]
     assert record.endswith("약품 매칭: 정답 코드 6줄 · 후보로 정답 0줄 · 잘못 정함 1줄")

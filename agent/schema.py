@@ -263,6 +263,7 @@ class DrugLine(_Model):
     check_reasons: list[str] = Field(default_factory=list)   # 확인이 필요한 이유 (약사에게 그대로 보인다)
 
     # A.5 밖의 Agent 내부 필드. 웹이 몰라도 되고, 함께 넘어가면 승인 카드가 보여 줄 수 있다 (2단계)
+    printed_name: str | None = None          # 약을 사전에서 정해 name을 표준 이름으로 바꿨을 때, 처방전(OCR)이 읽은 원래 글자. 같으면 None. 약사가 줄을 고치면 지운다
     printed_code: str | None = None          # 처방전에 인쇄된 코드 (보험코드 자리). 약품 매칭이 사전에서 약을 찾을 때 쓴다
     ocr_conf: float | None = Field(default=None, ge=0.0, le=1.0)   # 이 줄을 읽은 OCR 칸들의 최저 신뢰도. LLM 경로는 모른다(None)
     value_conf: dict[str, float] | None = None   # 1회량(dose)·하루 횟수(times)·투약 일수(days) 칸 각각의 OCR 신뢰도 (0~1). 낮은 칸을 약품 매칭이 지목한다. 약사가 줄을 고치면 지운다

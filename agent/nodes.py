@@ -189,7 +189,7 @@ def match_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     warnings = list(order.warnings)
     api_used = deps.api is not None
     if redo:
-        redo_lines = [order.items[i].model_copy(update={"times_note": None, "value_conf": None}) if edited else order.items[i] for i in redo]   # 약사가 고친 줄은 시점과 값을 이미 봤다 (옛 신뢰도는 고친 값에 맞지 않는다)
+        redo_lines = [order.items[i].model_copy(update={"times_note": None, "value_conf": None, "printed_name": None}) if edited else order.items[i] for i in redo]   # 약사가 고친 줄은 시점과 값을 이미 봤다 (옛 신뢰도·처방전 이름은 고친 값에 맞지 않는다)
         sub = order.model_copy(update={"items": redo_lines, "warnings": []})
         matched_sub, api_used = _match(sub, deps)
         new_lines = matched_sub.items

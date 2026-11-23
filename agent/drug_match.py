@@ -55,7 +55,7 @@ NAME_ONLY_MIN = 0.9       # 코드 없이 이름만으로 약을 정하려면 1�
 NAME_ONLY_MARGIN = 0.1    # ... 그리고 2등보다 이만큼 이상 앞서야 한다
 CANDIDATE_MIN = 0.6       # 후보로 보여 줄 최소 유사도
 LOW_CONFIDENCE = 0.5      # 줄 전체(이름·코드·값·용법 칸 중 최저)의 OCR 신뢰도가 이보다 낮으면 확인 표시
-NUMBER_CONFIDENCE = 0.8   # 1회량·하루 횟수·투약 일수 칸은 따로 더 엄격하게 본다 (숫자 오독은 조제 오류로 바로 이어진다. 11/20 g02_hard: 1이 7로 읽힌 칸 0.76, 정상 숫자 칸 0.91 이상)
+NUMBER_CONFIDENCE = 0.6   # 1회량·하루 횟수·투약 일수 칸은 따로 본다 (11/20 사용자가 0.8에서 0.6으로 낮춤. g02_hard의 1->7 오독 칸은 0.76이라 이 기준으로는 안 잡히고 허가 용량 검사가 잡는다)
 NUMBER_LABELS = {"dose": "1회량", "times": "하루 횟수", "days": "투약 일수"}
 # MAX_CANDIDATES(후보 개수 상한 3)는 schema.py가 정한다. DrugLine이 그 이상은 받지 않는다.
 
@@ -154,15 +154,18 @@ def match_line(line: DrugLine, dictionary: DrugDictionary, *, api: ApiSearch | N
     api를 주면 사전에서 정하지 못한 약을 의약품 API에서 찾는다. 주지 않으면 사전만 본다.
     예전 매칭 결과(item_code · match_method · 후보 · 확인 표시와 이유)는 지우고 새로 정한다.
     """
-    key = match_key(line.name)
+    original = line.printed_name or line.name    # 처방전이 읽은 이름. 다시 매칭해도 이 글자로 견준다 (표준 이름으로 바꾼 줄이어도)
+    key = match_key(original)
     ranked = rank_by_name(key, dictionary)
     reasons: list[str] = []
     candidates: list[MatchCandidate] = []
     item_code, method = None, "none"
+    standard_name: str | None = None    # 사전의 약으로 정했으면 그 약의 표준 이름 (화면 · 조제 계획 · 이력에 이 이름이 나간다)
 
     entry = dictionary.by_item_code(line.printed_code)
     if entry is not None:
         item_code, method = entry.item_code, "code"
+        standard_name = entry.name
         score = similarity(key, entry.key)
         if score < NAME_MATCH_MIN:
             reasons.append(f"처방전의 약품명이 코드({line.printed_code})의 약 '{entry.name}'과 다릅니다.")
@@ -178,9 +181,10 @@ def match_line(line: DrugLine, dictionary: DrugDictionary, *, api: ApiSearch | N
         best = pick_by_name(key, [(score, e.key, e) for score, e in ranked])
         if best is not None:
             item_code, method = best.item_code, "name"
+            standard_name = best.name
             reasons.append(f"{why} 이름으로 '{best.name}'을(를) 골랐습니다.")
         elif api is not None:
-            item_code, method, reason, api_candidates = _match_by_api(key, line.name, why, api)
+            item_code, method, reason, api_candidates = _match_by_api(key, original, why, api)
             reasons.append(reason)
             if method == "none":     # 사전과 API의 후보를 점수 순으로 함께 보여 준다 (점수가 같으면 사전 먼저)
                 candidates = sorted(_name_candidates(ranked) + api_candidates, key=lambda c: -c.score)
@@ -210,6 +214,11 @@ def match_line(line: DrugLine, dictionary: DrugDictionary, *, api: ApiSearch | N
     seen: set[str] = set()                     # 사전 후보와 API 제품이 같은 약이면 한 번만 (앞의 것을 남긴다)
     unique = [c for c in candidates if not (c.item_code in seen or seen.add(c.item_code))]
     data = line.model_dump()
+    if standard_name is not None:    # 사전의 약으로 정한 줄: 표준 이름으로 보여 주고, 처방전 글자는 다르면 따로 남긴다
+        same = "".join(original.split()) == "".join(standard_name.split())
+        data.update(name=standard_name, printed_name=None if same else original)
+    else:                            # API로 찾았거나 못 정한 줄: 처방전 글자 그대로 (API 제품명은 표기가 제각각이고, 못 정한 줄은 원문을 봐야 고칠 수 있다)
+        data.update(name=original, printed_name=None)
     data.update(
         item_code=item_code,
         match_method=method,

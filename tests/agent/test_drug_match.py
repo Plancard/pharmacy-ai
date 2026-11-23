@@ -61,7 +61,7 @@ def small_dict(*pairs):
 
 def test_thresholds_are_the_agreed_values():
     assert (NAME_MATCH_MIN, NAME_ONLY_MIN, NAME_ONLY_MARGIN) == (0.7, 0.9, 0.1)
-    assert (CANDIDATE_MIN, MAX_CANDIDATES, LOW_CONFIDENCE, NUMBER_CONFIDENCE) == (0.6, 3, 0.5, 0.8)
+    assert (CANDIDATE_MIN, MAX_CANDIDATES, LOW_CONFIDENCE, NUMBER_CONFIDENCE) == (0.6, 3, 0.5, 0.6)
 
 
 def _read_names():
@@ -209,9 +209,10 @@ def test_a_similar_name_is_not_chosen_only_offered_as_a_candidate():
 
 @pytest.mark.parametrize("read, expected", [("프론크논캠술", FRONK), ("프론크논램술", FRONK), ("트리스편연질캠술", TRISPEN)])
 def test_known_ocr_misreadings_are_chosen_by_name_but_always_checked(read, expected):
-    # 실제 OCR에서 나온 오인식(캡슐 -> 캠술 · 램술, 펜 -> 편)은 비교 열쇠에서 맞춰 이름으로 정한다. 보이는 이름은 그대로다
+    # 실제 OCR에서 나온 오인식(캡슐 -> 캠술 · 램술, 펜 -> 편)은 비교 열쇠에서 맞춰 이름으로 정한다. 보이는 이름은 사전의 표준 이름이고, 처방전 글자는 printed_name에 남는다
     got = match_line(line(read, "900000051"), DICT)
-    assert (got.item_code, got.match_method, got.name) == (expected, "name", read)
+    assert (got.item_code, got.match_method) == (expected, "name")
+    assert (got.name, got.printed_name) == (DICT.by_item_code(expected).name, read)
     assert got.needs_pharmacist_check and got.match_candidates == []
 
 
@@ -422,8 +423,8 @@ BY_NAME = {
     "rx_004": [(TYLENOL, "name"), (GEVORIN, "name"), (FRONK, "name"), (None, "none")],
     "rx_005": [(None, "none")] * 4,
 }
-# 인쇄된 코드를 품목기준코드로 바꾸면 코드 단계가 약을 정한다. 확인 표시가 붙는 줄(0부터): 낮은 신뢰도(0.8 미만; rx_002는 모든 칸이 0.57), 사전에 없는 약, 4일 처방
-BY_CODE_FLAGGED = {"rx_001": [0, 1], "rx_002": [0, 1, 2], "rx_003": [0, 1], "rx_004": [0, 2, 3], "rx_005": [0, 1, 2, 3]}
+# 인쇄된 코드를 품목기준코드로 바꾸면 코드 단계가 약을 정한다. 확인 표시가 붙는 줄(0부터): 낮은 신뢰도, 사전에 없는 약, 4일 처방
+BY_CODE_FLAGGED = {"rx_001": [0, 1], "rx_002": [2], "rx_003": [0, 1], "rx_004": [0, 2, 3], "rx_005": [0, 1, 2, 3]}
 
 
 @pytest.mark.parametrize("sample_id", SAMPLE_IDS)
@@ -510,7 +511,7 @@ def test_match_order_keeps_the_order_fields_and_the_input():
     assert isinstance(got, DispensingOrder)
     assert (got.prescription_id, got.source, got.issue_no, got.warnings) == (
         order.prescription_id, order.source, order.issue_no, order.warnings)
-    assert [d.name for d in got.items] == [d.name for d in order.items]
+    assert [d.printed_name or d.name for d in got.items] == [d.name for d in order.items]    # 처방전 글자는 사라지지 않는다 (표준 이름으로 바뀐 줄은 printed_name에)
     assert not got.all_matched          # 사전에 없는 알모탄정이 있다
 
 
@@ -815,14 +816,15 @@ def test_a_product_found_both_in_the_dictionary_and_the_api_is_one_candidate():
 @pytest.mark.parametrize(
     "value_conf, reasons",
     [
-        ({"dose": 0.76}, ["1회량 칸의 글자 인식 신뢰도가 낮습니다(0.76). 원문을 확인하세요."]),    # 11/20: 1 TAB이 7 TAB으로 읽힌 칸
+        ({"dose": 0.76}, []),                                    # 11/20: 1 TAB이 7 TAB으로 읽힌 칸(0.76)은 이 기준(0.6)으로는 안 잡힌다. 허가 용량 검사가 잡는다
+        ({"dose": 0.55}, ["1회량 칸의 글자 인식 신뢰도가 낮습니다(0.55). 원문을 확인하세요."]),
         ({"dose": 0.91, "times": 1.0, "days": 0.99}, []),
         ({"dose": NUMBER_CONFIDENCE}, []),
         ({"times": 0.5}, ["하루 횟수 칸의 글자 인식 신뢰도가 낮습니다(0.50). 원문을 확인하세요."]),
         ({"days": 0.3}, ["투약 일수 칸의 글자 인식 신뢰도가 낮습니다(0.30). 원문을 확인하세요."]),
         (
-            {"dose": 0.6, "days": 0.7},
-            ["1회량 칸의 글자 인식 신뢰도가 낮습니다(0.60). 원문을 확인하세요.", "투약 일수 칸의 글자 인식 신뢰도가 낮습니다(0.70). 원문을 확인하세요."],
+            {"dose": 0.55, "days": 0.59},
+            ["1회량 칸의 글자 인식 신뢰도가 낮습니다(0.55). 원문을 확인하세요.", "투약 일수 칸의 글자 인식 신뢰도가 낮습니다(0.59). 원문을 확인하세요."],
         ),
         (None, []),
     ],
@@ -882,3 +884,48 @@ def test_a_drug_found_only_by_the_api_is_not_checked_for_dose():
 
     got = match_line(with_dose(50, name="대상 외 약", printed_code=None), DICT, api=lambda term: [Product()])
     assert not any("허가 용법" in r for r in got.check_reasons)
+
+
+# ------------------------------------------------------------ 표준 이름과 처방전 글자 (printed_name)
+
+
+def test_a_line_fixed_by_code_shows_the_standard_name_and_keeps_the_printed_one():
+    got = match_line(line("타이레놀정 500rng", TYLENOL), DICT)     # 표준 이름 타이레놀정500mg, OCR은 단위를 rng로 읽었다
+    assert (got.item_code, got.match_method) == (TYLENOL, "code")
+    assert (got.name, got.printed_name) == ("타이레놀정500mg", "타이레놀정 500rng")
+    assert not got.needs_pharmacist_check                               # 500rng는 500mg로 보정되어 함량이 같다
+
+
+def test_the_same_name_up_to_spaces_keeps_no_printed_name():
+    got = match_line(line("타이레놀정 500mg", TYLENOL), DICT)
+    assert (got.name, got.printed_name) == ("타이레놀정500mg", None)
+
+
+def test_a_line_fixed_by_name_also_shows_the_standard_name():
+    got = match_line(line("프론크논캠술", None), DICT)
+    assert (got.match_method, got.name, got.printed_name) == ("name", "프론크논캡슐", "프론크논캠술")
+
+
+def test_a_line_not_fixed_keeps_the_printed_name_and_no_printed_name_field():
+    got = match_line(line("알모란정", "900000031"), DICT)
+    assert (got.match_method, got.name, got.printed_name) == ("none", "알모란정", None)
+
+
+def test_a_line_found_only_by_the_api_keeps_the_ocr_name():
+    api = FakeApi(ApiDrug("199900005", "훼스탈정", "가"))
+    got = match_line(line("훼스탈정", None), DICT, api=api)
+    assert got.match_method == "api" and (got.name, got.printed_name) == ("훼스탈정", None)
+
+
+@pytest.mark.parametrize("printed, flagged", [("타이레놀정 500rng", False), ("타이레놀정 250rng", True), ("타이레놀정 500mg", False)])
+def test_a_strength_misread_as_rng_is_compared_after_the_fix(printed, flagged):
+    got = match_line(line(printed, TYLENOL), DICT)
+    assert got.item_code == TYLENOL and got.needs_pharmacist_check is flagged
+    assert got.check_reasons == ([f"처방전의 함량이 코드({TYLENOL})의 약 '타이레놀정500mg'과 다릅니다."] if flagged else [])
+
+
+def test_matching_again_still_compares_the_printed_name():
+    first = match_line(line("타이레놀정", GEVORIN), DICT)            # 게보린 코드에 타이레놀: 코드를 따르되 이름이 달라 확인
+    assert first.name == "게보린정" and first.printed_name == "타이레놀정" and first.needs_pharmacist_check
+    again = match_line(first, DICT)
+    assert (again.name, again.printed_name, again.check_reasons) == (first.name, first.printed_name, first.check_reasons)

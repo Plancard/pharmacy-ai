@@ -82,7 +82,7 @@ def show(sample_id: str, state: dict[str, Any], out: Callable[[str], None]) -> N
     for i, d in enumerate(order.items, start=1):
         mark = "확인" if d.needs_pharmacist_check else "    "
         out(
-            f"    {i}. [{mark}] {d.name} | 코드 {d.printed_code} -> 품목 {d.item_code or '-'} ({d.match_method})"
+            f"    {i}. [{mark}] {d.name}{f' (처방전: {d.printed_name})' if d.printed_name else ''} | 코드 {d.printed_code} -> 품목 {d.item_code or '-'} ({d.match_method})"
             f" | {d.count_per_dose}개 x {len(d.times)}회 x {d.days}일 | {', '.join(d.times)}"
         )
         for reason in d.check_reasons:

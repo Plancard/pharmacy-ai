@@ -96,7 +96,7 @@ def test_the_same_prescription_cannot_be_started_twice(backend):
     api.start("P0001", load("rx8_a1", "rx8_01"))
     with pytest.raises(ValueError, match="이미 시작한 처방"):
         api.start("P0001", load("rx8_a1", "rx8_02"))
-    assert api.pending("P0001").payload["order"]["items"][0]["name"] == "타이레놀정 500mg"   # 첫 처방은 그대로 멈춰 있다
+    assert api.pending("P0001").payload["order"]["items"][0]["name"] == "타이레놀정500mg"   # 첫 처방은 그대로 멈춰 있다
 
 
 def test_a_structure_failure_is_an_error_with_the_a7_code(backend):
@@ -213,11 +213,25 @@ def test_editing_checks_again_and_stops_again(backend):
     order["items"] = order["items"][:1]                                 # 게보린을 지운다
     again = api.resume("P0001", "rx_approval", {"action": "edit", "order": order})
     assert again.hitl_point == "rx_approval"
-    assert [d["name"] for d in again.payload["order"]["items"]] == ["타이레놀정 500mg"]
+    assert [d["name"] for d in again.payload["order"]["items"]] == ["타이레놀정500mg"]
     assert again.payload["order"]["risk_check"]["level"] == "none"       # 다시 대조했다
     assert structure.calls == 1                                          # LLM 구조화는 다시 부르지 않는다
     assert api.resume("P0001", "rx_approval", approve_reply(again)) is None
     assert api.result("P0001")["status"] == "planned"
+
+
+def test_an_edited_line_drops_the_printed_name_and_untouched_lines_keep_it(backend):
+    api = make_api()
+    pause = api.start("P0001", load("cv_a1", "rx_001"))
+    order = copy.deepcopy(pause.payload["order"])
+    first, second = order["items"][0], order["items"][1]
+    assert (first["name"], first["printed_name"]) == ("타이레놀정500mg", "타이레놀정 5oOmg")     # 표준 이름 + 처방전이 읽은 글자
+    assert second["printed_name"] is None                                                       # 사전에 없는 약은 읽은 글자 그대로
+    first["days"] = 2                                                                           # 첫 줄만 고친다
+    again = api.resume("P0001", "rx_approval", {"action": "edit", "order": order})
+    items = again.payload["order"]["items"]
+    assert (items[0]["name"], items[0]["printed_name"], items[0]["days"]) == ("타이레놀정500mg", None, 2)
+    assert items[1]["name"] == second["name"]
 
 
 def test_approving_with_changed_lines_is_checked_again_before_planning(backend):

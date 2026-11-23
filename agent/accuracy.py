@@ -88,6 +88,8 @@ def _same(field_name: str, want: Any, got: Any) -> bool:
 def _value(line: DrugLine, field_name: str) -> Any:
     if field_name == "times_per_day":
         return len(line.times)   # 1일 투여 횟수는 복용 시점의 수다
+    if field_name == "name":
+        return line.printed_name or line.name   # 추출 정확도는 처방전에서 읽은 글자로 본다 (약을 정한 뒤 바뀐 표준 이름이 아니라)
     return getattr(line, field_name)
 
 
@@ -105,7 +107,7 @@ def compare(order: DispensingOrder | None, expected: dict[str, Any], *, truth: b
             got = _value(got_line, name) if got_line is not None else None
             checks.append(Check(i, name, want_line[name], got, got_line is not None and _same(name, want_line[name], got)))
     for i in range(len(expected["items"]), len(got_lines)):
-        checks.append(Check(i, "extra", None, got_lines[i].name, False))
+        checks.append(Check(i, "extra", None, got_lines[i].printed_name or got_lines[i].name, False))
     return checks
 
 
@@ -169,7 +171,7 @@ def match_checks(order: DispensingOrder | None, expected: dict[str, Any]) -> lis
         line = got_lines[i] if i < len(got_lines) else None
         checks.append(MatchCheck(
             line=i,
-            name=line.name if line is not None else want_line["name"],
+            name=(line.printed_name or line.name) if line is not None else want_line["name"],
             want=want_line["item_code"],
             got=line.item_code if line is not None else None,
             outcome=classify_match(want_line["item_code"], line),

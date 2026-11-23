@@ -127,7 +127,7 @@ def test_the_web_flow_runs_on_the_real_agent(backend, monkeypatch, tmp_path, fak
     assert (d["status"], d["hitl_point"]) == ("waiting_approval", "rx_approval")
     card = d["card"]
     assert card["order"]["prescription_id"] == rx_id and "notice" in card and "blockers" in card
-    assert card["blockers"] == [] and [i["name"] for i in card["order"]["items"]] == ["타이레놀정 500mg", "게보린정"]   # 처방전에 적힌 그대로 (코드로 정해졌다)
+    assert card["blockers"] == [] and [i["name"] for i in card["order"]["items"]] == ["타이레놀정500mg", "게보린정"]   # 코드로 정해진 약은 사전의 표준 이름으로 보인다 (처방전 글자는 printed_name)
 
     r = approve(client, rx_id, confirmed=True)
     assert r.status_code == 202

@@ -60,7 +60,7 @@ def test_it_shows_the_final_state_of_one_sample(graph):
             " 고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다. 확인이 필요한 약품이 2줄 있습니다.") in text
     assert "조제 계획: 만들 수 없음. 고친 뒤(edit) 승인할 수 있습니다" in text
     assert "경로: rule | 교부번호: 2026년11월03일 00012호" in text
-    assert "1. [확인] 타이레놀정 5oOmg | 코드 900000011 -> 품목 202106092 (name) | 1개 x 3회 x 3일 | morning, noon, evening" in text
+    assert "1. [확인] 타이레놀정500mg (처방전: 타이레놀정 5oOmg) | 코드 900000011 -> 품목 202106092 (name) | 1개 x 3회 x 3일 | morning, noon, evening" in text
     assert "2. [확인] 알모란정 | 코드 900000031 -> 품목 - (none)" in text
     assert "- 글자 인식 신뢰도가 낮습니다(0.43)." in text
     assert "경고: 의약품 API를 쓰지 않아" in text                      # 사전에 없는 약이 있으면 API가 없었다고 알린다
@@ -86,7 +86,7 @@ def test_it_tells_which_drugs_could_not_be_checked(graph):
 
 def test_the_plan_is_shown_on_the_approval_card_before_approval(graph):
     _, text = run(["rx8_01"], graph)
-    assert "    조제 계획: (승인 카드에 보임)\n      아침: 1일 타이레놀정 500mg 1 · 게보린정 1" in text
+    assert "    조제 계획: (승인 카드에 보임)\n      아침: 1일 타이레놀정500mg 1 · 게보린정 1" in text
 
 
 def test_approve_confirms_the_plan_shown_on_the_card(graph):
@@ -95,7 +95,7 @@ def test_approve_confirms_the_plan_shown_on_the_card(graph):
     first, second = text.split("    -> 약사가 화면의 조제지시서를 그대로 승인합니다\n")
     assert f"[rx8_01] 상태: {WAITING}" in first and "조제 계획: (승인 카드에 보임)" in first
     assert second.startswith("[rx8_01] 상태: planned | 흐름: prescription | 순서: prescription\n    안내: 약사가 승인했습니다.")
-    assert "    조제 계획:\n      아침: 1일 타이레놀정 500mg 1 · 게보린정 1 | 2일 타이레놀정 500mg 1 · 게보린정 1 | 3일 타이레놀정 500mg 1 · 게보린정 1" in second
+    assert "    조제 계획:\n      아침: 1일 타이레놀정500mg 1 · 게보린정 1 | 2일 타이레놀정500mg 1 · 게보린정 1 | 3일 타이레놀정500mg 1 · 게보린정 1" in second
 
 
 def test_a_prescription_whose_plan_cannot_be_made_is_not_approved(graph):
@@ -113,14 +113,14 @@ def test_a_line_without_an_item_code_is_not_approved(graph):
 
 def test_the_demo_prescriptions_are_matched_by_their_printed_code(graph):
     _, text = run(["rx8_05"], graph)
-    assert "1. [확인] 뮤코다인캡슐 200mg | 코드 200308774 -> 품목 200308774 (code) | 2개 x 2회 x 3일 | morning, evening" in text
+    assert "1. [확인] 뮤코다인캡슐200mg | 코드 200308774 -> 품목 200308774 (code) | 2개 x 2회 x 3일 | morning, evening" in text
     assert "2. [    ] 트립라인정 | 코드 200002714 -> 품목 200002714 (code) | 1개 x 1회 x 3일 | bedtime" in text
 
 
 def test_the_times_and_days_of_every_line_are_shown(graph):
     _, text = run(["rx_002"], graph)
     assert "1. [확인] 게보린정 | 코드 900000021 -> 품목 197900277 (name) | 1개 x 2회 x 2일 | morning, evening" in text
-    assert "2. [확인] 프론크논캠술 | 코드 900000051 -> 품목 200200099 (name) | 1개 x 3회 x 2일 | morning, noon, evening" in text
+    assert "2. [확인] 프론크논캡슐 (처방전: 프론크논캠술) | 코드 900000051 -> 품목 200200099 (name) | 1개 x 3회 x 2일 | morning, noon, evening" in text
 
 
 def test_a_sample_can_be_chosen(graph):
