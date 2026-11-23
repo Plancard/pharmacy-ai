@@ -122,19 +122,16 @@ def judge(detections, plan, image_id="tray"):
 
 
 # ---------------------------------------------------------------- 서비스 함수
-def inspect_tray(image_path, plan, *, image_id=None, model=None, seg_model=None):
+def inspect_tray(image_path, plan, *, image_id=None, overlay_path=None, model=None, seg_model=None):
     """F-CV-05 인터페이스: 트레이 사진 + A.4 → A.3 (cv/stub.inspect와 같은 형식·예외).
 
     image_id를 안 주면 파일 이름(확장자 뺀 것)을 쓴다. 웹은 자기 사진 ID를 넘긴다 (A.3 image_id = images.id).
     트레이를 못 찾으면 TrayNotFound(E_TRAY_NOT_FOUND).
+    실제 처리는 cv.pipeline.run이 한다 (11/23). overlay_path를 주면 결과 오버레이 그림도 저장한다.
     """
-    from cv import tray
-    from cv.detect import detect_pills
+    from cv.pipeline import run
 
-    path = Path(image_path)
-    expected_counts(plan)                       # 계획부터 검사한다 (모델을 돌리기 전에)
-    r = tray.rectify(path, model=seg_model)
-    return judge(detect_pills(r.image, model), plan, image_id or path.stem)
+    return run(image_path, plan, image_id=image_id, overlay_path=overlay_path, model=model, seg_model=seg_model)
 
 
 # ---------------------------------------------------------------- 정답표 평가
