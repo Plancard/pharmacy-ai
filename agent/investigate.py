@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Sequence
 
-from agent.explain import acceptable, evidence_item, explain_input
+from agent.explain import acceptable, evidence_item, explain_input, finding_terms
 from agent.rag import EVIDENCE_TEXT, RagIndex, evidence_search
 from agent.react import ReactResult, Tool, ToolChatFn, ToolFailure, run_react, trace
 from agent.schema import Evidence, RiskFinding
@@ -72,11 +72,11 @@ def evidence_tool(search: EvidenceSearch, allowed: Sequence[str], ids: dict[str,
                  "required": ["query"], "additionalProperties": False}, run)
 
 
-def row_evidence(number: str, ids: dict[str, str], rows: dict[str, dict[str, Any]]) -> Evidence:
+def row_evidence(number: str, ids: dict[str, str], rows: dict[str, dict[str, Any]], terms: Sequence[tuple[str, int]] = ()) -> Evidence:
     """근거 번호 하나를 A.5 evidence로. 찾은 줄이 없으면(rows를 주지 않음) 번호의 제목만으로."""
     row = rows.get(number) or {}
     title = ids[number].split("\x00")[0]
-    return evidence_item(title, str(row.get("source") or "허가정보"), row.get("url") or None, str(row.get("text") or title))
+    return evidence_item(title, str(row.get("source") or "허가정보"), row.get("url") or None, str(row.get("text") or title), terms)
 
 
 def explanations_from(result: ReactResult, findings: Sequence[RiskFinding], names: dict[str, str],
@@ -99,7 +99,7 @@ def explanations_from(result: ReactResult, findings: Sequence[RiskFinding], name
     for n, f in enumerate(findings, start=1):
         text, cited = texts.get(n, (None, []))
         keep = text if text and acceptable(text, f, names) else None
-        evidence = [row_evidence(e, ids, rows) for e in dict.fromkeys(cited)]
+        evidence = [row_evidence(e, ids, rows, finding_terms(f)) for e in dict.fromkeys(cited)]
         out.append(f.model_copy(update={"explanation": keep, "evidence": evidence}))
     return out
 

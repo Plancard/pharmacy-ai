@@ -6,7 +6,8 @@ import pytest
 from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import load_dictionary
 from agent.errors import ConfigError, StructureError
-from agent.explain import FAILED_NOTE, acceptable, apply_explanations, explain_findings, explain_input, passages_for
+from agent.explain import (FAILED_NOTE, acceptable, apply_explanations, attach_evidence, explain_findings, explain_input,
+                           finding_terms, focused_excerpt, passages_for, repeats)
 from agent.nodes import Deps, risk_node
 from agent.rag import RagIndex, chunk_docs
 from agent.schema import RiskFinding
@@ -78,6 +79,86 @@ def test_evidence_of_the_involved_drugs_is_added_to_the_input():
     assert [p.chunk.item_code for p in passages] == [TYLENOL]                   # 관련 약의 문서만
     assert "근거:\n- (타이레놀정500mg · 상호작용) (시험용) 다른 해열진통제와" in explain_input([DUP], NAMES, passages)
     assert passages_for(None, [DUP], NAMES) == []
+
+
+def _doc(code, name, section, text):
+    return {"doc_id": f"{code}:{section}", "item_code": code, "item_name": name, "source": "시험용", "section": section, "url": "", "text": text}
+
+
+KEY = "아세트아미노펜을 포함하는 다른 제품과 함께 복용하지 마십시오."
+DUP_AAP = DUP.model_copy(update={"message": "타이레놀정500mg · 게보린정에 아세트아미노펜 성분이 함께 들어 있습니다. 하루 총량을 확인하세요."})
+
+
+def test_the_excerpt_keeps_only_the_sentences_that_match_the_risk():
+    text = f"음주자는 상의하십시오. 간손상을 일으킬 수 있습니다. 2. 이 약에는 아세트아미노펜이 함유되어 있다. {KEY} 3. 보관법은 따로 있다."
+    out = focused_excerpt(text, finding_terms(DUP_AAP), limit=120)
+    assert out == f"이 약에는 아세트아미노펜이 함유되어 있다. {KEY}"        # 앞뒤 관련 없는 문장 · 번호 제거, …도 없다
+    assert "…" not in out
+
+
+def test_a_matching_sentence_longer_than_the_limit_is_shown_whole():
+    long_key = "아세트아미노펜을 포함하는 다른 제품과 함께 복용하여서는 안 되며 " + "매우 " * 60 + "주의해야 한다."
+    assert focused_excerpt(long_key, finding_terms(DUP_AAP), limit=50) == long_key
+
+
+def test_there_is_no_excerpt_without_a_sentence_that_matches():
+    assert focused_excerpt("매일 세 잔 이상 정기적 음주자는 간손상을 일으킬 수 있습니다. " * 5, finding_terms(DUP_AAP)) is None
+    assert focused_excerpt(KEY, ()) is None
+
+
+def test_the_terms_of_a_duplicate_finding_include_the_shared_ingredient():
+    assert ("아세트아미노펜", 1) in finding_terms(DUP_AAP) and ("다른 제품", 3) in finding_terms(DUP_AAP)
+    assert finding_terms(DUP.model_copy(update={"type": "unknown"})) == ()
+
+
+def _two_drug_index(with_key=(True, True)):
+    docs = []
+    for (code, name), has_key in zip(((TYLENOL, "타이레놀정500mg"), (GEVORIN, "게보린정")), with_key):
+        docs.append(_doc(code, name, "상호작용", "바르비탈계 약물과 알코올을 복용하는 환자는 상의하십시오."))
+        docs.append(_doc(code, name, "사용상의 주의사항", f"음주자는 상의하십시오. {KEY}" if has_key else "음주자는 상의하십시오. 피부 반응에 주의하십시오."))
+    return RagIndex(chunk_docs(docs))
+
+
+def test_each_drug_gets_the_passage_that_says_not_to_take_with_other_products():
+    passages = passages_for(_two_drug_index(), [DUP_AAP], NAMES)
+    assert {p.chunk.item_code for p in passages} == {TYLENOL, GEVORIN}
+    (out,) = attach_evidence([DUP_AAP], passages)
+    assert [e.title.split(" · ")[1] for e in out.evidence] == ["사용상의 주의사항", "사용상의 주의사항"]   # 상호작용 항목이 아니라 중복을 말하는 항목
+    assert {e.title.split(" · ")[0] for e in out.evidence} == {"타이레놀정500mg", "게보린정"}
+    assert all(e.excerpt == KEY and "…" not in e.excerpt for e in out.evidence)
+
+
+def test_evidence_is_left_out_for_a_drug_without_a_matching_sentence():
+    passages = passages_for(_two_drug_index(with_key=(False, True)), [DUP_AAP], NAMES)
+    (out,) = attach_evidence([DUP_AAP], passages)
+    assert [e.title.split(" · ")[0] for e in out.evidence] == ["게보린정"]        # 근거가 없는 약은 억지로 채우지 않는다
+    (none,) = attach_evidence([DUP_AAP], passages_for(_two_drug_index(with_key=(False, False)), [DUP_AAP], NAMES))
+    assert none.evidence == []                                                   # 둘 다 없으면 '근거 없음'
+
+
+def test_cited_evidence_of_one_drug_gets_the_other_drug_added():
+    from agent.schema import Evidence
+
+    cited = DUP_AAP.model_copy(update={"evidence": [Evidence(title="게보린정 · 상호작용", source="시험용", excerpt="인용한 근거")]})
+    (out,) = attach_evidence([cited], passages_for(_two_drug_index(), [DUP_AAP], NAMES))
+    assert [e.title.split(" · ")[0] for e in out.evidence] == ["게보린정", "타이레놀정500mg"]   # 인용은 그대로, 뒤에 빠진 약
+    assert out.evidence[0].excerpt == "인용한 근거"
+    (again,) = attach_evidence([out], passages_for(_two_drug_index(), [DUP_AAP], NAMES))
+    assert again.evidence == out.evidence                                          # 다시 해도 그대로
+
+
+REPEAT = "타이레놀정500mg과 게보린정은 아세트아미노펜 성분이 겹칩니다."
+NEW_INFO = "타이레놀정500mg과 게보린정은 모두 아세트아미노펜을 포함합니다. 환자의 아세트아미노펜 하루 총량(최대 4,000mg)을 확인하세요."
+DUP_MSG = "타이레놀정500mg · 게보린정에 아세트아미노펜 성분이 함께 들어 있습니다. 하루 총량이 넘지 않는지 확인해 주세요."
+
+
+def test_an_explanation_that_only_repeats_the_rule_sentence_is_dropped():
+    assert repeats(REPEAT, DUP_MSG) and not repeats(NEW_INFO, DUP_MSG)
+    dup = DUP.model_copy(update={"message": DUP_MSG})
+    got = {"items": [{"index": 1, "text": REPEAT}]}
+    assert apply_explanations([dup], got, NAMES)[0].explanation is None            # 되풀이는 버린다 (화면에는 규칙 문장만)
+    got = {"items": [{"index": 1, "text": NEW_INFO}]}
+    assert apply_explanations([dup], got, NAMES)[0].explanation == NEW_INFO         # 새 내용(한도)이 있으면 둔다
 
 
 # ------------------------------------------------------------ 노드
