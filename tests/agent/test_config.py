@@ -7,7 +7,7 @@ from agent import config
 from agent.errors import ConfigError
 
 NAMES = ("OPENAI_API_KEY", "OPENAI_MODEL", "LLM_TIMEOUT_SECONDS", "LLM_MAX_RETRIES", "DRUG_API_KEY",
-         "DRUG_API_TIMEOUT_SECONDS", "DRUG_API_RETRIES", "DRUG_API_URL", "DRUG_DICTIONARY_PATH", "DATABASE_URL")
+         "DRUG_API_TIMEOUT_SECONDS", "DRUG_API_RETRIES", "DUR_API_TIMEOUT_SECONDS", "DUR_API_RETRIES", "DUR_API_WORKERS", "DRUG_API_URL", "DRUG_DICTIONARY_PATH", "DATABASE_URL")
 
 
 @pytest.fixture
@@ -25,6 +25,7 @@ def test_defaults_without_any_env(fresh):
     assert c.OPENAI_MODEL == "gpt-5-mini-2025-08-07"
     assert (c.LLM_TIMEOUT_SECONDS, c.LLM_MAX_RETRIES, c.DRUG_API_TIMEOUT_SECONDS, c.DRUG_API_RETRIES) == (20.0, 1, 10.0, 1)
     assert c.DRUG_API_URL.endswith("/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnInq08")
+    assert (c.DUR_API_TIMEOUT_SECONDS, c.DUR_API_RETRIES, c.DUR_API_WORKERS) == (30.0, 0, 8)   # DUR 첫 조회는 25초쯤 걸린다 (11/24)
 
 
 def test_the_dictionary_lives_in_resources_not_data(fresh):

@@ -235,6 +235,20 @@ def test_a_timeout_is_asked_once_more(monkeypatch):
     assert len(calls) == 2
 
 
+def test_a_caller_can_set_the_timeout_and_the_retries(monkeypatch):
+    """DUR API는 의약품 API와 다른 제한 시간 · 재시도를 쓴다 (dur_api.dur_get_json)."""
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(timeout)
+        raise TimeoutError()
+
+    monkeypatch.setattr(drug_api.urllib.request, "urlopen", urlopen)
+    with pytest.raises(DrugApiError):
+        drug_api.http_get_json("https://x", {"serviceKey": "k"}, timeout=31.0, retries=0)
+    assert calls == [31.0]                                # 제한 시간 31초, 다시 묻지 않는다
+
+
 @pytest.mark.parametrize("error, tries", [
     (TimeoutError(), 2),                                                      # 재시도 1회까지 하고 실패
     (urllib.error.URLError("no route"), 2),

@@ -44,6 +44,12 @@ DRUG_API_RETRIES = int(os.getenv("DRUG_API_RETRIES", "1"))
 # 식약처 의약품안전사용서비스(DUR) 품목정보 API (공공데이터포털 15059486). 키는 DRUG_API_KEY와 같다 (13단계).
 # 오퍼레이션 이름(getUsjntTabooInfoList03 등)은 agent/dur_api.py가 붙인다. 버전이 바뀌면 .env에 DUR_API_URL=... 로 적는다.
 DUR_API_URL = os.getenv("DUR_API_URL") or "https://apis.data.go.kr/1471000/DURPrdlstInfoService03"
+# DUR API 호출 1번의 제한 시간과 다시 묻는 횟수. 11/24 도커 리허설에서 같은 요청의 첫 조회가 25초쯤 걸리고 다시 부르면 3초라서
+# 의약품 API(위 10초)와 따로 둔다. 약마다 동시에 묻기 때문에(dur_api.DurApi.prefetch) 30초로 늘려도 DUR 단계는 가장 느린 한 번만큼 걸린다.
+# 제한 시간 안에 답이 없으면 다시 묻지 않고(0) 그 약의 대조는 '확인하지 못함'으로 알린다.
+DUR_API_TIMEOUT_SECONDS = float(os.getenv("DUR_API_TIMEOUT_SECONDS", "30"))
+DUR_API_RETRIES = int(os.getenv("DUR_API_RETRIES", "0"))
+DUR_API_WORKERS = max(1, int(os.getenv("DUR_API_WORKERS", "8")))     # 동시에 묻는 호출 수
 
 # 위험 신호 설명 RAG의 근거 문서 (16단계, 명세서 v0.8 REQ-AG-06). 둘 다 공공데이터포털 식약처 API이고 DRUG_API_KEY를 같이 쓴다 (활용신청은 따로).
 # e약은요(의약품개요정보): 효능 · 사용법 · 주의사항 · 상호작용 · 부작용 · 보관법을 쉬운 말로. 필드는 efcyQesitm 등 (data.go.kr 15075057).

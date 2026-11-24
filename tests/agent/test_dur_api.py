@@ -1,4 +1,7 @@
 """DUR 품목정보 API 조회 (agent/dur_api.py) — 가짜 응답으로. 진짜 API는 scripts/agent/show_dur.py로 본다."""
+import threading
+import time
+
 import pytest
 
 from agent import config, dur_api
@@ -146,3 +149,145 @@ def test_a_short_page_is_the_last_even_without_a_total():
     del data["response"]["body"]["totalCount"]
     fetch = Pages(data)                                             # 두 번째 쪽을 물으면 IndexError
     assert fetch_rows(TABOO_OPERATION, "201110120", key="k", fetch=fetch) == (rows(3), True)
+
+
+# ------------------------------------------------------------ 동시에 묻기 (11/24 도커 리허설: DUR 첫 조회 25초)
+CODES = ("201110120", "200201239", "202106092")
+
+
+def slow_fetch(delay, seen):
+    """호출마다 delay초 걸리고, 동시에 몇 개가 진행 중이었는지 센다."""
+    lock = threading.Lock()
+    state = {"now": 0}
+
+    def fetch(url, params):
+        with lock:
+            state["now"] += 1
+            seen["peak"] = max(seen.get("peak", 0), state["now"])
+        time.sleep(delay)
+        with lock:
+            state["now"] -= 1
+        return response([taboo_row("199900001", "가상케토롤락정", "케토롤락트로메타민")]) if url.endswith(TABOO_OPERATION) \
+            else response([efficacy_row("해열진통소염제")])
+
+    return fetch
+
+
+def test_prefetch_asks_all_drugs_at_once_so_the_wait_is_one_call_not_six():
+    seen = {}
+    dur = DurApi(key="k", fetch=slow_fetch(0.2, seen))
+    started = time.monotonic()
+    dur.prefetch(CODES)                                   # 약 3개 x (병용금기 · 효능군) = 6번
+    elapsed = time.monotonic() - started
+    assert seen["peak"] == 6 and elapsed < 0.2 * 3        # 차례로 물으면 1.2초
+    asked = time.monotonic()
+    assert dur.taboo(CODES[0]).partners and dur.efficacy(CODES[2]) == ("해열진통소염제",)
+    assert time.monotonic() - asked < 0.1                 # 이미 받아 둔 것은 다시 묻지 않는다
+
+
+def test_prefetch_can_ask_only_one_kind(monkeypatch):
+    kinds = []
+
+    def fetch(url, params):
+        kinds.append(url.rsplit("/", 1)[1])
+        return response([])
+
+    DurApi(key="k", fetch=fetch).prefetch(CODES, efficacy=False)
+    assert sorted(kinds) == [TABOO_OPERATION] * 3
+
+
+def test_prefetch_does_not_ask_what_it_already_has():
+    calls = []
+
+    def fetch(url, params):
+        calls.append(params["itemSeq"])
+        return response([])
+
+    dur = DurApi(key="k", fetch=fetch)
+    dur.prefetch(CODES)
+    n = len(calls)
+    dur.prefetch(CODES)
+    assert len(calls) == n == 6
+
+
+def test_a_prefetch_failure_is_raised_once_by_the_lookup_without_asking_again():
+    calls = []
+
+    def fetch(url, params):
+        calls.append(params["itemSeq"])
+        raise DrugApiError("의약품 API에 연결하지 못했습니다 (TimeoutError).")
+
+    dur = DurApi(key="k", fetch=fetch)
+    dur.prefetch(CODES, efficacy=False)
+    assert len(calls) == 3
+    with pytest.raises(DrugApiError):
+        dur.taboo(CODES[0])
+    assert len(calls) == 3                                # 동시에 물을 때 이미 실패한 것을 한 번 더 기다리지 않는다
+    with pytest.raises(DrugApiError):
+        dur.taboo(CODES[0])                               # 그 다음 부르면 다시 묻는다 (오류는 한 번만 기억한다)
+    assert len(calls) == 4
+
+
+def test_a_remembered_failure_expires(monkeypatch):
+    calls = []
+    state = {"fail": True}
+
+    def fetch(url, params):
+        calls.append(1)
+        if state["fail"]:
+            raise DrugApiError("의약품 API에 연결하지 못했습니다 (TimeoutError).")
+        return response([])
+
+    dur = DurApi(key="k", fetch=fetch)
+    dur.prefetch(CODES, efficacy=False)
+    state["fail"] = False
+    monkeypatch.setattr(dur_api, "ERROR_MEMORY_SECONDS", 0.0)
+    assert dur.taboo(CODES[1]).partners == ()             # 기억 시간이 지났으면 다시 묻는다
+
+
+def test_one_drug_is_asked_directly_without_a_pool():
+    calls = []
+    dur = DurApi(key="k", fetch=lambda url, params: calls.append(1) or response([]))
+    dur.prefetch(["201110120"], efficacy=False)           # 하나뿐이면 동시에 물을 이유가 없다
+    assert calls == []
+    assert dur.taboo("201110120").partners == ()
+    assert calls == [1]
+
+
+def test_the_dur_calls_use_the_dur_timeout_not_the_drug_api_timeout(monkeypatch):
+    seen = {}
+
+    def get(url, params, *, timeout=None, retries=None):
+        seen.update(timeout=timeout, retries=retries)
+        return response([])
+
+    monkeypatch.setattr(dur_api, "http_get_json", get)
+    monkeypatch.setattr(config, "DUR_API_TIMEOUT_SECONDS", 31.0)
+    monkeypatch.setattr(config, "DUR_API_RETRIES", 0)
+    monkeypatch.setattr(config, "DRUG_API_TIMEOUT_SECONDS", 10.0)
+    DurApi(key="k").taboo("201110120")
+    assert seen == {"timeout": 31.0, "retries": 0}
+
+
+def test_find_all_with_the_real_lookup_asks_every_drug_at_once_and_only_once():
+    """처방약 4개 대조: 병용금기 4 + 효능군 4 = 8번을 한꺼번에 묻고, 병용금기 · 효능군 대조가 같은 응답을 다시 쓴다."""
+    from agent import dur
+    from agent.drug_dictionary import load_dictionary
+    from agent.schema import DrugLine
+
+    dictionary = load_dictionary(config.RESOURCES_DIR / "drug_dictionary.json")
+    codes = ("202106092", "197900277", "201110120", "200201239")        # 타이레놀 · 게보린 · 트리스펜 · 아르펜
+    items = [DrugLine(item_code=c, name=f"약{i}", printed_code=None, count_per_dose=1, times=["morning"], days=3)
+             for i, c in enumerate(codes)]
+    seen, calls = {}, []
+    inner = slow_fetch(0.2, seen)
+
+    def fetch(url, params):
+        calls.append((url.rsplit("/", 1)[1], params["itemSeq"]))
+        return inner(url, params)
+
+    started = time.monotonic()
+    report = dur.find_all(items, dictionary, DurApi(key="k", fetch=fetch))
+    elapsed = time.monotonic() - started
+    assert report.dur_used and len(calls) == 8 == len(set(calls))       # 같은 (종류, 약)은 한 번만
+    assert seen["peak"] == 8 and elapsed < 0.2 * 3                      # 차례로 물으면 8 x 0.2 = 1.6초

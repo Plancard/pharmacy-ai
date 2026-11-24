@@ -122,29 +122,30 @@ def parse_products(data: Any) -> list[ApiDrug]:
 # ------------------------------------------------------------ 호출
 
 
-def http_get_json(url: str, params: dict[str, Any]) -> Any:
+def http_get_json(url: str, params: dict[str, Any], *, timeout: float | None = None, retries: int | None = None) -> Any:
     """GET 요청을 보내 JSON으로 읽는다. 실패하면 DrugApiError (키가 든 URL은 메시지에 넣지 않는다).
 
-    연결 실패 · 시간 초과는 config.DRUG_API_RETRIES번까지 다시 묻는다. HTTP 오류(키 · 권한 · 주소 문제)는 다시 묻지 않는다.
+    연결 실패 · 시간 초과는 retries번(기본 config.DRUG_API_RETRIES)까지 다시 묻는다. HTTP 오류(키 · 권한 · 주소 문제)는 다시 묻지 않는다.
+    timeout(기본 config.DRUG_API_TIMEOUT_SECONDS)은 호출 1번의 제한 시간이다. DUR API는 첫 조회가 느려 dur_api가 따로 정해 넘긴다.
     """
-    attempts = 1 + max(0, config.DRUG_API_RETRIES)
+    attempts = 1 + max(0, config.DRUG_API_RETRIES if retries is None else retries)
     for attempt in range(1, attempts + 1):
         try:
-            return _get_json_once(url, params)
+            return _get_json_once(url, params, timeout)
         except DrugApiError as e:
             if not e.retryable or attempt == attempts:
                 raise
     raise AssertionError("도달하지 않는다")
 
 
-def _get_json_once(url: str, params: dict[str, Any]) -> Any:
+def _get_json_once(url: str, params: dict[str, Any], timeout: float | None = None) -> Any:
     secret = params.get("serviceKey")
     request = urllib.request.Request(
         f"{url}?{urllib.parse.urlencode(params)}",
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
     )
     try:
-        with urllib.request.urlopen(request, timeout=config.DRUG_API_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=config.DRUG_API_TIMEOUT_SECONDS if timeout is None else timeout) as response:
             raw = response.read()
     except urllib.error.HTTPError as e:
         try:

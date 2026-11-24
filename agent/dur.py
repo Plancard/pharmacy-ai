@@ -64,7 +64,10 @@ class TabooResult(Protocol):
 
 
 class DurLookup(Protocol):
-    """DUR 조회. 실패하면 DrugApiError(키가 없으면 ConfigError)."""
+    """DUR 조회. 실패하면 DrugApiError(키가 없으면 ConfigError).
+
+    prefetch(item_codes, taboo=, efficacy=)는 있어도 되고 없어도 된다: 있으면 약들을 동시에 물어 둔다 (dur_api.DurApi).
+    """
 
     def taboo(self, item_code: str) -> TabooResult: ...
 
@@ -168,6 +171,13 @@ def _coded_drugs(items: Sequence[DrugRef], dictionary: DrugDictionary | None) ->
     return list(drugs.items())
 
 
+def _prefetch(lookup: DurLookup, drugs: Sequence[tuple[str, str]], *, taboo: bool, efficacy: bool) -> None:
+    """조회가 prefetch를 갖고 있으면(dur_api.DurApi) 이 약들을 동시에 물어 둔다. 없으면(테스트의 가짜 조회) 건너뛴다."""
+    ahead = getattr(lookup, "prefetch", None)
+    if ahead is not None:
+        ahead([code for code, _ in drugs], taboo=taboo, efficacy=efficacy)
+
+
 class _Asking:
     """조회가 한 번 실패하면 그 뒤로는 묻지 않는다. 실패는 처음 실패한 약 이름과 함께 unchecked 하나로 남긴다."""
 
@@ -188,6 +198,7 @@ def find_combination_taboos(items: Sequence[DrugRef], lookup: DurLookup,
                             dictionary: DrugDictionary | None = None) -> DurReport:
     """처방약끼리 병용금기를 찾는다. 약마다 병용금기 목록을 받아, 다른 처방약의 코드가 있으면 그 쌍이 금기다."""
     drugs = _coded_drugs(items, dictionary)
+    _prefetch(lookup, drugs, taboo=True, efficacy=False)
     asking = _Asking(lookup)
     partners: dict[str, dict[str, TabooPartner]] = {}
     unchecked: list[Unchecked] = []
@@ -215,6 +226,7 @@ def find_efficacy_duplicates(items: Sequence[DrugRef], lookup: DurLookup, dictio
                              *, already: Iterable[DurHit] = ()) -> DurReport:
     """처방약끼리 효능군 중복을 찾는다. already(성분 중복 등)로 이미 묶인 약들끼리는 다시 알리지 않는다."""
     drugs = _coded_drugs(items, dictionary)
+    _prefetch(lookup, drugs, taboo=False, efficacy=True)
     covered = [set(h.item_codes) for h in already]
     asking = _Asking(lookup)
     holders: dict[str, list[int]] = {}                   # 효능군 -> 그 효능군인 약(drugs의 번호)
@@ -245,6 +257,8 @@ def check_duplicate(items: Sequence[DrugRef], dictionary: DrugDictionary, lookup
     ingredient = find_ingredient_duplicates(items, dictionary)
     if lookup is None:
         return ingredient
+    # 그래프는 이어서 병용금기도 묻는다 (find_all · MCP 클라이언트의 check_dur). 둘을 한꺼번에 동시에 물어 두면 첫 조회가 한 번만 느리다.
+    _prefetch(lookup, _coded_drugs(items, dictionary), taboo=True, efficacy=True)
     return merge_reports(ingredient, find_efficacy_duplicates(items, lookup, dictionary, already=ingredient.hits))
 
 

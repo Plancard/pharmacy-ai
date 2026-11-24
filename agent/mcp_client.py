@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -214,13 +215,22 @@ class DrugTools:
         return combine_checks(taboos, duplicates)
 
 
+def child_env() -> dict[str, str]:
+    """서버 하위 프로세스에 넘길 환경변수: 지금 프로세스의 환경변수 전부 + 파이썬 글자 설정.
+
+    mcp의 StdioServerParameters는 env를 주면 PATH · HOME 같은 기본 몇 개만 얹어 줄 뿐 나머지 환경변수는 넘기지 않는다.
+    그래서 .env 파일이 없는 컨테이너(키를 환경변수로만 넣는 곳)에서는 서버가 DRUG_API_KEY를 못 받아 DUR이 꺼졌다 (11/24 도커 리허설).
+    .env가 있는 PC에서는 서버가 저장소 루트의 .env를 스스로 읽어서 드러나지 않았다.
+    """
+    return {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+
 def stdio_params(*, no_api: bool = False) -> "StdioServerParameters":
     """python -m agent.mcp_server 를 저장소 루트에서 띄우는 설정. 지금 쓰는 파이썬(.venv)으로 띄운다."""
     from mcp.client.stdio import StdioServerParameters
 
     args = ["-m", "agent.mcp_server"] + (["--no-api"] if no_api else [])
-    return StdioServerParameters(command=sys.executable, args=args, cwd=str(ROOT),
-                                 env={"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+    return StdioServerParameters(command=sys.executable, args=args, cwd=str(ROOT), env=child_env())
 
 
 def stdio(*, no_api: bool = False) -> DrugTools:

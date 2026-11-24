@@ -9,7 +9,7 @@ import pytest
 
 from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import load_dictionary
-from agent.mcp_client import ROOT, DrugTools, McpToolError, in_process, stdio_params
+from agent.mcp_client import ROOT, DrugTools, McpToolError, child_env, in_process, stdio_params
 
 ROOT_DIR = RESOURCES_DIR.parents[1]
 
@@ -42,6 +42,21 @@ def test_the_stdio_settings_start_the_server_module_with_this_python():
     assert params.command == sys.executable and params.args == ["-m", "agent.mcp_server"]
     assert params.cwd == str(ROOT_DIR) and params.env["PYTHONIOENCODING"] == "utf-8"
     assert stdio_params(no_api=True).args == ["-m", "agent.mcp_server", "--no-api"]
+
+
+def test_the_server_process_gets_the_environment_variables_too(monkeypatch):
+    """11/24 도커 리허설: .env 없이 환경변수로만 넣은 DRUG_API_KEY가 하위 프로세스에 안 가서 DUR이 꺼졌다."""
+    monkeypatch.setenv("DRUG_API_KEY", "컨테이너-환경변수-키")
+    monkeypatch.setenv("DUR_API_TIMEOUT_SECONDS", "31")
+    env = child_env()
+    assert env["DRUG_API_KEY"] == "컨테이너-환경변수-키" and env["DUR_API_TIMEOUT_SECONDS"] == "31"
+    assert env["PYTHONIOENCODING"] == "utf-8" and env["PYTHONUTF8"] == "1"
+
+
+@needs_mcp
+def test_the_stdio_settings_pass_the_environment_variables(monkeypatch):
+    monkeypatch.setenv("DRUG_API_KEY", "컨테이너-환경변수-키")
+    assert stdio_params().env["DRUG_API_KEY"] == "컨테이너-환경변수-키"
 
 
 @needs_mcp
