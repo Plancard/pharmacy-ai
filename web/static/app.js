@@ -412,9 +412,22 @@
         risk.scope === "rx_only" ? h("span", { class: "muted" }, "처방약 기준 판단 (복용 약 미등록)") : null));
     if (risk.findings && risk.findings.length) {
       box.append(h("ul", {}, risk.findings.map((f) =>
-        h("li", {}, h("span", { class: `chip ${f.level}` }, RISK[f.level] || f.level), " ", f.message))));
+        h("li", {}, h("span", { class: `chip ${f.level}` }, RISK[f.level] || f.level), " ", f.message,
+          f.explanation ? h("div", {}, f.explanation) : null,
+          evidenceList(f.evidence)))));
     }
     return box;
+  }
+
+  // 위험 항목의 대조 근거(A.5 risk_check.findings[].evidence, RAG). 접어 두고 펼쳐 본다.
+  // 근거를 못 찾았으면 '근거 없음'(기능분석서 F-AG-06: 위험 단계는 DUR 규칙으로 유지, 흐름은 계속). 이력 상세와 같은 표시.
+  function evidenceList(evidence) {
+    if (!evidence || !evidence.length) return h("div", { class: "muted evidence-none" }, "근거 없음");
+    return h("details", { class: "evidence" },
+      h("summary", {}, `근거 ${evidence.length}건 보기`),
+      h("ul", {}, evidence.map((ev) => h("li", {},
+        h("strong", {}, ev.title || ""), " ", h("span", { class: "muted" }, `— ${ev.source || ""}`),
+        h("div", {}, ev.excerpt || "")))));
   }
 
   // 조제 계획(A.4): 일수별로 시간대마다 넣을 약과 알 수. plan이 없으면 이유(notice)만 보여 준다.

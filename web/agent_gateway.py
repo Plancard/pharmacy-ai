@@ -102,7 +102,9 @@ _UNMATCHED = {"item_code": None, "name": "알모란정", "count_per_dose": 1,
               "times": ["morning", "noon", "evening"], "days": 3, "source_line_ids": [73, 74, 75, 77],
               "needs_pharmacist_check": True, "check_reasons": ["대상 8종이 아닌 약품 (품목기준코드 없음)"]}
 _DUP = {"type": "ingredient_dup", "item_codes": ["202106092", "197900277"], "level": "warning",
-        "message": "타이레놀정500mg과 게보린정에 아세트아미노펜이 함께 들어 있습니다. 하루 총량을 확인하세요."}
+        "message": "타이레놀정500mg과 게보린정에 아세트아미노펜이 함께 들어 있습니다. 하루 총량을 확인하세요.",
+        "evidence": [{"title": "(가짜 데이터) 게보린정 · 상호작용", "source": "식약처 e약은요 (의약품개요정보)",
+                      "excerpt": "아세트아미노펜을 포함하는 다른 제품과 함께 복용하지 마십시오."}]}
 _DANGER = {"type": "contraindication", "item_codes": ["202106092", "200200099"], "level": "danger",
            "message": "(가짜 데이터) 병용금기 조합입니다. 처방 의사에게 확인한 뒤 진행하세요."}
 _SLOT_WARNING = "3번째 약품: 복용 시점이 처방전에 없어 하루 3회 기준으로 배정했습니다."   # agent/validate.py의 문구와 같은 꼴

@@ -101,6 +101,10 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 .risk-head { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
 .risk-warning { border-color: #fcd34d; }
 .risk-danger { border-color: #fca5a5; background: #fef2f2; }
+.risk .evidence { margin-top: 4px; font-size: 14px; }
+.risk .evidence summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+.risk .evidence ul { margin-top: 6px; }
+.risk .evidence-none { font-size: 13px; }
 .actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .confirm { display: flex; gap: 8px; align-items: center; font-size: 14px; }
 @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } .approval-grid { grid-template-columns: 1fr; } }
