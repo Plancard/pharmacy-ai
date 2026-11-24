@@ -109,9 +109,9 @@ def test_the_levels_have_labels_and_the_confirm_levels_are_levels():
 
 
 def test_the_message_names_the_drugs_and_the_ingredients():
-    assert ingredient_dup_message(HIT_A) == "타이레놀정500mg · 게보린정에 아세트아미노펜 성분이 함께 들어 있습니다. 하루 총량을 확인하세요."
+    assert ingredient_dup_message(HIT_A) == "타이레놀정500mg · 게보린정에 아세트아미노펜 성분이 함께 들어 있습니다. 하루 총량이 넘지 않는지 확인해 주세요."
     two = DurHit(INGREDIENT_DUP, ("1", "2"), ("가정", "나정"), ("성분X", "성분Y"))
-    assert ingredient_dup_message(two) == "가정 · 나정에 성분X, 성분Y 성분이 함께 들어 있습니다. 하루 총량을 확인하세요."
+    assert ingredient_dup_message(two) == "가정 · 나정에 성분X, 성분Y 성분이 함께 들어 있습니다. 하루 총량이 넘지 않는지 확인해 주세요."
 
 
 def test_a_finding_carries_the_codes_the_level_and_the_message():
@@ -273,7 +273,7 @@ def test_an_efficacy_duplicate_is_a_warning_naming_the_group():
     finding = finding_from_hit(EFFICACY)
     assert finding.level == "warning"
     assert finding.message == efficacy_dup_message(EFFICACY) == \
-        "타이레놀정500mg · 아르펜정는 같은 효능군(해열진통소염제)입니다. 함께 쓸 필요가 있는지 확인하세요."
+        "타이레놀정500mg · 아르펜정는 같은 효능군(해열진통소염제)에 속합니다. 함께 쓰는 이유를 확인해 주세요."
 
 
 def test_without_dur_the_order_says_taboos_were_not_checked():

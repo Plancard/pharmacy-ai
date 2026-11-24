@@ -69,7 +69,7 @@ def test_it_shows_the_final_state_of_one_sample(graph):
 def test_it_shows_the_risk_check_with_the_ingredient_duplicate_of_combination_a(graph):
     _, text = run(["rx_004"], graph)                                 # 타이레놀 · 게보린 (시연 조합 A)
     assert "위험 신호: 경고 (처방약끼리 대조, 1건)" in text
-    assert "- [경고] 타이레놀정500mg · 게보린정에 아세트아미노펜 성분이 함께 들어 있습니다. 하루 총량을 확인하세요." in text
+    assert "- [경고] 타이레놀정500mg · 게보린정에 아세트아미노펜 성분이 함께 들어 있습니다. 하루 총량이 넘지 않는지 확인해 주세요." in text
     assert "위험 신호가 1건 있습니다(경고). 약사가 확인한 뒤에 승인할 수 있습니다." in text      # 안내에도 나온다
 
 

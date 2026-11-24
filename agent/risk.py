@@ -76,7 +76,7 @@ def requires_confirmation(level: str) -> bool:
 
 def ingredient_dup_message(hit: DurHit) -> str:
     """성분 중복 항목의 설명 문장 (고정 문장. 18단계에서 LLM 설명이 이 자리를 대신할 수 있다)."""
-    return f"{' · '.join(hit.names)}에 {', '.join(hit.ingredients)} 성분이 함께 들어 있습니다. 하루 총량을 확인하세요."
+    return f"{' · '.join(hit.names)}에 {', '.join(hit.ingredients)} 성분이 함께 들어 있습니다. 하루 총량이 넘지 않는지 확인해 주세요."
 
 
 def combination_taboo_message(hit: DurHit) -> str:
@@ -86,7 +86,7 @@ def combination_taboo_message(hit: DurHit) -> str:
 
 
 def efficacy_dup_message(hit: DurHit) -> str:
-    return f"{' · '.join(hit.names)}는 같은 효능군({', '.join(hit.ingredients)})입니다. 함께 쓸 필요가 있는지 확인하세요."
+    return f"{' · '.join(hit.names)}는 같은 효능군({', '.join(hit.ingredients)})에 속합니다. 함께 쓰는 이유를 확인해 주세요."
 
 
 _MESSAGES = {
