@@ -25,7 +25,7 @@ import numpy as np
 from cv.rectify_doc import rectify
 from cv.stub import OcrEmpty
 
-MAX_SIDE = 1600          # OCR에 넣는 긴 변 (잠정, 기능분석서 F-CV-01) — cv/ocr_eval.py --max-side로 비교
+MAX_SIDE = 2000          # OCR에 넣는 긴 변 (11/25 인쇄 실물 판정으로 확정, 기능분석서 F-CV-01 [P]) — cv/ocr_eval.py --max-side로 비교
 LOW_CONF = 0.5           # 이 미만 줄은 웹에서 강조 (판단은 웹·Agent, 여기서는 그대로 반환)
 DOC_TYPES = ("prescription", "med_bag")
 
