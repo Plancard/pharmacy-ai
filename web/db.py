@@ -3,7 +3,7 @@
 - 테이블 정의는 web/schema.sql 하나가 기준이다. ORM은 쓰지 않는다.
 - 연결은 첫 사용 때 연다. 그래서 DB가 꺼져 있어도 `flask --help` 같은 명령은 동작한다.
 - 세션 시간대는 UTC로 고정한다. 화면에서만 KST로 바꾼다 (ERD 설계 규칙 6).
-- LangGraph PostgresSaver도 같은 DATABASE_URL을 쓴다 (checkpointer_conninfo()).
+- LangGraph PostgresSaver도 같은 DATABASE_URL을 쓴다.
 """
 from __future__ import annotations
 
@@ -76,11 +76,6 @@ def ping() -> bool:
     except Exception:   # 상태 확인용이라 원인은 로그로만 남긴다
         current_app.logger.exception("DB 연결 확인 실패")
         return False
-
-
-def checkpointer_conninfo() -> str:
-    """LangGraph PostgresSaver.from_conn_string()에 그대로 넘긴다."""
-    return current_app.config["DATABASE_URL"]
 
 
 # ------------------------------------------------------------ 스키마
