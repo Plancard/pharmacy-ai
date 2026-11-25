@@ -31,20 +31,14 @@ def create(pharmacy_id: int, user_id: int, rx_id: uuid.UUID, storage_key: str,
            kind: str = "prescription") -> dict:
     """처방 1건과 첫 이미지를 한 트랜잭션으로 만든다. 처방은 '처리 중'으로 시작한다.
 
-    처방은 같은 ID의 대화(conversations)에 속한다. 대화가 없으면 새로 만들고, 상담 대화(같은 ID)가
-    이미 있으면 그 대화가 처방 대화가 된다.
+    처방 ID(rx_id)가 그대로 Agent 실행 기록(LangGraph thread)의 ID가 된다.
     """
     with db.transaction() as conn:
-        conn.execute(
-            "INSERT INTO conversations (id, pharmacy_id, user_id) VALUES (%s, %s, %s) "
-            "ON CONFLICT (id) DO NOTHING",
-            (rx_id, pharmacy_id, user_id),
-        )
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (pharmacy_id,))
         rx = conn.execute(_INSERT_RX, (rx_id, pharmacy_id, user_id, pharmacy_id)).fetchone()
         img = conn.execute(
-            "INSERT INTO images (prescription_id, kind, kind_source, storage_key) "
-            "VALUES (%s, %s, 'manual', %s) RETURNING id",
+            "INSERT INTO images (prescription_id, kind, storage_key) "
+            "VALUES (%s, %s, %s) RETURNING id",
             (rx_id, kind, storage_key),
         ).fetchone()
     return {**rx, "image_id": img["id"]}
@@ -121,8 +115,8 @@ def attach_tray(rx_id: uuid.UUID, pharmacy_id: int, storage_key: str) -> uuid.UU
         if row is None:
             return None
         img = conn.execute(
-            "INSERT INTO images (prescription_id, kind, kind_source, storage_key) "
-            "VALUES (%s, 'tray', 'manual', %s) RETURNING id",
+            "INSERT INTO images (prescription_id, kind, storage_key) "
+            "VALUES (%s, 'tray', %s) RETURNING id",
             (rx_id, storage_key),
         ).fetchone()
     return img["id"]

@@ -1,4 +1,4 @@
-"""처방전·약봉투 텍스트 추출 (F-CV-01, F-CV-06) — 서비스에서 부르는 OCR 모듈.
+"""처방전 텍스트 추출 (F-CV-01) — 서비스에서 부르는 OCR 모듈.
 
     from cv.ocr import extract_text
     a1 = extract_text("var/uploads/rx.jpg", doc_type="prescription", image_id="…")   # → A.1 dict
@@ -27,7 +27,7 @@ from cv.stub import OcrEmpty
 
 MAX_SIDE = 2000          # OCR에 넣는 긴 변 (11/25 인쇄 실물 판정으로 확정, 기능분석서 F-CV-01 [P]) — cv/ocr_eval.py --max-side로 비교
 LOW_CONF = 0.5           # 이 미만 줄은 웹에서 강조 (판단은 웹·Agent, 여기서는 그대로 반환)
-DOC_TYPES = ("prescription", "med_bag")
+DOC_TYPES = ("prescription",)   # A.1 doc_type (1차는 처방전만, 명세서 v0.8)
 
 _reader = None
 _reader_lock = threading.Lock()

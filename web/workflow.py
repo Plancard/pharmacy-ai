@@ -17,7 +17,7 @@ from web import jobs, rx, storage
 from web.agent_gateway import Pause, Wait, gateway
 
 ERROR_CODES = {"E_OCR_EMPTY", "E_TRAY_NOT_FOUND", "E_CV_INFER", "E_PLAN_RANGE",
-               "E_BARCODE_FAIL", "E_LLM", "E_EXT_API", "E_DB", "E_INTERRUPTED"}
+               "E_LLM", "E_EXT_API", "E_DB", "E_INTERRUPTED"}
 
 # 일시 오류: 같은 처방전 이미지로 처음부터 다시 시도할 수 있다 (11/17 회의 Q6 [재시도]). 그 밖의 실패는 다시 찍어 올려야 한다
 # [다시 시도](같은 처방전 사진으로 새 처방): 일시 오류. E_CV_INFER(OCR 모델 추론 오류)는 11/23 추가 (6장: 재시도)
