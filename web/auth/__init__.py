@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import os
+
 import functools
 from urllib.parse import urlsplit
 
@@ -89,6 +91,10 @@ def create_user(username: str, pharmacy_name: str, role: str, password: str) -> 
         raise click.ClickException("비밀번호는 8자 이상이어야 합니다.")
     if db.query_one("SELECT 1 FROM users WHERE username = %s", (username,)):
         raise click.ClickException(f"이미 있는 아이디입니다: {username}")
+    _add_user(username, pharmacy_name, role, password)
+
+
+def _add_user(username: str, pharmacy_name: str, role: str, password: str) -> None:
     pharmacy = db.query_one("SELECT id FROM pharmacies WHERE name = %s ORDER BY id LIMIT 1", (pharmacy_name,))
     if pharmacy is None:
         pharmacy = db.execute("INSERT INTO pharmacies (name) VALUES (%s) RETURNING id", (pharmacy_name,))
@@ -98,3 +104,25 @@ def create_user(username: str, pharmacy_name: str, role: str, password: str) -> 
         (pharmacy["id"], username, generate_password_hash(password), role),
     )
     click.echo(f"계정을 만들었습니다: {username} ({pharmacy_name}, {role})")
+
+
+# 계정이 하나도 없을 때 서버 시작 시(Dockerfile CMD) 만드는 기본 계정 (11/26). 로컬 시연용이라 .env로 바꿀 수 있다.
+DEFAULT_ACCOUNT = {"username": "ph1", "password": "12345678", "pharmacy": "2조 약국"}
+
+
+@bp.cli.command("ensure-default-user")
+def ensure_default_user() -> None:
+    """계정이 하나도 없으면 기본 계정을 만든다 (있으면 아무것도 하지 않는다).
+
+    값은 DEFAULT_USERNAME · DEFAULT_PASSWORD · DEFAULT_PHARMACY 환경변수로 바꿀 수 있고, 없으면 ph1 / 12345678 / 2조 약국.
+    이미 계정이 있으면 건드리지 않으므로 비밀번호를 바꾼 계정이 되돌아가지 않는다.
+    """
+    if db.query_one("SELECT 1 AS any_user FROM users LIMIT 1"):
+        click.echo("계정이 이미 있어 기본 계정을 만들지 않았습니다.")
+        return
+    username = os.environ.get("DEFAULT_USERNAME") or DEFAULT_ACCOUNT["username"]
+    password = os.environ.get("DEFAULT_PASSWORD") or DEFAULT_ACCOUNT["password"]
+    pharmacy = os.environ.get("DEFAULT_PHARMACY") or DEFAULT_ACCOUNT["pharmacy"]
+    if len(password) < 8:
+        raise click.ClickException("DEFAULT_PASSWORD는 8자 이상이어야 합니다.")
+    _add_user(username, pharmacy, "pharmacist", password)

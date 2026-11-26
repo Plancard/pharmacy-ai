@@ -29,6 +29,8 @@ class FakeDB:
         if "SELECT id, password_hash FROM users" in sql:
             return next(({"id": u["id"], "password_hash": u["password_hash"]}
                          for u in self.users.values() if u["username"] == params[0]), None)
+        if "SELECT 1 AS any_user FROM users" in sql:   # 기본 계정 만들기 (계정이 하나라도 있나)
+            return {"any_user": 1} if self.users else None
         if "SELECT 1 FROM users" in sql:
             return {"?column?": 1} if any(u["username"] == params[0] for u in self.users.values()) else None
         if "FROM pharmacies WHERE name" in sql:
@@ -55,7 +57,7 @@ class FakeDB:
             self.pharmacies[new] = params[0]
             return {"id": new}
         if sql.startswith("INSERT INTO users"):
-            new = max(self.users) + 1
+            new = max(self.users, default=0) + 1
             self.users[new] = {"id": new, "pharmacy_id": params[0], "username": params[1],
                                "password_hash": params[2], "role": params[3]}
             return None
@@ -219,3 +221,19 @@ def test_main_list_pages_the_active_prescriptions(client, monkeypatch):
     assert "2쪽" in html and "/?p=1" in html and "/?p=3" in html
     html = client.get("/?p=nope").get_data(as_text=True)
     assert "1쪽" in html and "/?p=2" in html
+
+
+def test_default_user_is_created_only_when_there_is_no_account(app, fake, monkeypatch):
+    """서버 시작 때(Dockerfile CMD) 계정이 하나도 없으면 ph1 / 12345678 / 2조 약국을 만든다 (11/26)."""
+    from werkzeug.security import check_password_hash
+    runner = app.test_cli_runner()
+    r = runner.invoke(args=["ensure-default-user"])
+    assert r.exit_code == 0 and "이미 있어" in r.output and len(fake.users) == 1      # ph1이 이미 있으면 그대로
+    fake.users.clear()
+    for k in ("DEFAULT_USERNAME", "DEFAULT_PASSWORD", "DEFAULT_PHARMACY"):
+        monkeypatch.delenv(k, raising=False)
+    r = runner.invoke(args=["ensure-default-user"])
+    assert r.exit_code == 0, r.output
+    (user,) = fake.users.values()
+    assert user["username"] == "ph1" and check_password_hash(user["password_hash"], "12345678")
+    assert fake.pharmacies[user["pharmacy_id"]] == "2조 약국" and user["role"] == "pharmacist"

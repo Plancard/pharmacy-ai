@@ -30,4 +30,4 @@ COPY --chown=app:app . .
 
 EXPOSE 5000
 # 스키마 적용(이미 있으면 건너뜀) → 재시작으로 끊긴 '처리 중' 처방 정리 → gunicorn 워커 1개 + 스레드 4개
-CMD ["sh", "-c", "flask --app wsgi init-db && flask --app wsgi fail-stale --minutes 0 && exec gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 --access-logfile - wsgi:app"]
+CMD ["sh", "-c", "flask --app wsgi init-db && flask --app wsgi ensure-default-user && flask --app wsgi fail-stale --minutes 0 && exec gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 --access-logfile - wsgi:app"]
