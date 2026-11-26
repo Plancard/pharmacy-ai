@@ -259,23 +259,37 @@ button.link .icon, .topbar .icon { width: 16px; height: 16px; }
 .slide-nav:hover:not(:disabled) { background: #eff6ff; color: var(--accent); }
 .slide-nav.prev { left: 0; }
 .slide-nav.next { right: 0; }
-.intro { padding: 56px 0 0; scroll-margin-top: 16px; }
-.intro > h2 { font-size: 26px; margin: 0 0 20px; letter-spacing: -.02em; }
-.feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.feature { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-.feature h3 { margin: 12px 0 6px; font-size: 17px; }
-.feature p { margin: 0; color: #4b5563; line-height: 1.65; }
-.feature-icon, .step-icon { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: #eff6ff; color: var(--accent); }
-.feature-icon .icon, .step-icon .icon { width: 22px; height: 22px; }
-.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; counter-reset: step; }
-.steps li { position: relative; display: grid; gap: 8px; align-content: start; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; counter-increment: step; }
-.steps li::after { content: counter(step); position: absolute; right: 16px; top: 14px; font-size: 28px; font-weight: 800; color: #e5e7eb; }
-.steps li span:last-child { color: #4b5563; line-height: 1.6; font-size: 14px; }
+.intro { padding: 88px 0 0; scroll-margin-top: 16px; }
+.intro > h2 { font-size: clamp(28px, 3.4vw, 40px); margin: 0; letter-spacing: -.03em; }
+.intro-lead { margin: 10px 0 32px; font-size: 18px; color: #4b5563; }
+/* 화면 캡처: 연한 격자 배경 위에 캡처를 띄운다 */
+.capture { position: relative; aspect-ratio: 1 / 1; border-radius: 20px; overflow: hidden; display: grid; place-items: center; padding: 28px;
+  background-color: #eef4ff; background-image: linear-gradient(#dbe6fb 1px, transparent 1px), linear-gradient(90deg, #dbe6fb 1px, transparent 1px);
+  background-size: 32px 32px; }
+.capture img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .14), 0 0 0 1px rgba(15, 23, 42, .06); }
+.capture .shot-missing { position: absolute; inset: 0; }
+.feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
+.feature { display: grid; align-content: start; gap: 0; }
+.feature h3 { margin: 22px 0 10px; font-size: clamp(24px, 2.4vw, 30px); letter-spacing: -.03em; }
+.feature p { margin: 0; color: #374151; font-size: 16px; line-height: 1.7; }
+.more { margin-top: 16px; color: var(--accent); font-weight: 600; text-decoration: none; justify-self: start; }
+.more:hover { text-decoration: underline; }
+/* 사용 방법: 글과 캡처를 좌우로 번갈아 놓는다 */
+.tour { list-style: none; margin: 0; padding: 0; display: grid; gap: 64px; }
+.tour-step { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 56px; align-items: center; }
+.tour-step:nth-child(even) .tour-text { order: 2; }
+.tour-step .capture { aspect-ratio: 16 / 10; }
+.tour-no { display: block; font-size: 56px; font-weight: 800; line-height: 1; color: #c7d7f5; letter-spacing: -.04em; }
+.tour-text h3 { margin: 12px 0 10px; font-size: clamp(24px, 2.6vw, 32px); letter-spacing: -.03em; }
+.tour-text p { margin: 0; font-size: 17px; line-height: 1.75; color: #374151; max-width: 440px; }
 .landing-foot { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; text-align: center; }
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; gap: 28px; }
   .login { max-width: none; }
-  .feature-grid, .steps { grid-template-columns: 1fr 1fr; }
+  .feature-grid { grid-template-columns: 1fr 1fr; }
+  .tour-step { grid-template-columns: 1fr; gap: 20px; }
+  .tour-step:nth-child(even) .tour-text { order: 0; }
 }
 @media (max-width: 600px) {
   .landing-nav nav { display: none; }
@@ -283,6 +297,6 @@ button.link .icon, .topbar .icon { width: 16px; height: 16px; }
   .pair-arrow { transform: rotate(90deg); }
   .slide-frame { padding: 0; }
   .slide-nav { display: none; }
-  .feature-grid, .steps { grid-template-columns: 1fr; }
+  .feature-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }

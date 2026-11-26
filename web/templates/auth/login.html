@@ -4,7 +4,8 @@
 {% block main_class %}landing{% endblock %}
 {# 로그인 화면 (11/26 화면 디자인, 기능분석서 [S]): 네비바 · 소개 문구 + 로그인 카드 · 기능 소개 슬라이드 · 기능 소개 · 사용 방법.
    로고는 처방 조제 메인으로 간다 (로그인하지 않았으면 메인이 이 화면으로 돌려보낸다).
-   슬라이드 사진은 web/static/img/landing/ 에 둔다 (이름은 SLIDES). 사진이 없으면 자리 표시만 보인다. #}
+   사진은 web/static/img/landing/ 에 둔다: 슬라이드 <key>_before · <key>_after (SLIDES), 기능 소개 · 사용 방법 화면 캡처 (FEATURES · STEPS).
+   사진이 없으면 파일 이름 자리 표시만 보인다. #}
 {% set SLIDES = [
   {"key": "rx", "title": "처방전 인식", "icon": "scan",
    "before": "처방전 사진", "after": "인식한 글자와 위치",
@@ -51,7 +52,7 @@
   </form>
 </section>
 
-<section class="slides" aria-roledescription="carousel" aria-label="기능 소개 슬라이드" data-interval="6000">
+<section class="slides" id="slides" aria-roledescription="carousel" aria-label="기능 소개 슬라이드" data-interval="6000">
   <div class="slide-tabs" role="tablist">
     {% for s in SLIDES %}
     <button type="button" role="tab" class="slide-tab" data-slide="{{ loop.index0 }}" aria-selected="{{ 'true' if loop.first else 'false' }}">
@@ -79,14 +80,42 @@
   </div>
 </section>
 
+{# 화면 캡처 한 장 (없으면 파일 이름 자리 표시). 사진은 web/static/img/landing/<name>.jpg|png|webp #}
+{% macro capture(name, alt) -%}
+<div class="capture">
+  <img data-base="{{ url_for('static', filename='img/landing/' ~ name) }}" alt="{{ alt }}" loading="lazy">
+  <div class="shot-missing" hidden>{{ icon("camera") }}<span>img/landing/{{ name }}.jpg</span></div>
+</div>
+{%- endmacro %}
+{% set FEATURES = [
+  {"img": "feat_rx", "title": "처방전 인식", "slide": 0, "alt": "조제지시서 확인 · 승인 화면",
+   "text": "사진 한 장으로 약품 코드 · 1회량 · 횟수 · 일수를 읽어 조제지시서와 칸 배치까지 만듭니다. 읽은 위치는 처방전 위에 표시됩니다."},
+  {"img": "feat_risk", "title": "위험 신호 대조", "slide": 1, "alt": "위험 신호와 허가정보 근거 화면",
+   "text": "처방약끼리 성분 중복 · 병용금기를 대조하고, 식약처 허가정보에서 찾은 근거를 함께 보여 줍니다. 판단은 약사가 합니다."},
+  {"img": "feat_tray", "title": "조제 검수", "slide": 2, "alt": "칸별 검수 결과 화면",
+   "text": "트레이 사진에서 알약을 찾아 아침 · 점심 · 저녁 · 취침 전 칸마다 조제지시서와 맞는지 확인합니다."},
+] %}
+{% set STEPS = [
+  {"img": "howto_upload", "title": "처방전 올리기", "alt": "처방전 사진 올리기 화면",
+   "text": "처방전을 찍어 끌어다 놓으면 접수됩니다. 처리가 끝나면 조제지시서와 칸 배치가 나타납니다."},
+  {"img": "feat_rx", "title": "확인 · 승인", "alt": "조제지시서 확인 · 승인 화면",
+   "text": "인식이 낮은 줄과 위험 신호를 확인하고, 필요하면 항목을 고친 뒤 승인합니다."},
+  {"img": "howto_tray", "title": "트레이 올리기", "alt": "트레이 사진 올리기 화면",
+   "text": "칸 배치대로 약을 담은 트레이를 위에서 찍어 올립니다."},
+  {"img": "feat_tray", "title": "검수 · 완료", "alt": "칸별 검수 결과 화면",
+   "text": "다른 칸만 골라 확인하고 완료하면 조제 이력에 남습니다. 틀렸으면 재조제로 다시 찍습니다."},
+] %}
+
 <section class="intro" id="features">
   <h2>기능 소개</h2>
+  <p class="intro-lead">약사가 실제로 보는 화면입니다.</p>
   <div class="feature-grid">
-    {% for s in SLIDES %}
+    {% for f in FEATURES %}
     <article class="feature">
-      <span class="feature-icon">{{ icon(s.icon) }}</span>
-      <h3>{{ s.title }}</h3>
-      <p>{{ s.text }}</p>
+      {{ capture(f.img, f.alt) }}
+      <h3>{{ f.title }}</h3>
+      <p>{{ f.text }}</p>
+      <a class="more" href="#slides" data-goto="{{ f.slide }}">탐지 전후 보기 →</a>
     </article>
     {% endfor %}
   </div>
@@ -94,11 +123,18 @@
 
 <section class="intro" id="howto">
   <h2>사용 방법</h2>
-  <ol class="steps">
-    <li><span class="step-icon">{{ icon("camera") }}</span><strong>처방전 올리기</strong><span>처방전을 찍어 올리면 조제지시서와 칸 배치가 만들어집니다.</span></li>
-    <li><span class="step-icon">{{ icon("check") }}</span><strong>확인 · 승인</strong><span>위험 신호와 근거를 확인하고, 필요하면 항목을 고친 뒤 승인합니다.</span></li>
-    <li><span class="step-icon">{{ icon("tray") }}</span><strong>트레이 올리기</strong><span>칸 배치대로 약을 담은 트레이를 찍어 올립니다.</span></li>
-    <li><span class="step-icon">{{ icon("save") }}</span><strong>검수 · 완료</strong><span>칸마다 맞는지 확인하고 완료하면 조제 이력에 남습니다.</span></li>
+  <p class="intro-lead">처방전 한 장에서 조제 완료까지 네 단계입니다.</p>
+  <ol class="tour">
+    {% for st in STEPS %}
+    <li class="tour-step">
+      <div class="tour-text">
+        <span class="tour-no">{{ "%02d" | format(loop.index) }}</span>
+        <h3>{{ st.title }}</h3>
+        <p>{{ st.text }}</p>
+      </div>
+      {{ capture(st.img, st.alt) }}
+    </li>
+    {% endfor %}
   </ol>
 </section>
 
