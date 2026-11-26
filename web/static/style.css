@@ -242,7 +242,7 @@ body:has(> main.landing) { overflow-x: clip; }   /* 메뉴 띠(100vw)가 세로 
 .hero { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 48px; align-items: center; padding: 40px 0 36px; }
 .eyebrow { margin: 0 0 10px; color: var(--accent); font-weight: 700; font-size: 14px; letter-spacing: .02em; }
 .hero h1 { margin: 0; font-size: clamp(36px, 5vw, 56px); line-height: 1.15; letter-spacing: -.03em; }
-.lead { margin: 18px 0 0; max-width: 560px; font-size: 18px; line-height: 1.7; color: #374151; }
+.lead { margin: 20px 0 0; font-size: 19px; line-height: 1.75; color: #374151; }
 .login { width: 100%; max-width: 380px; display: grid; gap: 14px; padding: 28px; box-shadow: 0 10px 30px rgba(15, 23, 42, .08); }
 .login h2 { margin: 0; font-size: 20px; }
 .login button[type=submit] { padding: 12px; border-radius: 999px; font-size: 16px; }
@@ -276,13 +276,17 @@ body:has(> main.landing) { overflow-x: clip; }   /* 메뉴 띠(100vw)가 세로 
 .intro > h2 { font-size: clamp(28px, 3.4vw, 40px); margin: 0; letter-spacing: -.03em; }
 .intro-lead { margin: 10px 0 32px; font-size: 18px; color: #4b5563; }
 /* 화면 캡처: 연한 격자 배경 위에 캡처를 띄운다 */
-.capture { position: relative; aspect-ratio: 1 / 1; border-radius: 20px; overflow: hidden; display: grid; place-items: center; padding: 28px;
+.capture { position: relative; aspect-ratio: 16 / 10; border-radius: 20px; overflow: hidden; display: grid; place-items: center; padding: 28px;
   background-color: #eef4ff; background-image: linear-gradient(#dbe6fb 1px, transparent 1px), linear-gradient(90deg, #dbe6fb 1px, transparent 1px);
   background-size: 32px 32px; }
 .capture img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; background: #fff;
   box-shadow: 0 12px 32px rgba(15, 23, 42, .14), 0 0 0 1px rgba(15, 23, 42, .06); }
 .capture .shot-missing { position: absolute; inset: 0; }
-.feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
+.capture { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }   /* 칸 크기를 정해 두어 캡처가 넘치지 않고 칸 안에 맞춰 줄어든다 */
+/* 기능 소개: 첫 기능은 전체 폭, 나머지 둘은 반씩 (11/26 — 3열 정사각형은 가로로 긴 화면 캡처가 너무 작았다) */
+.feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px 32px; }
+.feature:first-child { grid-column: 1 / -1; }
+.feature:first-child .capture { aspect-ratio: 21 / 9; }
 .feature { display: grid; align-content: start; gap: 0; }
 .feature h3 { margin: 22px 0 10px; font-size: clamp(24px, 2.4vw, 30px); letter-spacing: -.03em; }
 .feature p { margin: 0; color: #374151; font-size: 16px; line-height: 1.7; }
@@ -291,6 +295,7 @@ body:has(> main.landing) { overflow-x: clip; }   /* 메뉴 띠(100vw)가 세로 
 /* 사용 방법: 글과 캡처를 좌우로 번갈아 놓는다 */
 .tour { list-style: none; margin: 0; padding: 0; display: grid; gap: 64px; }
 .tour-step { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 56px; align-items: center; }
+.tour-step:nth-child(even) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }   /* 좌우가 바뀌어도 캡처 칸이 넓은 쪽 */
 .tour-step:nth-child(even) .tour-text { order: 2; }
 .tour-step .capture { aspect-ratio: 16 / 10; }
 .tour-no { display: block; font-size: 56px; font-weight: 800; line-height: 1; color: #c7d7f5; letter-spacing: -.04em; }
@@ -299,8 +304,8 @@ body:has(> main.landing) { overflow-x: clip; }   /* 메뉴 띠(100vw)가 세로 
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; gap: 28px; }
   .login { max-width: none; }
-  .feature-grid { grid-template-columns: 1fr 1fr; }
-  .tour-step { grid-template-columns: 1fr; gap: 20px; }
+  .feature-grid { grid-template-columns: 1fr; }
+  .tour-step, .tour-step:nth-child(even) { grid-template-columns: 1fr; gap: 20px; }
   .tour-step:nth-child(even) .tour-text { order: 0; }
 }
 @media (max-width: 600px) {
@@ -462,3 +467,7 @@ select { appearance: none; -webkit-appearance: none; padding-right: 36px !import
 button.icon-btn { width: 36px; height: 36px; padding: 0; border-radius: 8px; background: none; color: var(--muted); }
 button.icon-btn:hover:not(:disabled) { filter: none; background: #f3f4f6; color: var(--ink); }
 button.icon-btn .icon { width: 18px; height: 18px; }
+/* 로그인 화면 글: 한글을 단어 단위로 줄바꿈하고 줄 길이를 고르게 (11/26: '트레이/에'처럼 단어 중간에서 끊겼다) */
+.landing { word-break: keep-all; overflow-wrap: break-word; }
+.landing h1, .landing h2, .landing h3 { text-wrap: balance; }
+.landing p, .landing figcaption { text-wrap: pretty; }
