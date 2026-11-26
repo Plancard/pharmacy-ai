@@ -9,13 +9,13 @@
 {% set SLIDES = [
   {"key": "rx", "title": "처방전 인식", "icon": "scan",
    "before": "처방전 사진", "after": "인식한 글자와 위치",
-   "text": "처방전 사진 한 장에서 약품 코드 · 1회량 · 횟수 · 일수를 읽어 조제지시서를 만듭니다."},
+   "text": "처방전 사진 한 장에서 약품 코드와 1회량 · 횟수 · 일수를 읽어 조제지시서를 만들어요."},
   {"key": "risk", "title": "위험 신호 대조", "icon": "shield",
    "before": "읽어 낸 처방", "after": "위험 신호와 근거",
-   "text": "처방약끼리 성분 중복 · 병용금기를 대조하고, 허가정보 근거와 함께 약사에게 보여 줍니다."},
+   "text": "함께 처방된 약끼리 성분이 겹치거나 같이 먹으면 안 되는 조합이 없는지 살펴보고, 허가정보 근거와 함께 알려 드려요."},
   {"key": "tray", "title": "조제 검수", "icon": "tray",
    "before": "약을 담은 트레이", "after": "칸마다 찾은 약",
-   "text": "트레이 사진에서 알약을 찾아 아침 · 점심 · 저녁 · 취침 전 칸마다 조제지시서와 맞는지 검수합니다."},
+   "text": "트레이 사진에서 알약을 찾아 아침부터 취침 전까지 칸마다 제대로 담겼는지 확인해요."},
 ] %}
 {% block flashes %}{% endblock %}
 {% block content %}
@@ -32,8 +32,8 @@
   <div class="hero-text">
     <p class="eyebrow">약국 조제 보조 서비스</p>
     <h1>조제는 약사가,<br>확인은 약손이</h1>
-    <p class="lead">처방전 사진 한 장으로 조제지시서 작성부터 트레이 검수까지.<br>
-      모든 단계는 약사가 확인하고 승인합니다.</p>
+    <p class="lead">처방전 사진 한 장이면 조제지시서부터 트레이 검수까지 함께해요.<br>
+      마지막 확인과 승인은 언제나 약사님이 해 주세요.</p>
   </div>
 
   <form class="card login" id="login-form" method="post" action="{{ url_for('auth.login') }}">
@@ -48,7 +48,7 @@
       <input name="password" type="password" autocomplete="current-password" required>
     </label>
     <button type="submit">로그인</button>
-    <p class="muted small">약국에서 받은 계정으로 로그인하세요.</p>
+    <p class="muted small">약국에서 받은 계정으로 로그인해 주세요.</p>
   </form>
 </section>
 
@@ -89,26 +89,25 @@
 {%- endmacro %}
 {% set FEATURES = [
   {"img": "feat_rx", "title": "처방전 인식", "slide": 0, "alt": "조제지시서 확인 · 승인 화면",
-   "text": "약품 코드 · 1회량 · 횟수 · 일수를 읽어 조제지시서와 칸 배치를 만들고, 읽은 위치를 처방전 위에 표시합니다."},
+   "text": "약품 코드와 1회량 · 횟수 · 일수를 읽어 조제지시서와 칸 배치를 만들어 줘요. 어디서 읽었는지도 처방전 위에 바로 짚어 드려요."},
   {"img": "feat_risk", "title": "위험 신호 대조", "slide": 1, "alt": "위험 신호와 허가정보 근거 화면",
-   "text": "처방약끼리 성분 중복 · 병용금기를 대조하고 식약처 허가정보 근거를 함께 보여 줍니다."},
+   "text": "성분이 겹치거나 같이 먹으면 안 되는 약이 있으면 먼저 알려 줘요. 식약처 허가정보 근거도 함께 보여 드려요."},
   {"img": "feat_tray", "title": "조제 검수", "slide": 2, "alt": "칸별 검수 결과 화면",
-   "text": "트레이 사진에서 알약을 찾아 칸마다 조제지시서와 맞는지 확인합니다."},
+   "text": "트레이 사진만 올리면 칸마다 약이 맞게 담겼는지 확인해 줘요."},
 ] %}
 {% set STEPS = [
   {"img": "howto_upload", "title": "처방전 올리기", "alt": "처방전 사진 올리기 화면",
-   "text": "처방전을 찍어 끌어다 놓으면 접수됩니다. 처리가 끝나면 조제지시서와 칸 배치가 나타납니다."},
+   "text": "처방전을 찍어서 끌어다 놓으면 끝이에요. 잠시 뒤 조제지시서와 칸 배치가 준비돼요."},
   {"img": "feat_rx", "title": "확인 · 승인", "alt": "조제지시서 확인 · 승인 화면",
-   "text": "인식이 낮은 줄과 위험 신호를 확인하고, 필요하면 항목을 고친 뒤 승인합니다."},
+   "text": "노랗게 표시된 줄과 위험 신호만 살펴보면 돼요. 고칠 게 있으면 그 자리에서 고치고 승인해 주세요."},
   {"img": "howto_tray", "title": "트레이 올리기", "alt": "트레이 사진 올리기 화면",
-   "text": "칸 배치대로 약을 담은 트레이를 위에서 찍어 올립니다."},
+   "text": "칸 배치대로 약을 담고, 트레이를 위에서 한 장 찍어 올려 주세요."},
   {"img": "feat_tray", "title": "검수 · 완료", "alt": "칸별 검수 결과 화면",
-   "text": "다른 칸만 골라 확인하고 완료하면 조제 이력에 남습니다. 틀렸으면 재조제로 다시 찍습니다."},
+   "text": "다르게 담긴 칸이 있으면 그 칸만 확인하면 돼요. 잘못 담았다면 다시 담아서 찍으면 되고, 완료하면 조제 이력에 남아요."},
 ] %}
 
 <section class="intro" id="features">
   <h2>기능 소개</h2>
-  <p class="intro-lead">약사가 실제로 보는 화면입니다.</p>
   <div class="feature-grid">
     {% for f in FEATURES %}
     <article class="feature">
@@ -123,7 +122,6 @@
 
 <section class="intro" id="howto">
   <h2>사용 방법</h2>
-  <p class="intro-lead">처방전 한 장에서 조제 완료까지 네 단계입니다.</p>
   <ol class="tour">
     {% for st in STEPS %}
     <li class="tour-step">
