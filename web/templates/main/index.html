@@ -17,8 +17,16 @@
       </li>
     {%- endmacro %}
     {# 진행 중은 전부, 완료 · 취소는 최근 몇 건만 아래에 (전체는 조제 이력) #}
-    <ul class="rx-list" id="rx-list">{% for rx in active %}{{ item(rx) }}{% endfor %}</ul>
+    <ul class="rx-list" id="rx-list" data-page="{{ page }}">{% for rx in active %}{{ item(rx) }}{% endfor %}</ul>
     <p class="muted list-empty" id="rx-empty" {% if active %}hidden{% endif %}>진행 중인 처방이 없습니다.</p>
+    {% if page > 1 or has_next %}
+    {# 쪽을 바꿔도 보던 처방(#rx=)은 그대로 (app.js가 주소 뒤에 붙인다) #}
+    <nav class="pager list-pager" aria-label="처방 목록 쪽 이동">
+      {% if page > 1 %}<a class="chip-link" href="{{ url_for('main.index', p=page - 1) }}">{{ icon("chevron-left") }}이전</a>{% else %}<span class="chip-link disabled">{{ icon("chevron-left") }}이전</span>{% endif %}
+      <span class="pager-now">{{ page }}쪽</span>
+      {% if has_next %}<a class="chip-link" href="{{ url_for('main.index', p=page + 1) }}">다음{{ icon("chevron-right") }}</a>{% else %}<span class="chip-link disabled">다음{{ icon("chevron-right") }}</span>{% endif %}
+    </nav>
+    {% endif %}
     <div class="list-sub" id="rx-done-head" {% if not finished %}hidden{% endif %}>
       <span>최근 완료 · 취소</span>
       <a href="{{ url_for('main.history') }}">전체 이력 {{ icon("chevron-right") }}</a>

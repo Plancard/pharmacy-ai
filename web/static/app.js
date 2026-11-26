@@ -109,7 +109,8 @@
     if (!btn) {
       btn = h("button", { type: "button", class: "rx-item", "data-id": rx.id },
         h("strong", {}, rx.display_no), h("span", { class: "badge" }), h("small", {}, "방금"));
-      list.prepend(h("li", {}, btn));
+      // 새로 접수한 처방은 첫 쪽 맨 위에만 넣는다 (다른 쪽을 보고 있으면 목록은 그대로)
+      if (list.dataset.page === "1") list.prepend(h("li", {}, btn));
     }
     const badge = btn.querySelector(".badge");
     badge.className = `badge ${rx.status}`;
@@ -141,6 +142,11 @@
   }
 
   document.getElementById("new-rx").addEventListener("click", showIntake);
+
+  // 목록 쪽 이동 때 보던 처방을 잃지 않게 주소 뒤 #rx=를 붙여 간다
+  for (const a of document.querySelectorAll(".list-pager a")) {
+    a.addEventListener("click", () => { a.href = a.href.split("#")[0] + location.hash; });
+  }
 
   list.closest("aside").addEventListener("click", (e) => {
     const btn = e.target.closest(".rx-item");

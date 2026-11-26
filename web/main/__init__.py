@@ -13,6 +13,7 @@ from web.auth import login_required
 
 bp = Blueprint("main", __name__)
 RECENT_DONE = 10   # 메인 처방 목록 아래에 보이는 최근 완료 · 취소 건수
+ACTIVE_PAGE = 15   # 메인 처방 목록에서 진행 중 처방을 한 쪽에 몇 건씩
 
 
 @bp.route("/")
@@ -22,14 +23,22 @@ def index():
 
     처방 목록 (11/26, 기능분석서 [T]): 진행 중(처리 중 · 승인 대기 · 트레이 대기 · 실패)은 개수 제한 없이 전부 —
     전에는 최신 20건만 보여 완료 건에 밀려 어제 승인 대기가 목록에서 사라질 수 있었다. 완료 · 취소는 최근 RECENT_DONE건만
-    아래에 따로 보이고 전체는 조제 이력에서 본다.
+    아래에 따로 보이고 전체는 조제 이력에서 본다. 진행 중이 많으면 ACTIVE_PAGE건씩 쪽으로 나눈다 (?p=2).
+    전체 건수는 세지 않고 한 건 더 읽어 다음 쪽이 있는지만 안다.
     """
+    try:
+        page = max(int(request.args.get("p", 1)), 1)
+    except ValueError:
+        page = 1
     cols = "SELECT id, display_no, status, hitl_point, created_at FROM prescriptions WHERE pharmacy_id = %s "
     active = db.query_all(cols + "AND status IN ('processing', 'waiting_approval', 'waiting_tray', 'failed') "
-                          "ORDER BY created_at DESC", (g.user["pharmacy_id"],))
+                          "ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                          (g.user["pharmacy_id"], ACTIVE_PAGE + 1, (page - 1) * ACTIVE_PAGE))
+    has_next = len(active) > ACTIVE_PAGE
+    active = active[:ACTIVE_PAGE]
     finished = db.query_all(cols + "AND status IN ('done', 'cancelled') ORDER BY updated_at DESC LIMIT %s",
                             (g.user["pharmacy_id"], RECENT_DONE))
-    return render_template("main/index.html", active=active, finished=finished)
+    return render_template("main/index.html", active=active, finished=finished, page=page, has_next=has_next)
 
 
 # ------------------------------------------------------------ 조제 이력 (F-WEB-13, REQ-WEB-10)

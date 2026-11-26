@@ -193,3 +193,27 @@ def test_storage_roundtrip_and_traversal(app):
 def test_404_page(client):
     r = client.get("/nope")
     assert r.status_code == 404 and "404" in r.get_data(as_text=True)
+
+
+def test_main_list_pages_the_active_prescriptions(client, monkeypatch):
+    """메인 처방 목록 (11/26 [T]): 진행 중은 15건씩 쪽으로, 한 건 더 읽어 다음 쪽이 있는지만 안다."""
+    from datetime import datetime, timezone
+    from web.main import ACTIVE_PAGE
+    seen = []
+
+    def query_all(sql, params=None):
+        seen.append((sql, params))
+        if "status IN ('processing'" in sql:
+            return [{"id": f"a{n}", "display_no": f"P{n:04d}", "status": "waiting_approval", "hitl_point": "rx_approval",
+                     "created_at": datetime(2026, 11, 26, tzinfo=timezone.utc)} for n in range(ACTIVE_PAGE + 1)]
+        return []
+
+    login(client)
+    monkeypatch.setattr(db, "query_all", query_all)
+    html = client.get("/?p=2").get_data(as_text=True)
+    sql, params = next(s for s in seen if "status IN ('processing'" in s[0])
+    assert "LIMIT" in sql and params[1:] == (ACTIVE_PAGE + 1, ACTIVE_PAGE)      # 2쪽 = 15건 건너뛰고 16건 읽기
+    assert html.count('class="rx-item"') == ACTIVE_PAGE                           # 16번째는 '다음 쪽 있음' 표시용
+    assert "2쪽" in html and "/?p=1" in html and "/?p=3" in html
+    html = client.get("/?p=nope").get_data(as_text=True)
+    assert "1쪽" in html and "/?p=2" in html
