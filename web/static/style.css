@@ -101,10 +101,21 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 .risk-head { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
 .risk-warning { border-color: #fcd34d; }
 .risk-danger { border-color: #fca5a5; background: #fef2f2; }
-.risk .evidence { margin-top: 4px; font-size: 14px; }
+.risk .evidence { margin-top: 2px; font-size: 14px; }
 .risk .evidence summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .risk .evidence ul { margin-top: 6px; }
 .risk .evidence-none { font-size: 13px; }
+/* 위험 항목 한 개: 규칙 문장 → AI 설명 → 근거 (11/26 가독성) */
+.risk ul.findings { list-style: none; padding-left: 0; gap: 12px; }
+.finding { display: grid; gap: 6px; }
+.finding + .finding { border-top: 1px solid var(--line); padding-top: 12px; }
+.finding-msg { font-weight: 600; line-height: 1.5; }
+.finding-ai { background: #f8fafc; border-left: 3px solid var(--accent); border-radius: 4px; padding: 6px 10px; line-height: 1.6; font-size: 14px; }
+.finding-ai-label { display: inline-block; margin-right: 6px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.evidence ul { list-style: none; padding-left: 0; display: grid; gap: 10px; }
+.ev-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.ev-head a { font-size: 12px; text-decoration: none; }
+.ev-excerpt { margin: 4px 0 0; padding: 6px 10px; border-left: 3px solid var(--line); color: #374151; line-height: 1.6; font-size: 13px; }
 .actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .confirm { display: flex; gap: 8px; align-items: center; font-size: 14px; }
 @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } .approval-grid { grid-template-columns: 1fr; } }
@@ -174,7 +185,7 @@ button.secondary { background: var(--card); color: var(--ink); border: 1px solid
 .pager { display: flex; gap: 16px; justify-content: center; align-items: center; margin-top: 12px; }
 .history-detail { display: grid; gap: 12px; }
 .history-detail h3 { margin: 12px 0 0; font-size: 16px; }
-.history-detail .evidence { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.history-detail .evidence { margin: 6px 0 0; padding-left: 0; list-style: none; display: grid; gap: 10px; font-size: 14px; }
 
 /* 오류 처리 (기능분석서 6장) */
 .manual-inspection { border: 1px dashed var(--line); border-radius: 6px; padding: 8px 12px; display: grid; gap: 6px; }

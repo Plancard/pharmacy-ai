@@ -411,12 +411,20 @@
       h("div", { class: "risk-head" }, h("strong", {}, `위험 신호: ${RISK[level]}`),
         risk.scope === "rx_only" ? h("span", { class: "muted" }, "처방약 기준 판단 (복용 약 미등록)") : null));
     if (risk.findings && risk.findings.length) {
-      box.append(h("ul", {}, risk.findings.map((f) =>
-        h("li", {}, h("span", { class: `chip ${f.level}` }, RISK[f.level] || f.level), " ", f.message,
-          f.explanation ? h("div", {}, f.explanation) : null,
+      // 규칙 문장(굵게) · AI 설명(이름표 붙은 따로 된 칸) · 근거를 줄을 나눠 보인다 (11/26 가독성)
+      box.append(h("ul", { class: "findings" }, risk.findings.map((f) =>
+        h("li", { class: "finding" },
+          h("div", { class: "finding-msg" }, h("span", { class: `chip ${f.level}` }, RISK[f.level] || f.level), " ", f.message),
+          f.explanation ? h("div", { class: "finding-ai" }, h("span", { class: "finding-ai-label" }, "AI 설명"), f.explanation) : null,
           evidenceList(f.evidence)))));
     }
     return box;
+  }
+
+  // 근거 출처 "식약처 의약품 제품 허가정보 (https://...)" → 이름과 주소로 나눈다 (주소는 링크로만 보인다)
+  function sourceParts(source) {
+    const m = /^(.*?)\s*\((https?:\/\/[^\s)]+)\)\s*$/.exec(source || "");
+    return m ? { name: m[1], url: m[2] } : { name: source || "", url: null };
   }
 
   // 위험 항목의 대조 근거(A.5 risk_check.findings[].evidence, RAG). 접어 두고 펼쳐 본다.
@@ -425,9 +433,14 @@
     if (!evidence || !evidence.length) return h("div", { class: "muted evidence-none" }, "근거 없음");
     return h("details", { class: "evidence" },
       h("summary", {}, `근거 ${evidence.length}건 보기`),
-      h("ul", {}, evidence.map((ev) => h("li", {},
-        h("strong", {}, ev.title || ""), " ", h("span", { class: "muted" }, `— ${ev.source || ""}`),
-        h("div", {}, ev.excerpt || "")))));
+      h("ul", {}, evidence.map((ev) => {
+        const src = sourceParts(ev.source);
+        return h("li", {},
+          h("div", { class: "ev-head" }, h("strong", {}, ev.title || ""),
+            src.url ? h("a", { href: src.url, target: "_blank", rel: "noopener" }, `${src.name || "출처"} ↗`)
+              : h("span", { class: "muted" }, src.name)),
+          h("blockquote", { class: "ev-excerpt" }, ev.excerpt || ""));
+      })));
   }
 
   // 조제 계획(A.4): 일수별로 시간대마다 넣을 약과 알 수. plan이 없으면 이유(notice)만 보여 준다.

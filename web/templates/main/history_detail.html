@@ -56,16 +56,26 @@
   <h3>위험 대조</h3>
   {% if risk.get('findings') %}
   <div class="risk {% if level in ('warning', 'danger') %}risk-{{ level }}{% endif %}">
-    <ul>
+    <ul class="findings">
     {% for fd in risk.findings %}
-      <li>
-        <span class="chip {{ fd.level }}">{{ labels.risk.get(fd.level, fd.level) }}</span>
-        {{ fd.message }}
-        <span class="muted">({{ (fd.get('item_codes') or []) | map('label', names) | join(', ') }})</span>
-        {% if fd.get('explanation') %}<div>{{ fd.explanation }}</div>{% endif %}
+      <li class="finding">
+        <div class="finding-msg">
+          <span class="chip {{ fd.level }}">{{ labels.risk.get(fd.level, fd.level) }}</span>
+          {{ fd.message }}
+          <span class="muted">({{ (fd.get('item_codes') or []) | map('label', names) | join(', ') }})</span>
+        </div>
+        {% if fd.get('explanation') %}<div class="finding-ai"><span class="finding-ai-label">AI 설명</span>{{ fd.explanation }}</div>{% endif %}
         {% if fd.get('evidence') %}
           <ul class="evidence">
-          {% for ev in fd.evidence %}<li><strong>{{ ev.title }}</strong> <span class="muted">— {{ ev.source }}</span><div>{{ ev.excerpt }}</div></li>{% endfor %}
+          {% for ev in fd.evidence %}
+            {% set src = (ev.source or '').rsplit(' (', 1) %}
+            <li>
+              <div class="ev-head"><strong>{{ ev.title }}</strong>
+              {% if src | length == 2 and src[1].startswith('http') %}<a href="{{ src[1].rstrip(')') }}" target="_blank" rel="noopener">{{ src[0] }} ↗</a>
+              {% else %}<span class="muted">{{ ev.source }}</span>{% endif %}</div>
+              <blockquote class="ev-excerpt">{{ ev.excerpt }}</blockquote>
+            </li>
+          {% endfor %}
           </ul>
         {% else %}<div class="muted">근거 없음</div>{% endif %}
       </li>
