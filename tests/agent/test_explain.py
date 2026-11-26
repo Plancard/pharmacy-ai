@@ -222,3 +222,53 @@ def test_explanations_can_be_switched_off(monkeypatch):
     assert _make_deps(DICT, lambda *a: None, _FROM_SETTINGS).explain is None
     monkeypatch.setattr(config, "RISK_EXPLAIN", True)
     assert _make_deps(DICT, lambda *a: None, _FROM_SETTINGS).explain is not None
+
+
+# ---- 11/26: 설명이 규칙 문장을 되풀이하지 않고 근거(약사 화면에 보이는 발췌)의 내용을 담게 한다
+REPEATED = "타이레놀정500mg과 게보린정에 아세트아미노펜 성분이 중복됩니다. 환자의 하루 총 아세트아미노펜 투여량을 확인하세요."   # 11/26 승인 카드의 실제 설명
+USES_EVIDENCE = "타이레놀과 게보린 모두 아세트아미노펜을 포함하는 다른 제품과 함께 복용하지 말라고 합니다. 두 약을 함께 처방한 이유와 하루 총량을 확인하세요."
+
+
+def _evidenced(finding=DUP_AAP):
+    passages = passages_for(_two_drug_index(), [finding], NAMES)
+    return attach_evidence([finding], passages)[0]
+
+
+def test_the_input_shows_each_item_the_evidence_the_pharmacist_will_see():
+    text = explain_input([_evidenced()], NAMES)
+    assert text.count("    근거(") == 2                                            # 약마다 하나씩
+    assert f"    근거(타이레놀정500mg · 사용상의 주의사항): {KEY}" in text and f"    근거(게보린정 · 사용상의 주의사항): {KEY}" in text
+    assert "근거:\n" not in text                                                   # 긴 원문 조각 덩어리는 따로 보내지 않는다
+
+
+def test_the_llm_gets_the_same_excerpts_that_end_up_on_the_screen():
+    seen = []
+
+    def llm(text):
+        seen.append(text)
+        return {"items": [{"index": 1, "text": USES_EVIDENCE}]}
+
+    out, note = explain_findings([DUP_AAP], NAMES, llm, passages_for(_two_drug_index(), [DUP_AAP], NAMES))
+    assert note is None and out[0].explanation == USES_EVIDENCE
+    assert all(e.excerpt in seen[0] for e in out[0].evidence) and len(out[0].evidence) == 2
+
+
+def test_an_explanation_that_only_rewords_the_rule_sentence_is_dropped_when_there_is_evidence():
+    f = _evidenced()
+    assert not repeats(REPEATED, f.message)                 # 유사도로는 못 거른다 (0.70 미만으로 통과했던 실제 사례)
+    assert not acceptable(REPEATED, f, NAMES)
+    assert acceptable(USES_EVIDENCE, f, NAMES)
+    out = apply_explanations([f], {"items": [{"index": 1, "text": REPEATED}]}, NAMES)[0]
+    assert out.explanation is None and out.evidence == f.evidence          # 근거는 그대로, 설명만 없다
+
+
+def test_without_evidence_the_old_rules_apply():
+    assert acceptable(REPEATED, DUP_AAP, NAMES)             # 근거가 없으면 새 내용을 요구할 수 없다
+
+
+def test_an_llm_that_fails_still_leaves_the_evidence():
+    def broken(text):
+        raise StructureError("LLM 호출에 실패했습니다 (APITimeoutError).")
+
+    out, note = explain_findings([DUP_AAP], NAMES, broken, passages_for(_two_drug_index(), [DUP_AAP], NAMES))
+    assert note.startswith(FAILED_NOTE) and out[0].explanation is None and len(out[0].evidence) == 2

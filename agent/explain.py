@@ -8,7 +8,8 @@
 규칙 (명세서 2.8절 · REQ-AG-07: 분류는 규칙, LLM은 설명만)
 - 단계(level) · 유형(type) · 관련 약(item_codes) · 규칙 문장(message)은 그대로다. 설명은 explanation 칸에만 들어간다.
 - 거르는 것: 번호가 없는 항목, 너무 짧거나 긴 글, 관련 약 이름이 하나도 없는 글, 위험을 낮추는 말('안전합니다' · '괜찮' · '문제없'),
-  다른 단계를 말하는 글('경고 단계'인데 '주의 단계'라고 함). 걸러진 항목은 explanation이 None이다 (규칙 문장만 보인다).
+  다른 단계를 말하는 글('경고 단계'인데 '주의 단계'라고 함), 규칙 문장을 되풀이하는 글, 근거가 있는데 근거의 내용이 없는 글(uses_evidence).
+  걸러진 항목은 explanation이 None이다 (규칙 문장만 보인다).
 - LLM이 없거나 실패하면 설명 없이 그대로 (서비스는 멈추지 않는다, REQ-NF-06).
 판단 층이다. LLM은 explain_fn(글) -> {"items": [{"index", "text"}]}로 받는다.
 """
@@ -29,6 +30,8 @@ MIN_CHARS, MAX_CHARS = 15, 300
 DOWNPLAY = ("안전합니다", "안전한", "괜찮", "문제없", "문제 없", "걱정하지", "무시해도", "해당 없음")
 _LEVEL_SAID = re.compile(r"(주의|경고|위험)\s*단계")
 REPEAT_RATIO = 0.7        # 설명의 두 글자 조각 중 규칙 문장에 이미 있는 비율이 이 이상이면 되풀이로 보고 버린다
+NEW_FROM_EVIDENCE = 4     # 근거가 있는 항목의 설명은 '규칙 문장에는 없고 근거 발췌에는 있는' 두 글자 조각이 이 개수 이상 있어야 한다
+                          # (실측 11/26: 규칙 문장을 말만 바꿔 되풀이한 설명 0개, 근거의 하루 최대 용량 · 병용 금지를 담은 설명 7~21개)
 FAILED_NOTE = "위험 신호 AI 설명을 만들지 못해 규칙 문장만 보였습니다"
 EXCERPT_CHARS = 200        # 근거 발췌(A.5 evidence.excerpt)로 보이는 글자 수
 EVIDENCE_PER_FINDING = 2   # 항목 하나에 붙이는 근거 수
@@ -54,6 +57,8 @@ def explain_input(findings: Sequence[RiskFinding], names: dict[str, str], passag
     for n, f in enumerate(findings, start=1):
         drugs = ", ".join(names.get(c, c) for c in f.item_codes)
         lines.append(f"[{n}] 단계: {LEVEL_LABELS[f.level]} | 유형: {TYPE_LABELS.get(f.type, f.type)} | 약: {drugs} | 규칙 문장: {f.message}")
+        for e in f.evidence:        # 약사 화면에 보일 발췌와 같은 글 (attach_evidence로 먼저 붙인 항목)
+            lines.append(f"    근거({e.title}): {e.excerpt}")
     if passages:
         lines.append("근거:")
         for p in passages:
@@ -86,10 +91,24 @@ def repeats(text: str, message: str) -> bool:
     return bool(grams) and len(grams & _grams(message)) / len(grams) >= REPEAT_RATIO
 
 
+def uses_evidence(text: str, f: RiskFinding) -> bool:
+    """근거가 있는 항목의 설명이 근거에서 온 새 내용을 담았는가 (근거가 없는 항목은 항상 True).
+
+    말만 바꿔 규칙 문장을 되풀이한 설명(repeats로는 못 거른다)을 거른다. 규칙 문장에는 없고 근거 발췌에는 있는
+    두 글자 조각이 NEW_FROM_EVIDENCE개 이상이어야 한다.
+    """
+    if not f.evidence:
+        return True
+    from_evidence = set().union(*(_grams(e.excerpt) for e in f.evidence))
+    return len((_grams(text) - _grams(f.message)) & from_evidence) >= NEW_FROM_EVIDENCE
+
+
 def acceptable(text: str, f: RiskFinding, names: dict[str, str]) -> bool:
     if not (MIN_CHARS <= len(text) <= MAX_CHARS):
         return False
     if repeats(text, f.message):             # 규칙 문장과 같은 말이면 설명을 붙이지 않는다 (화면에는 규칙 문장만 보인다)
+        return False
+    if not uses_evidence(text, f):           # 근거가 있는데 근거의 내용이 하나도 없는 설명도 붙이지 않는다
         return False
     compact = "".join(text.split())
     stems = _stems(f, names)
@@ -267,17 +286,20 @@ def attach_evidence(findings: Sequence[RiskFinding], passages: Sequence[Passage]
 
 def explain_findings(findings: Sequence[RiskFinding], names: dict[str, str], explain_fn: ExplainFn | None,
                      passages: Sequence[Passage] = ()) -> tuple[list[RiskFinding], str | None]:
-    """(설명 · 근거를 붙인 항목들, 안내). explain_fn이 없거나 실패해도 근거(passages)는 붙인다. 실패하면 + 안내."""
-    findings = list(findings)
+    """(설명 · 근거를 붙인 항목들, 안내). explain_fn이 없거나 실패해도 근거(passages)는 붙인다. 실패하면 + 안내.
+
+    근거를 설명보다 먼저 붙인다 (11/26): LLM에는 약사 화면에 보일 항목별 발췌를 주고, 설명이 그 내용을 쓰는지 uses_evidence로 거른다.
+    """
+    findings = attach_evidence(list(findings), passages)
     if not findings:
         return findings, None
     if explain_fn is None:
-        return attach_evidence(findings, passages), None
+        return findings, None
     try:
-        got = explain_fn(explain_input(findings, names, passages))
+        got = explain_fn(explain_input(findings, names))
     except StructureError as e:
-        return attach_evidence(findings, passages), f"{FAILED_NOTE} ({e})."
-    return attach_evidence(apply_explanations(findings, got, names), passages), None
+        return findings, f"{FAILED_NOTE} ({e})."
+    return apply_explanations(findings, got, names), None
 
 
 def passages_for(rag, findings: Sequence[RiskFinding], names: dict[str, str], per_finding: int = 2, limit: int = 6):

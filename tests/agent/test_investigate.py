@@ -59,6 +59,8 @@ def test_an_unmatched_line_keeps_the_rule_candidates_and_the_llm_is_not_called()
 DUP = RiskFinding(type="ingredient_dup", item_codes=[TYLENOL, GEVORIN], level="warning",
                   message="타이레놀정500mg · 게보린정에 아세트아미노펜 성분이 함께 들어 있습니다. 하루 총량을 확인하세요.")
 GOOD = "타이레놀과 게보린 모두 아세트아미노펜이 들어 있어 하루 총량이 늘어납니다. 함께 처방한 이유와 총량을 확인하세요."
+WITH_EVIDENCE = ("타이레놀 자료는 다른 해열진통제와 함께 복용하면 간 손상이 생길 수 있다고 하고, 게보린 자료는 아세트아미노펜이 들어 있는 "
+                 "다른 약과 함께 복용하지 말라고 합니다. 두 약을 함께 처방한 이유와 하루 총량을 확인하세요.")
 
 
 def doc(code, name, section, text):
@@ -160,8 +162,12 @@ def test_the_risk_node_uses_the_investigation_and_falls_back_to_the_one_shot_exp
     assert finding["level"] == "warning" and update["notes"] == ["AI 위험 신호 조사: search_evidence(성공)"]
 
     broken = Scripted({"content": None, "tool_calls": []})
+    update = risk_node({"order": order}, deps(rag=INDEX, react=broken, explain=lambda t: {"items": [{"index": 1, "text": WITH_EVIDENCE}]}))
+    assert update["order"]["risk_check"]["findings"][0]["explanation"] == WITH_EVIDENCE   # 한 번 부르는 설명으로 대신
+    broken = Scripted({"content": None, "tool_calls": []})
     update = risk_node({"order": order}, deps(rag=INDEX, react=broken, explain=lambda t: {"items": [{"index": 1, "text": GOOD}]}))
-    assert update["order"]["risk_check"]["findings"][0]["explanation"] == GOOD   # 한 번 부르는 설명으로 대신
+    finding = update["order"]["risk_check"]["findings"][0]
+    assert finding["explanation"] is None and finding["evidence"]    # 근거가 있는데 근거 내용이 없는 설명은 붙이지 않는다 (11/26)
 
 
 def test_the_test_graph_never_uses_the_react_llm_and_it_can_be_switched_off(monkeypatch):
