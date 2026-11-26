@@ -55,7 +55,7 @@
           <tbody>
           {% for it in order.get('items', []) %}
             <tr {% if it.needs_pharmacist_check %}class="flagged"{% endif %}>
-              <td>{{ it.name }}{% if it.get('printed_name') %}<div class="muted printed-name">처방전 표기: {{ it.printed_name }}</div>{% endif %}{% for r in it.get('check_reasons') or [] %}<div class="reason">{{ r }}</div>{% endfor %}</td>
+              <td>{{ it.name }}{% if it.get('printed_name') %}<div class="muted printed-name">인식한 글자: {{ it.printed_name }}</div>{% endif %}{% for r in it.get('check_reasons') or [] %}<div class="reason">{{ r }}</div>{% endfor %}</td>
               <td class="mono">{{ it.item_code or '-' }}</td>
               <td class="num">{{ it.count_per_dose }}</td>
               <td>{{ (it.get('times') or []) | map('label', labels.times) | join(' · ') }}</td>

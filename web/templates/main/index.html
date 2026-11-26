@@ -7,8 +7,7 @@
       <h2>처방 목록</h2>
       <button type="button" id="new-rx">{{ icon("plus") }}새 처방</button>
     </div>
-    <ul class="rx-list" id="rx-list">
-      {% for rx in recent %}
+    {% macro item(rx) -%}
       <li>
         <button type="button" class="rx-item" data-id="{{ rx.id }}">
           <strong>{{ rx.display_no }}</strong>
@@ -16,9 +15,15 @@
           <small>{{ rx.created_at | kst }}</small>
         </button>
       </li>
-      {% endfor %}
-    </ul>
-    <p class="muted" id="rx-empty" {% if recent %}hidden{% endif %}>아직 접수한 처방이 없습니다.</p>
+    {%- endmacro %}
+    {# 진행 중은 전부, 완료 · 취소는 최근 몇 건만 아래에 (전체는 조제 이력) #}
+    <ul class="rx-list" id="rx-list">{% for rx in active %}{{ item(rx) }}{% endfor %}</ul>
+    <p class="muted list-empty" id="rx-empty" {% if active %}hidden{% endif %}>진행 중인 처방이 없습니다.</p>
+    <div class="list-sub" id="rx-done-head" {% if not finished %}hidden{% endif %}>
+      <span>최근 완료 · 취소</span>
+      <a href="{{ url_for('main.history') }}">전체 이력 {{ icon("chevron-right") }}</a>
+    </div>
+    <ul class="rx-list rx-list-done" id="rx-done">{% for rx in finished %}{{ item(rx) }}{% endfor %}</ul>
   </aside>
 
   <section class="card chat">
@@ -26,7 +31,7 @@
     <div id="intake" class="intake">
       <h2>새 처방 접수</h2>
       <form id="upload-form" class="upload">
-        <label for="rx-image">처방전 사진 (JPG·PNG)</label>
+        <label for="rx-image" class="sr-only">처방전 사진</label>
         <div class="upload-row">
           <input id="rx-image" name="image" type="file" accept="image/jpeg,image/png" required>
           <button type="submit" id="upload-btn">{{ icon("upload") }}올리기</button>

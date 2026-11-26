@@ -58,7 +58,7 @@
 
   // 사진 고르기 칸: 눌러서 고르거나 끌어다 놓는다. 고른 사진은 이름 · 크기 · 미리보기로 보인다.
   // input은 화면에서만 숨긴다 (display:none이면 required 안내가 뜨지 않는다)
-  function fileDrop(input, hint = "눌러서 고르거나 사진을 끌어다 놓으세요") {
+  function fileDrop(input, hint = "눌러서 고르거나 사진을 끌어다 놓으세요 · JPG · PNG, 10MB 이하") {
     input.classList.add("drop-input");
     const name = h("span", { class: "drop-name" });
     const thumb = h("img", { class: "drop-thumb", alt: "", hidden: true });
@@ -105,8 +105,7 @@
 
   // ---------------------------------------------------------- 목록
   function upsertListItem(rx) {
-    document.getElementById("rx-empty").hidden = true;
-    let btn = list.querySelector(`[data-id="${rx.id}"]`);
+    let btn = document.querySelector(`.rx-item[data-id="${rx.id}"]`);
     if (!btn) {
       btn = h("button", { type: "button", class: "rx-item", "data-id": rx.id },
         h("strong", {}, rx.display_no), h("span", { class: "badge" }), h("small", {}, "방금"));
@@ -115,11 +114,18 @@
     const badge = btn.querySelector(".badge");
     badge.className = `badge ${rx.status}`;
     badge.textContent = LABELS[rx.status] || rx.status;
+    // 완료 · 취소가 되면 아래 '최근 완료 · 취소'로 옮긴다 (진행 중 목록에는 진행 중인 것만)
+    const doneList = document.getElementById("rx-done");
+    if (["done", "cancelled"].includes(rx.status) && btn.closest("#rx-list")) {
+      doneList.prepend(btn.parentElement);
+      document.getElementById("rx-done-head").hidden = false;
+    }
+    document.getElementById("rx-empty").hidden = list.children.length > 0;
     markCurrent();
   }
 
   function markCurrent() {
-    for (const b of list.querySelectorAll(".rx-item")) b.toggleAttribute("aria-current", b.dataset.id === current);
+    for (const b of document.querySelectorAll(".rx-item")) b.toggleAttribute("aria-current", b.dataset.id === current);
   }
 
   // 새 처방 접수 화면: 고른 처방을 풀고 접수 칸만 보인다. 주소의 #rx=도 지운다 (새로고침하면 다시 접수 화면)
@@ -136,7 +142,7 @@
 
   document.getElementById("new-rx").addEventListener("click", showIntake);
 
-  list.addEventListener("click", (e) => {
+  list.closest("aside").addEventListener("click", (e) => {
     const btn = e.target.closest(".rx-item");
     if (btn) open(btn.dataset.id);
   });
@@ -205,7 +211,7 @@
   function cancelButton(rx) {
     if (!CANCELLABLE.includes(rx.status)) return null;
     const isFailed = rx.status === "failed";
-    const btn = h("button", { type: "button", class: "link danger" }, icon(isFailed ? "trash" : "x"), isFailed ? "삭제" : "처방 취소");
+    const btn = h("button", { type: "button", class: "danger-outline" }, icon(isFailed ? "trash" : "x"), isFailed ? "삭제" : "처방 취소");
     btn.addEventListener("click", async () => {
       const ask = isFailed
         ? `처방 ${rx.display_no}을(를) 삭제할까요? (취소됨으로 남습니다)`
@@ -339,7 +345,7 @@
       id: `retake-${rx.id}` });
     const btn = h("button", { type: "submit", class: rx.retryable ? "secondary" : null }, icon("upload"), "새 사진으로 다시 올리기");
     const form = h("form", { class: "upload" },
-      h("label", { for: `retake-${rx.id}` }, "처방전을 다시 찍어 올리기 (JPG·PNG)"),
+      h("label", { for: `retake-${rx.id}` }, "처방전을 다시 찍어 올리기"),
       h("div", { class: "upload-row" }, fileDrop(file), btn),
       h("small", { class: "muted" }, "새 처방 번호로 처음부터 처리하고, 이 처방은 삭제(취소됨)로 남습니다."), err);
     form.addEventListener("submit", async (e) => {
@@ -456,7 +462,7 @@
         h("td", {}, h("div", {}, it.name),
           h("div", { class: "muted mono" }, it.item_code || "품목 없음"),
           // 약을 사전에서 정해 표준 이름으로 바꾼 줄: 처방전에서 읽은 글자도 보인다 (Agent printed_name, 11/23 [N])
-          it.printed_name ? h("div", { class: "muted printed-name" }, `처방전 표기: ${it.printed_name}`) : null,
+          it.printed_name ? h("div", { class: "muted printed-name" }, `인식한 글자: ${it.printed_name}`) : null,
           changedSet.has(idx) ? h("div", {}, h("span", { class: "chip caution" }, "수정 후 다시 검수")) : null,
           ...(it.check_reasons || []).map((r) => h("div", { class: "reason" }, r))),
         h("td", { class: "num" }, it.count_per_dose),
@@ -708,8 +714,8 @@
       id: "tray-image", "aria-describedby": retake ? null : "tray-help" });
     const btn = h("button", { type: "submit" }, icon("upload"), retake ? "다시 올리기" : "트레이 사진 올리기");
     const form = h("form", { class: "upload" },
-      h("label", { for: "tray-image" }, "트레이 사진 (JPG·PNG)"),
-      h("div", { class: "upload-row" }, fileDrop(file, "트레이 전체가 보이는 사진을 눌러서 고르거나 끌어다 놓으세요"), btn), err);
+      h("label", { for: "tray-image", class: "sr-only" }, "트레이 사진"),
+      h("div", { class: "upload-row" }, fileDrop(file, "트레이 전체가 보이게 찍은 사진을 고르거나 끌어다 놓으세요 · JPG · PNG, 10MB 이하"), btn), err);
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       err.hidden = true;

@@ -12,18 +12,24 @@ from web import db, rx, storage
 from web.auth import login_required
 
 bp = Blueprint("main", __name__)
+RECENT_DONE = 10   # 메인 처방 목록 아래에 보이는 최근 완료 · 취소 건수
 
 
 @bp.route("/")
 @login_required
 def index():
-    """메인 대화 화면 (F-WEB-02~11). 11/11부터 업로드·카드를 붙인다."""
-    recent = db.query_all(
-        "SELECT id, display_no, status, hitl_point, created_at FROM prescriptions "
-        "WHERE pharmacy_id = %s ORDER BY created_at DESC LIMIT 20",
-        (g.user["pharmacy_id"],),
-    )
-    return render_template("main/index.html", recent=recent)
+    """메인 대화 화면 (F-WEB-02~11). 11/11부터 업로드·카드를 붙인다.
+
+    처방 목록 (11/26, 기능분석서 [T]): 진행 중(처리 중 · 승인 대기 · 트레이 대기 · 실패)은 개수 제한 없이 전부 —
+    전에는 최신 20건만 보여 완료 건에 밀려 어제 승인 대기가 목록에서 사라질 수 있었다. 완료 · 취소는 최근 RECENT_DONE건만
+    아래에 따로 보이고 전체는 조제 이력에서 본다.
+    """
+    cols = "SELECT id, display_no, status, hitl_point, created_at FROM prescriptions WHERE pharmacy_id = %s "
+    active = db.query_all(cols + "AND status IN ('processing', 'waiting_approval', 'waiting_tray', 'failed') "
+                          "ORDER BY created_at DESC", (g.user["pharmacy_id"],))
+    finished = db.query_all(cols + "AND status IN ('done', 'cancelled') ORDER BY updated_at DESC LIMIT %s",
+                            (g.user["pharmacy_id"], RECENT_DONE))
+    return render_template("main/index.html", active=active, finished=finished)
 
 
 # ------------------------------------------------------------ 조제 이력 (F-WEB-13, REQ-WEB-10)
