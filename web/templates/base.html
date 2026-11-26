@@ -14,7 +14,7 @@
     <a class="brand" href="{{ url_for('main.index') }}" aria-label="약손 처방 조제 메인">{{ icon("logo", "logo") }}<span>약손</span></a>
     <nav>
       <a href="{{ url_for('main.index') }}" {% if request.endpoint == 'main.index' %}aria-current="page"{% endif %}>{{ icon("list") }}처방 조제</a>
-      <a href="{{ url_for('main.history') }}" {% if request.endpoint in ('main.history', 'main.history_detail') %}aria-current="page"{% endif %}>{{ icon("save") }}조제 이력</a>
+      <a href="{{ url_for('main.history') }}" {% if request.endpoint in ('main.history', 'main.history_detail') %}aria-current="page"{% endif %}>{{ icon("history") }}조제 이력</a>
     </nav>
     <div class="who">
       <span>{{ g.user.pharmacy_name }} · {{ g.user.username }}</span>

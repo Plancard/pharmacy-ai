@@ -13,7 +13,7 @@ a { color: var(--accent); }
 .topbar nav a[aria-current="page"] { color: var(--accent); background: #eff6ff; font-weight: 600; }
 .who { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); }
 .who form { margin: 0; }
-.page { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.page { padding: 24px 32px; max-width: 1480px; margin: 0 auto; }
 .center { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
 label { display: grid; gap: 6px; font-size: 14px; }
@@ -27,7 +27,7 @@ button.link.danger { color: var(--bad); }
 button.link.danger:hover:not(:disabled) { background: #fef2f2; }
 .rx-card-head .link.danger { margin-left: auto; }
 .flash { background: #fef2f2; color: var(--bad); border: 1px solid #fecaca; border-radius: 6px; padding: 10px 12px; }
-.layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+.layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .list-head h2 { margin: 0; }
 #new-rx { padding: 7px 12px; font-size: 14px; }
@@ -39,8 +39,8 @@ button.link.danger:hover:not(:disabled) { background: #fef2f2; }
   border: 1px solid transparent; border-radius: 6px; font-size: 14px; text-align: left; }
 .rx-item:hover { background: var(--bg); }
 .rx-item[aria-current] { border-color: var(--accent); background: #eff6ff; }
-.rx-item small { margin-left: auto; color: var(--muted); }
-.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: var(--accent); }
+.rx-item small { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.badge { white-space: nowrap; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: var(--accent); }
 .badge.waiting_approval { background: #fffbeb; color: var(--warn); }
 .badge.waiting_tray { background: #f0f9ff; color: #0369a1; }
 .badge.done { background: #f0fdf4; color: var(--ok); }
@@ -303,3 +303,29 @@ body:has(> main.landing) { overflow-x: clip; }   /* 메뉴 띠(100vw)가 세로 
   .feature-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+/* 진행 단계 표시 (처방 카드 맨 위) */
+.stepper { list-style: none; margin: 0 0 18px; padding: 14px 16px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; }
+.stepper-item { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--muted); }
+.stepper-item:not(:last-child)::after { content: ""; flex: 1; height: 2px; margin: 0 12px; background: var(--line); border-radius: 2px; }
+.stepper-item.done:not(:last-child)::after { background: #93c5fd; }
+.stepper-dot { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #fff; border: 2px solid var(--line); }
+.stepper-dot .icon { width: 17px; height: 17px; }
+.stepper-label { display: grid; gap: 1px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.stepper-label small { font-size: 12px; font-weight: 500; }
+.stepper-item.done { color: var(--ink); }
+.stepper-item.done .stepper-dot { background: var(--accent); border-color: var(--accent); color: #fff; }
+.stepper-item.done small { color: var(--ok); }
+.stepper-item.active { color: var(--accent); }
+.stepper-item.active .stepper-dot { border-color: var(--accent); background: #eff6ff; box-shadow: 0 0 0 4px rgba(37, 99, 235, .12); }
+.stepper-item.error { color: var(--bad); }
+.stepper-item.error .stepper-dot { border-color: var(--bad); background: #fef2f2; }
+.stepper-item.cancelled { color: var(--muted); }
+.stepper-item.cancelled .stepper-dot { border-style: dashed; }
+/* 표: 날짜·시간처럼 짧은 칸은 꺾지 않는다 */
+table.plan th, table.plan td:first-child, table.plan td:nth-child(2) { white-space: nowrap; }
+@media (max-width: 900px) {
+  .stepper { grid-template-columns: 1fr 1fr; row-gap: 12px; }
+  .stepper-item::after { display: none; }
+}

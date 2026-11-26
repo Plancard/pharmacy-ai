@@ -223,6 +223,19 @@
       cancelButton(rx));
   }
 
+  // 진행 단계 표시 (11/26): 처방 카드 맨 위에 네 단계를 가로로 보인다. 아래 타임라인의 요약이라 같은 상태에서 정한다.
+  // stage = 지금 머문 단계 번호(0~3), state = 그 단계의 상태(active · error · cancelled). 완료면 stage 4.
+  const STAGES = [["scan", "처방전 인식"], ["approve", "조제지시서 승인"], ["tray", "트레이 검수"], ["done", "조제 완료"]];
+  function progress(stage, state) {
+    return h("ol", { class: "stepper", "aria-label": "진행 단계" }, STAGES.map(([ic, label], i) => {
+      const st = i < stage ? "done" : i === stage ? state : "pending";
+      return h("li", { class: `stepper-item ${st}`, "aria-current": i === stage && st === "active" ? "step" : null },
+        h("span", { class: "stepper-dot" }, icon(st === "done" ? "check" : st === "error" ? "x" : ic)),
+        h("span", { class: "stepper-label" }, label,
+          h("small", {}, { done: "완료", active: "진행 중", pending: "대기", error: "실패", cancelled: "취소됨" }[st])));
+    }));
+  }
+
   function fmtTime(iso) {
     return iso ? new Date(iso).toLocaleString("ko-KR", {
       timeZone: TZ, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "";
@@ -410,7 +423,16 @@
     else if (s === "cancelled") steps.push(step("cancelled", "취소됨", rx.updated_at));
     else if (s !== "failed") steps.push(step("pending", "조제 완료", null));
 
-    return h("div", {}, header(rx), h("ol", { class: "timeline" }, steps));
+    let stage, state;
+    if (s === "done") [stage, state] = [4, "done"];
+    else if (!approval) {
+      stage = s === "waiting_approval" ? 1 : 0;                       // 처리 중이면 인식 단계, 승인 대기면 승인 단계
+      state = s === "failed" ? "error" : s === "cancelled" ? "cancelled" : "active";
+    } else {
+      stage = 2;                                                        // 승인 뒤는 모두 트레이 검수 단계
+      state = s === "failed" ? "error" : s === "cancelled" ? "cancelled" : "active";
+    }
+    return h("div", {}, header(rx), progress(stage, state), h("ol", { class: "timeline" }, steps));
   }
 
   // onSelect가 있으면 줄을 누르거나 Enter로 고를 수 있다 (F-WEB-06 원문 위치 표시)
@@ -506,7 +528,7 @@
       h("td", {}, `${c.day}일차`), h("td", {}, TIMES[c.time] || c.time),
       h("td", {}, c.items.map((i) => `${names[i.item_code] || i.item_code} ${i.count}정`).join(", "))));
     return h("div", { class: "risk" }, h("strong", {}, `조제 계획 (${plan.days}일)`),
-      h("table", { class: "items" }, h("thead", {}, h("tr", {}, h("th", {}, "일"), h("th", {}, "시간"), h("th", {}, "넣을 약"))),
+      h("table", { class: "items plan" }, h("thead", {}, h("tr", {}, h("th", {}, "일"), h("th", {}, "시간"), h("th", {}, "넣을 약"))),
         h("tbody", {}, rows)));
   }
 
