@@ -650,7 +650,13 @@
     return h("div", { class: "approval" },
       h("div", { class: "approval-grid" },
         rx.image_url ? h("figure", { class: "rx-image",
-          onclick: (e) => { if (e.target.closest("a")) return; e.currentTarget.classList.toggle("zoomed"); },
+          // 처방전 그림이나 [확대]를 눌렀을 때만 크게 본다 (아래 빈 곳은 반응하지 않음). 크게 본 상태에서는 아무 곳이나 누르면 닫힌다
+          onclick: (e) => {
+            const fig = e.currentTarget;
+            if (e.target.closest("a")) return;
+            if (fig.classList.contains("zoomed")) fig.classList.remove("zoomed");
+            else if (e.target.closest(".img-wrap, .zoom-btn")) fig.classList.add("zoomed");
+          },
           onkeydown: (e) => {
             if (e.key === "Escape") e.currentTarget.classList.remove("zoomed");
             else if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("img-wrap")) {
@@ -660,7 +666,9 @@
           } },
           h("div", { class: "img-wrap", role: "button", tabindex: "0", "aria-label": "처방전 크게 보기" },
             h("img", { src: shownUrl, alt: `처방 ${rx.display_no} ${canLocate ? "펴진 처방전" : "원본"} 사진` }), boxes, zoomHint()),
-          canLocate ? h("figcaption", { class: "img-actions" }, originalLink(rx.image_url)) : null) : null,
+          h("figcaption", { class: "img-actions" },
+            h("button", { type: "button", class: "chip-link zoom-btn" }, icon("zoom"), "확대"),
+            canLocate ? originalLink(rx.image_url) : null)) : null,
         h("div", { class: "approval-body" },
           h("p", { class: "muted" }, canLocate
             ? "항목을 누르면 처방전에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."

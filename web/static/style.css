@@ -125,7 +125,7 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 
 /* 처방 타임라인 (REQ-WEB-07) — 색만으로 구분하지 않고 단계마다 상태 글자를 함께 쓴다 */
 .timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
-.tl-item { position: relative; display: grid; grid-template-columns: 20px 1fr; gap: 14px; padding-bottom: 32px; }
+.tl-item { position: relative; display: grid; grid-template-columns: 20px 1fr; gap: 14px; padding-bottom: 26px; }
 .tl-item::before { content: ""; position: absolute; left: 7px; top: 18px; bottom: 0; width: 2px; background: var(--line); }
 .tl-item:last-child::before { display: none; }
 .tl-dot { width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--line); background: var(--card); box-sizing: border-box; }
@@ -133,7 +133,8 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 .tl-item.active .tl-dot { background: var(--card); border-color: var(--accent); border-width: 4px; }
 .tl-item.error .tl-dot { background: var(--bad); border-color: var(--bad); }
 .tl-item.cancelled .tl-dot { background: var(--muted); border-color: var(--muted); }
-.tl-main { min-width: 0; display: grid; gap: 14px; }
+.tl-main { min-width: 0; display: grid; gap: 10px; }
+.tl-main > p, .tl-main > details { margin: 0; }   /* 한 줄짜리 단계가 p 기본 여백으로 길어지지 않게 */
 .tl-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .tl-state { margin-left: auto; font-size: 12px; color: var(--muted); }
 .tl-item.pending .tl-head strong { color: var(--muted); font-weight: 500; }
@@ -345,3 +346,11 @@ table.plan th, table.plan td:first-child, table.plan td:nth-child(2) { white-spa
 .img-wrap:hover .zoom-hint, .img-wrap:focus-visible .zoom-hint { opacity: 1; }
 .zoom-hint .icon { width: 16px; height: 16px; }
 .rx-image.zoomed .zoom-hint { display: none; }
+/* 사진 아래 버튼 줄: 사진 폭을 나눠 가운데 정렬 ([확대] [원본 사진]) */
+.rx-image .img-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 8px; }
+.rx-image .img-actions .chip-link { justify-content: center; padding: 7px 10px; }
+.rx-image .img-actions > span { grid-column: 1 / -1; text-align: center; }
+button.chip-link { background: var(--card); color: var(--ink); font-weight: 500; font-size: 13px; }
+button.chip-link:hover:not(:disabled) { filter: none; background: #eff6ff; color: var(--accent); border-color: var(--accent); }
+.rx-image.zoomed .zoom-btn { display: none; }
+.rx-image.zoomed .img-actions { width: min(1000px, 100%); }
