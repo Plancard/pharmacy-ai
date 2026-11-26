@@ -1,13 +1,25 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}조제 이력 · 약손{% endblock %}
+{# 조제 이력 (F-WEB-13, REQ-WEB-10). 11/26 화면 디자인: 제목 + 건수 한 줄, 필터 상자, 표 헤더 · 행 강조, 검수 결과 배지.
+   위험 단계 '해당 없음'은 배지 대신 회색 글자로 낮춰 경고 · 위험만 눈에 띄게 한다. 행 어디를 눌러도 상세로 간다. #}
+{% set REVIEW_ICON = {"auto": "check", "checked": "approve", "manual": "eye"} %}
 {% block content %}
 <section class="card history">
-  <h2>조제 이력</h2>
+  <div class="page-head">
+    <h2>{{ icon("history") }}조제 이력</h2>
+    <span class="count">{{ total }}건</span>
+  </div>
+
   {# F-WEB-13 ①: 기간 · 위험 단계 · 검수 결과로 거르기 (이력에는 완료된 처방만 있다) #}
   <form method="get" action="{{ url_for('main.history') }}" class="filters">
-    <label>기간 <input type="date" name="from" value="{{ f['from'] }}" aria-label="시작일"></label>
-    <span aria-hidden="true">~</span>
-    <input type="date" name="to" value="{{ f['to'] }}" aria-label="종료일">
+    <label>기간
+      <span class="range">
+        <input type="date" name="from" value="{{ f['from'] }}" aria-label="시작일">
+        <span aria-hidden="true">~</span>
+        <input type="date" name="to" value="{{ f['to'] }}" aria-label="종료일">
+      </span>
+    </label>
     <label>위험 단계
       <select name="risk">
         <option value="">전체</option>
@@ -20,24 +32,26 @@
         {% for k, v in labels.review.items() %}<option value="{{ k }}" {% if f.review == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
       </select>
     </label>
-    <button type="submit">조회</button>
-    {% if filtered %}<a href="{{ url_for('main.history') }}">조건 지우기</a>{% endif %}
+    <div class="filter-actions">
+      <button type="submit">{{ icon("search") }}조회</button>
+      {% if filtered %}<a class="chip-link" href="{{ url_for('main.history') }}">{{ icon("x") }}조건 지우기</a>{% endif %}
+    </div>
   </form>
 
   {% if records %}
-  <p class="muted">{{ total }}건{% if pages > 1 %} · {{ f.page }}/{{ pages }}쪽{% endif %}</p>
   <div class="table-wrap">
-  <table class="items">
+  <table class="items history-table">
     <thead><tr><th>처방 번호</th><th>접수 시각</th><th>완료 시각</th><th>위험 단계</th><th>검수 결과</th><th>완료 약사</th></tr></thead>
     <tbody>
       {% for r in records %}
       {% set level = r.risk_level or 'none' %}
-      <tr>
-        <td><a href="{{ url_for('main.history_detail', rx_id=r.id) }}"><strong>{{ r.display_no }}</strong></a></td>
-        <td>{{ r.created_at | kst }}</td>
-        <td>{{ r.completed_at | kst }}</td>
-        <td><span class="chip {{ level }}">{{ labels.risk[level] }}</span></td>
-        <td>{{ labels.review['manual' if r.manual_inspection else ('checked' if r.hitl_required else 'auto')] }}{% if r.attempts and r.attempts > 1 %} <span class="muted">(촬영 {{ r.attempts }}회)</span>{% endif %}</td>
+      {% set review = 'manual' if r.manual_inspection else ('checked' if r.hitl_required else 'auto') %}
+      <tr data-href="{{ url_for('main.history_detail', rx_id=r.id) }}">
+        <td><a class="rx-no" href="{{ url_for('main.history_detail', rx_id=r.id) }}">{{ r.display_no }}</a></td>
+        <td class="num">{{ r.created_at | kst }}</td>
+        <td class="num">{{ r.completed_at | kst }}</td>
+        <td>{% if level == 'none' %}<span class="muted">{{ labels.risk[level] }}</span>{% else %}<span class="chip {{ level }}">{{ labels.risk[level] }}</span>{% endif %}</td>
+        <td><span class="review review-{{ review }}">{{ icon(REVIEW_ICON[review]) }}{{ labels.review[review] }}</span>{% if r.attempts and r.attempts > 1 %} <span class="muted small-note">촬영 {{ r.attempts }}회</span>{% endif %}</td>
         <td>{{ r.username }}</td>
       </tr>
       {% endfor %}
@@ -46,15 +60,22 @@
   </div>
   {% if pages > 1 %}
   <nav class="pager" aria-label="쪽 이동">
-    {% if f.page > 1 %}<a href="{{ url_for('main.history', page=f.page - 1, **query) }}">← 이전</a>{% endif %}
-    <span>{{ f.page }} / {{ pages }}</span>
-    {% if f.page < pages %}<a href="{{ url_for('main.history', page=f.page + 1, **query) }}">다음 →</a>{% endif %}
+    {% if f.page > 1 %}<a class="chip-link" href="{{ url_for('main.history', page=f.page - 1, **query) }}">{{ icon("chevron-left") }}이전</a>{% else %}<span class="chip-link disabled">{{ icon("chevron-left") }}이전</span>{% endif %}
+    <span class="pager-now">{{ f.page }} / {{ pages }}</span>
+    {% if f.page < pages %}<a class="chip-link" href="{{ url_for('main.history', page=f.page + 1, **query) }}">다음{{ icon("chevron-right") }}</a>{% else %}<span class="chip-link disabled">다음{{ icon("chevron-right") }}</span>{% endif %}
   </nav>
   {% endif %}
   {% elif filtered %}
-    <p class="muted">조건에 맞는 조제 기록이 없습니다.</p>
+    <p class="empty">{{ icon("search", "icon empty-icon") }}조건에 맞는 조제 기록이 없습니다.</p>
   {% else %}
-    <p class="muted">저장된 조제 기록이 없습니다.</p>
+    <p class="empty">{{ icon("history", "icon empty-icon") }}저장된 조제 기록이 없습니다.</p>
   {% endif %}
 </section>
+<script>
+  // 행 어디를 눌러도 상세로 (링크 · 글자 선택 중에는 그대로)
+  document.querySelectorAll(".history-table tr[data-href]").forEach((tr) => tr.addEventListener("click", (e) => {
+    if (e.target.closest("a") || String(window.getSelection())) return;
+    location.href = tr.dataset.href;
+  }));
+</script>
 {% endblock %}

@@ -116,7 +116,7 @@ def test_pager_keeps_the_filters(client, db_history):
     login(client)
     _, html = page(client, "/history?risk=warning&page=2")
     assert db_history["list"][1]["page"] == 2
-    assert "45건 · 2/3쪽" in html
+    assert "45건" in html and "2 / 3" in html
     assert "/history?page=1&amp;risk=warning" in html and "/history?page=3&amp;risk=warning" in html
 
 
