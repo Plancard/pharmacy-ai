@@ -1,175 +1,214 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
 {% block title %}{{ rec.display_no }} 조제 기록 · 약손{% endblock %}
+{# 조제 이력 상세 (F-WEB-13 ②). 11/26 화면 디자인: 요약 헤더 카드 → 처방전과 조제지시서 → 위험 대조(상태 카드) → 트레이 검수(문제 칸 요약)
+   → 승인 이력(타임라인). 보이는 정보는 그대로이고 배치 · 모양만 바꿨다. 사진은 메인 화면처럼 같은 화면에서 크게 본다. #}
 {% macro counts(c) -%}
   {%- set parts = [] -%}
   {%- for code, n in (c or {}).items() if n -%}{%- set _ = parts.append((names.get(code) or code) ~ ' ' ~ n ~ '개') -%}{%- endfor -%}
   {{- parts | join(', ') if parts else '없음' -}}
 {%- endmacro %}
+{% macro photo(url, alt, original=None) -%}
+<figure class="rx-image zoomable">
+  <div class="img-wrap" role="button" tabindex="0" aria-label="{{ alt }} 크게 보기"><img src="{{ url }}" alt="{{ alt }}"><span class="zoom-hint" aria-hidden="true">{{ icon("zoom") }}</span></div>
+  <figcaption class="img-actions">
+    <button type="button" class="chip-link zoom-btn">{{ icon("zoom") }}확대</button>
+    <a href="{{ original or url }}" target="_blank" rel="noopener" class="chip-link">{{ icon("image") }}원본 사진</a>
+  </figcaption>
+</figure>
+{%- endmacro %}
+{% set ACTION_ICON = {"approve": "check", "edit": "edit", "manual": "shield", "confirm": "check", "redo": "retry"} %}
 {% block content %}
 {% set level = rec.risk_level or 'none' %}
-<p><a href="{{ url_for('main.history') }}">← 조제 이력</a></p>
-<section class="card history-detail">
-  <div class="rx-card-head">
+{% set s = a3.get('summary') or {} %}
+{% set review = 'manual' if not a3 else ('checked' if s.get('hitl_required') else 'auto') %}
+{% set REVIEW_ICON = {"auto": "check", "checked": "approve", "manual": "eye"} %}
+<a class="chip-link back-link" href="{{ url_for('main.history') }}">{{ icon("arrow-left") }}조제 이력</a>
+
+{# 요약 헤더: 무엇을 보고 있는지 (번호 · 완료 · 위험 단계 · 검수 결과 · 시각 · 약사) #}
+<section class="card record-head">
+  <div class="record-title">
     <h2>{{ rec.display_no }} 조제 기록</h2>
-    <span class="chip {{ level }}">위험 단계 {{ labels.risk[level] }}</span>
+    <span class="badge done">완료</span>
+    <span class="risk-pill inline {{ level }}">위험 단계 {{ labels.risk[level] }}</span>
+    <span class="review review-{{ review }}">{{ icon(REVIEW_ICON[review]) }}{{ labels.review[review] }}</span>
   </div>
-  <p class="muted">접수 {{ rec.created_at | kst }} · 완료 {{ rec.completed_at | kst }} · 완료 약사 {{ rec.username }}</p>
+  <dl class="record-meta">
+    <div><dt>접수 시각</dt><dd>{{ rec.created_at | kst }}</dd></div>
+    <div><dt>완료 시각</dt><dd>{{ rec.completed_at | kst }}</dd></div>
+    <div><dt>완료 약사</dt><dd>{{ rec.username }}</dd></div>
+    {% if a3 %}<div><dt>트레이 촬영</dt><dd>{{ attempts }}회</dd></div>{% endif %}
+  </dl>
+</section>
 
+<section class="card history-detail">
   {# ① 처방전 원본 + 최종 조제지시서 #}
-  <h3>처방전과 최종 조제지시서</h3>
-  <div class="approval-grid">
-    {% if rx_image_url %}
-    <figure class="rx-image">
-      <a href="{{ rx_image_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ rx_image_url }}" alt="{{ rec.display_no }} 처방전 원본"><span class="zoom-hint" aria-hidden="true">{{ icon("zoom") }}</span></a>
-    </figure>
-    {% else %}<p class="muted">처방전 사진이 없습니다.</p>{% endif %}
-    <div class="approval-body">
-      <div class="table-wrap">
-      <table class="items">
-        <thead><tr><th>약품</th><th>품목기준코드</th><th class="num">1회</th><th>복용 시점</th><th class="num">일수</th></tr></thead>
-        <tbody>
-        {% for it in order.get('items', []) %}
-          <tr {% if it.needs_pharmacist_check %}class="flagged"{% endif %}>
-            <td>{{ it.name }}{% if it.get('printed_name') %}<div class="muted printed-name">처방전 표기: {{ it.printed_name }}</div>{% endif %}{% for r in it.get('check_reasons') or [] %}<div class="reason">{{ r }}</div>{% endfor %}</td>
-            <td class="mono">{{ it.item_code or '-' }}</td>
-            <td class="num">{{ it.count_per_dose }}</td>
-            <td>{{ (it.get('times') or []) | map('label', labels.times) | join(' · ') }}</td>
-            <td class="num">{{ it.days }}</td>
-          </tr>
-        {% else %}
-          <tr><td colspan="5" class="muted">조제지시서가 없습니다.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      </div>
-      {% if order.get('warnings') %}
-      <div class="risk risk-warning" role="status">
-        <strong>처방전을 읽으며 알린 내용</strong>
-        <ul>{% for w in order.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-
-  {# 최종 위험 단계와 대조 근거 (risk_check.findings[].evidence, 근거를 못 찾았으면 '근거 없음') #}
-  <h3>위험 대조</h3>
-  {% if risk.get('findings') %}
-  <div class="risk {% if level in ('warning', 'danger') %}risk-{{ level }}{% endif %}">
-    <ul class="findings">
-    {% for fd in risk.findings %}
-      <li class="finding">
-        <div class="finding-msg">
-          <span class="chip {{ fd.level }}">{{ labels.risk.get(fd.level, fd.level) }}</span>
-          {{ fd.message }}
-          <span class="muted">({{ (fd.get('item_codes') or []) | map('label', names) | join(', ') }})</span>
+  <section class="detail-sec">
+    <h3>{{ icon("scan") }}처방전과 최종 조제지시서</h3>
+    <div class="approval-grid">
+      {% if rx_image_url %}{{ photo(rx_image_url, rec.display_no ~ " 처방전 원본") }}
+      {% else %}<p class="muted">처방전 사진이 없습니다.</p>{% endif %}
+      <div class="approval-body">
+        <div class="table-wrap">
+        <table class="items">
+          <thead><tr><th>약품</th><th>품목기준코드</th><th class="num">1회</th><th>복용 시점</th><th class="num">일수</th></tr></thead>
+          <tbody>
+          {% for it in order.get('items', []) %}
+            <tr {% if it.needs_pharmacist_check %}class="flagged"{% endif %}>
+              <td>{{ it.name }}{% if it.get('printed_name') %}<div class="muted printed-name">처방전 표기: {{ it.printed_name }}</div>{% endif %}{% for r in it.get('check_reasons') or [] %}<div class="reason">{{ r }}</div>{% endfor %}</td>
+              <td class="mono">{{ it.item_code or '-' }}</td>
+              <td class="num">{{ it.count_per_dose }}</td>
+              <td>{{ (it.get('times') or []) | map('label', labels.times) | join(' · ') }}</td>
+              <td class="num">{{ it.days }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">조제지시서가 없습니다.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
         </div>
-        {% if fd.get('explanation') %}<div class="finding-ai"><span class="finding-ai-label">AI 설명</span>{{ fd.explanation }}</div>{% endif %}
-        {% if fd.get('evidence') %}
-          <ul class="evidence">
-          {% for ev in fd.evidence %}
-            {% set src = (ev.source or '').rsplit(' (', 1) %}
-            <li>
-              <div class="ev-head"><strong>{{ ev.title }}</strong>
-              {% if src | length == 2 and src[1].startswith('http') %}<a href="{{ src[1].rstrip(')') }}" target="_blank" rel="noopener">{{ src[0] }} ↗</a>
-              {% else %}<span class="muted">{{ ev.source }}</span>{% endif %}</div>
-              <blockquote class="ev-excerpt">{{ ev.excerpt }}</blockquote>
+        {% if order.get('warnings') %}
+        <div class="risk risk-warning" role="status">
+          <strong class="box-title">{{ icon("shield") }}처방전을 읽으며 알린 내용</strong>
+          <ul>{% for w in order.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  {# ② 위험 대조: 결과가 없어도 같은 자리에 상태 카드 (있으면 주황 · 빨강, 없으면 초록) #}
+  <section class="detail-sec">
+    <h3>{{ icon("shield") }}위험 대조</h3>
+    {% if risk.get('findings') %}
+    <div class="risk {% if level in ('warning', 'danger') %}risk-{{ level }}{% endif %}">
+      <ul class="findings">
+      {% for fd in risk.findings %}
+        <li class="finding">
+          <div class="finding-msg">
+            <span class="chip {{ fd.level }}">{{ labels.risk.get(fd.level, fd.level) }}</span>
+            {{ fd.message }}
+            <span class="muted">({{ (fd.get('item_codes') or []) | map('label', names) | join(', ') }})</span>
+          </div>
+          {% if fd.get('explanation') %}<div class="finding-ai"><span class="finding-ai-label">AI 설명</span>{{ fd.explanation }}</div>{% endif %}
+          {% if fd.get('evidence') %}
+            <ul class="evidence">
+            {% for ev in fd.evidence %}
+              {% set src = (ev.source or '').rsplit(' (', 1) %}
+              <li>
+                <div class="ev-head"><strong>{{ ev.title }}</strong>
+                {% if src | length == 2 and src[1].startswith('http') %}<a href="{{ src[1].rstrip(')') }}" target="_blank" rel="noopener">{{ src[0] }} ↗</a>
+                {% else %}<span class="muted">{{ ev.source }}</span>{% endif %}</div>
+                <blockquote class="ev-excerpt">{{ ev.excerpt }}</blockquote>
+              </li>
+            {% endfor %}
+            </ul>
+          {% else %}<div class="muted">근거 없음</div>{% endif %}
+        </li>
+      {% endfor %}
+      </ul>
+    </div>
+    {% else %}
+    <div class="status-card ok">
+      <span class="status-icon">{{ icon("shield-ok") }}</span>
+      <div><strong>위험 신호 없음</strong><p>처방약끼리 대조한 결과 위험 신호가 없습니다.</p></div>
+    </div>
+    {% endif %}
+  </section>
+
+  {# ③ 트레이 검수: 최종 검수 결과 그림 · 칸별 판정 · 문제 칸 요약 (촬영 횟수 함께) #}
+  <section class="detail-sec">
+    <h3>{{ icon("tray") }}트레이 검수</h3>
+    {% if not a3 %}
+    {% set manual = approvals | selectattr('hitl_point', 'equalto', 'inspection') | selectattr('action', 'equalto', 'manual') | list | last %}
+    <div class="risk risk-warning">
+      <strong class="box-title">{{ icon("eye") }}{{ labels.review.manual }}</strong>
+      <p>검출 모델 오류로 자동 검수를 하지 못해 약사가 트레이를 육안으로 확인하고 완료했습니다. 검수 결과는 없습니다.</p>
+      {% if manual %}<p>확인 내용: {{ manual.reason }} <span class="muted">({{ manual.username }}, {{ manual.created_at | kst }})</span></p>{% endif %}
+      {% if tray_image_url %}<p><a class="chip-link" href="{{ tray_image_url }}" target="_blank" rel="noopener">{{ icon("image") }}올린 트레이 사진</a></p>{% endif %}
+    </div>
+    {% else %}
+    <p class="tray-summary">
+      <span class="chip ok">일치 {{ s.get('ok', 0) }}</span>
+      <span class="chip danger">불일치 {{ s.get('mismatch', 0) }}</span>
+      <span class="chip warning">확인 필요 {{ s.get('need_review', 0) }}</span>
+      <span class="muted">· 트레이 촬영 {{ attempts }}회{% if attempts > 1 %} (마지막 검수 결과){% endif %}</span>
+    </p>
+    <div class="approval-grid">
+      {% if overlay_url %}{{ photo(overlay_url, rec.display_no ~ " 트레이 검수 결과 그림", tray_image_url) }}
+      {% elif tray_image_url %}{{ photo(tray_image_url, rec.display_no ~ " 트레이 사진") }}
+      {% else %}<p class="muted">트레이 사진이 없습니다.</p>{% endif %}
+      <div class="approval-body">
+        <table class="tray-grid">
+          <thead><tr><th></th>{% for d in days %}<th scope="col">{{ d }}일</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for t, row in grid %}
+            <tr><th scope="row">{{ labels.times[t] }}</th>
+            {% for c in row %}
+              <td>{% if c %}
+                {% set empty = not ((c.expected or {}).values() | select | list) and not ((c.actual or {}).values() | select | list) %}
+                <div class="cell cell-{{ c.status }}{% if empty %} cell-empty{% endif %}">
+                  <span class="cell-state">{{ '빈 칸' if empty and c.status == 'ok' else labels.cell.get(c.status, c.status) }}</span>
+                  <span class="cell-items">{% if not empty %}{{ counts(c.actual) }}{% endif %}</span>
+                </div>
+              {% else %}<span class="muted">-</span>{% endif %}</td>
+            {% endfor %}
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% set bad = a3.get('cells', []) | rejectattr('status', 'equalto', 'ok') | list %}
+        {% if bad %}
+        <div class="problem-list">
+          <strong class="box-title">{{ icon("x") }}문제 칸 {{ bad | length }}곳</strong>
+          <ul>
+          {% for c in bad %}
+            <li class="problem {{ c.status }}">
+              <span class="problem-where">{{ c.day }}일 {{ labels.times.get(c.time, c.time) }} · {{ labels.cell.get(c.status, c.status) }}</span>
+              <span>예상 {{ counts(c.expected) }} / 실제 {{ counts(c.actual) }}{% if c.reasons %} · 사유 {{ c.reasons | map('label', labels.cell_reason) | join(', ') }}{% endif %}</span>
             </li>
           {% endfor %}
           </ul>
-        {% else %}<div class="muted">근거 없음</div>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  {# ④ 승인 이력 (시간순, REQ-WEB-06): 누가 언제 무엇을 했는지 — 감사 기록이라 모든 칸을 남긴다 #}
+  <section class="detail-sec">
+    <h3>{{ icon("approve") }}승인 이력</h3>
+    {% if approvals %}
+    <ol class="audit">
+    {% for a in approvals %}
+      <li class="audit-item {{ a.action }}">
+        <span class="audit-icon">{{ icon(ACTION_ICON.get(a.action, "check")) }}</span>
+        <div class="audit-body">
+          <div class="audit-head"><strong>{{ labels.point.get(a.hitl_point, a.hitl_point) }} · {{ labels.action.get(a.action, a.action) }}</strong>
+            {% if a.warning_ack %}<span class="chip ok">경고 확인함</span>{% endif %}</div>
+          <div class="audit-meta">{{ icon("user") }}{{ a.username }} <span aria-hidden="true">·</span> {{ icon("clock") }}{{ a.created_at | kst('%Y-%m-%d %H:%M:%S') }}
+            {% if a.warning_ack is not none and not a.warning_ack %}<span aria-hidden="true">·</span> 확인할 경고 없음{% endif %}</div>
+          {% if a.reason %}<blockquote class="audit-reason">{{ a.reason }}</blockquote>{% endif %}
+        </div>
       </li>
     {% endfor %}
-    </ul>
-  </div>
-  {% else %}
-  <p class="muted">처방약끼리 대조한 결과 위험 신호가 없습니다.</p>
-  {% endif %}
-
-  {# 검수 결과 그림과 칸별 판정 (최종 검수만, 촬영 횟수 함께) #}
-  <h3>트레이 검수</h3>
-  {% if not a3 %}
-  {% set manual = approvals | selectattr('hitl_point', 'equalto', 'inspection') | selectattr('action', 'equalto', 'manual') | list | last %}
-  <div class="risk risk-warning">
-    <strong>{{ labels.review.manual }}</strong>
-    <p>검출 모델 오류로 자동 검수를 하지 못해 약사가 트레이를 육안으로 확인하고 완료했습니다. 검수 결과는 없습니다.</p>
-    {% if manual %}<p>확인 내용: {{ manual.reason }} <span class="muted">({{ manual.username }}, {{ manual.created_at | kst }})</span></p>{% endif %}
-    {% if tray_image_url %}<p><a href="{{ tray_image_url }}" target="_blank" rel="noopener">올린 트레이 사진</a></p>{% endif %}
-  </div>
-  {% else %}
-  {% set s = a3.get('summary') or {} %}
-  <p class="tray-summary">
-    <span class="chip ok">일치 {{ s.get('ok', 0) }}</span>
-    <span class="chip danger">불일치 {{ s.get('mismatch', 0) }}</span>
-    <span class="chip warning">확인 필요 {{ s.get('need_review', 0) }}</span>
-    <span class="muted">· {{ labels.review['checked' if s.get('hitl_required') else 'auto'] }} · 트레이 촬영 {{ attempts }}회{% if attempts > 1 %} (마지막 검수 결과){% endif %}</span>
-  </p>
-  <div class="approval-grid">
-    {% if overlay_url %}
-    <figure class="rx-image">
-      <a href="{{ overlay_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ overlay_url }}" alt="{{ rec.display_no }} 트레이 검수 결과 그림"><span class="zoom-hint" aria-hidden="true">{{ icon("zoom") }}</span></a>
-      {% if tray_image_url %}<figcaption class="img-actions"><a href="{{ tray_image_url }}" target="_blank" rel="noopener" class="chip-link">{{ icon("image") }}원본 사진</a></figcaption>{% endif %}
-    </figure>
-    {% elif tray_image_url %}
-    <figure class="rx-image">
-      <a href="{{ tray_image_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ tray_image_url }}" alt="{{ rec.display_no }} 트레이 사진"><span class="zoom-hint" aria-hidden="true">{{ icon("zoom") }}</span></a>
-    </figure>
-    {% else %}<p class="muted">트레이 사진이 없습니다.</p>{% endif %}
-    <div class="approval-body">
-      <table class="tray-grid">
-        <thead><tr><th></th>{% for d in days %}<th scope="col">{{ d }}일</th>{% endfor %}</tr></thead>
-        <tbody>
-        {% for t, row in grid %}
-          <tr><th scope="row">{{ labels.times[t] }}</th>
-          {% for c in row %}
-            <td>{% if c %}
-              {% set empty = not ((c.expected or {}).values() | select | list) and not ((c.actual or {}).values() | select | list) %}
-              <div class="cell cell-{{ c.status }}{% if empty %} cell-empty{% endif %}">
-                <span class="cell-state">{{ '빈 칸' if empty and c.status == 'ok' else labels.cell.get(c.status, c.status) }}</span>
-                <span class="cell-items">{% if not empty %}{{ counts(c.actual) }}{% endif %}</span>
-              </div>
-            {% else %}<span class="muted">-</span>{% endif %}</td>
-          {% endfor %}
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% set bad = a3.get('cells', []) | rejectattr('status', 'equalto', 'ok') | list %}
-      {% if bad %}
-      <div class="cell-detail">
-        <strong>문제 칸</strong>
-        <dl>
-        {% for c in bad %}
-          <dt>{{ c.day }}일 {{ labels.times.get(c.time, c.time) }} · {{ labels.cell.get(c.status, c.status) }}</dt>
-          <dd>예상 {{ counts(c.expected) }} / 실제 {{ counts(c.actual) }}{% if c.reasons %} · 사유 {{ c.reasons | map('label', labels.cell_reason) | join(', ') }}{% endif %}</dd>
-        {% endfor %}
-        </dl>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  {# 승인 이력 (시간순) #}
-  <h3>승인 이력</h3>
-  {% if approvals %}
-  <div class="table-wrap">
-  <table class="items">
-    <thead><tr><th>시각</th><th>단계</th><th>응답</th><th>약사</th><th>경고 확인</th><th>사유</th></tr></thead>
-    <tbody>
-    {% for a in approvals %}
-      <tr>
-        <td>{{ a.created_at | kst('%Y-%m-%d %H:%M:%S') }}</td>
-        <td>{{ labels.point.get(a.hitl_point, a.hitl_point) }}</td>
-        <td>{{ labels.action.get(a.action, a.action) }}</td>
-        <td>{{ a.username }}</td>
-        <td>{% if a.warning_ack is none %}-{% elif a.warning_ack %}확인함{% else %}해당 없음{% endif %}</td>
-        <td>{{ a.reason or '' }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}<p class="muted">승인 기록이 없습니다.</p>{% endif %}
+    </ol>
+    {% else %}<p class="muted">승인 기록이 없습니다.</p>{% endif %}
+  </section>
 </section>
+<script>
+  // 사진: 그림이나 [확대]를 누르면 같은 화면에서 크게, 크게 본 상태에서는 아무 곳이나 누르거나 Esc로 닫는다 (메인 화면과 같다)
+  document.querySelectorAll("figure.zoomable").forEach((fig) => {
+    fig.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return;
+      if (fig.classList.contains("zoomed")) fig.classList.remove("zoomed");
+      else if (e.target.closest(".img-wrap, .zoom-btn")) fig.classList.add("zoomed");
+    });
+    fig.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") fig.classList.remove("zoomed");
+      else if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("img-wrap")) { e.preventDefault(); fig.classList.toggle("zoomed"); }
+    });
+  });
+</script>
 {% endblock %}

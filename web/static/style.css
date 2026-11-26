@@ -389,3 +389,46 @@ button.chip-link:hover:not(:disabled) { filter: none; background: #eff6ff; color
 .small-note { font-size: 12px; margin-left: 4px; }
 .empty { display: grid; justify-items: center; gap: 10px; padding: 48px 0; color: var(--muted); }
 .empty-icon { width: 32px; height: 32px; }
+/* 조제 이력 상세 (11/26): 요약 헤더 → 섹션별 제목 아이콘 → 상태 카드 · 문제 칸 요약 · 승인 이력 타임라인 */
+.back-link { margin-bottom: 14px; }
+.record-head { display: grid; gap: 16px; margin-bottom: 16px; }
+.record-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.record-title h2 { margin: 0 6px 0 0; font-size: 22px; letter-spacing: -.02em; }
+.risk-pill.inline { display: inline-block; padding: 3px 12px; }
+.record-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.record-meta dt { font-size: 12px; color: var(--muted); }
+.record-meta dd { margin: 4px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.history-detail { gap: 0; }
+.detail-sec { display: grid; gap: 14px; padding: 22px 0; }
+.detail-sec:first-child { padding-top: 4px; }
+.detail-sec + .detail-sec { border-top: 1px solid var(--line); }
+.history-detail .detail-sec h3 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }
+.detail-sec h3 .icon { color: var(--accent); }
+.box-title { display: inline-flex; align-items: center; gap: 6px; }
+.box-title .icon { width: 16px; height: 16px; }
+.status-card { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border-radius: 10px; border: 1px solid; }
+.status-card.ok { background: #f0fdf4; border-color: #bbf7d0; }
+.status-card.ok .status-icon { color: var(--ok); }
+.status-card p { margin: 2px 0 0; color: #4b5563; font-size: 14px; }
+.status-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #fff; }
+.status-icon .icon { width: 22px; height: 22px; }
+.tray-summary { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.problem-list { border: 1px solid #fecaca; background: #fef2f2; border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; }
+.problem-list .box-title { color: var(--bad); }
+.problem-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.problem { display: grid; gap: 2px; padding: 8px 10px; border-radius: 6px; background: #fff; font-size: 14px; border-left: 3px solid var(--bad); }
+.problem.need_review { border-left-color: var(--warn); }
+.problem-where { font-weight: 700; }
+.audit { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.audit-item { position: relative; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; padding-bottom: 18px; }
+.audit-item:not(:last-child)::before { content: ""; position: absolute; left: 16px; top: 34px; bottom: 0; width: 2px; background: var(--line); }
+.audit-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #eff6ff; color: var(--accent); }
+.audit-icon .icon { width: 16px; height: 16px; }
+.audit-item.manual .audit-icon { background: #fff7ed; color: var(--warn); }
+.audit-item.redo .audit-icon, .audit-item.edit .audit-icon { background: #f3f4f6; color: #4b5563; }
+.audit-body { display: grid; gap: 4px; padding-top: 6px; min-width: 0; }
+.audit-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.audit-meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 13px; color: var(--muted); }
+.audit-meta .icon { width: 14px; height: 14px; }
+.audit-reason { margin: 4px 0 0; padding: 6px 10px; border-left: 3px solid var(--line); background: #f8fafc; font-size: 14px; }
+@media (max-width: 800px) { .record-meta { grid-template-columns: 1fr 1fr; } }
