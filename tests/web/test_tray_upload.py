@@ -127,6 +127,17 @@ def test_waiting_tray_card_has_no_retake_after_approval(client):
     assert detail(client, rx_id)["card"]["retake"] is None
 
 
+def test_waiting_tray_card_shows_the_plan_and_after_redo_the_previous_result(client, fake_rx, monkeypatch):
+    rx_id = waiting_tray(client)
+    card = detail(client, rx_id)["card"]
+    assert card["plan"]["plan"] and card["previous"] is None        # 처음 채울 때는 칸 배치만
+    rx_id = at_hitl_2(client, monkeypatch)
+    assert inspect_reply(client, rx_id, action="redo").status_code == 202
+    card = detail(client, rx_id)["card"]
+    prev = card["previous"]                                           # 재조제로 돌아오면 직전 검수 결과
+    assert prev["inspection"]["summary"]["mismatch"] == 1 and prev["tray_image_url"]
+
+
 @pytest.mark.parametrize("state", ["waiting_approval", "processing", "done", "failed", "cancelled"])
 def test_tray_is_refused_unless_waiting_tray(client, fake_rx, tmp_path, state):
     rx_id = upload(client).get_json()["id"]

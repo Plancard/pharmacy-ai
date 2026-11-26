@@ -200,7 +200,13 @@ def detail(rx_id: str):
             body["card"] = {**pause.payload, "tray_image_url": _image_url(sid, a3.get("image_id")),
                             "tray_overlay_url": _overlay_url(sid, a3.get("image_id"))}
     elif row["status"] == "waiting_tray":
-        card: dict[str, Any] = {"order": gateway().approved_order(sid), "retake": None}
+        # 트레이를 채울 때 볼 칸 배치(A.4)와, 재조제로 돌아왔으면 직전 검수 결과(A.3 · 사진)를 함께 준다 (11/26 화면)
+        card: dict[str, Any] = {"order": gateway().approved_order(sid), "plan": gateway().approved_plan(sid),
+                                "retake": None, "previous": None}
+        if inspections:
+            last = inspections[-1]
+            card["previous"] = {"inspection": last["result_json"], "tray_image_url": _image_url(sid, last["image_id"]),
+                                "tray_overlay_url": _overlay_url(sid, last["image_id"])}
         err = gateway().tray_error(sid)
         if err:   # 트레이를 못 찾는 등으로 다시 찍어야 함. 검출 모델 오류면 육안 검수 후 수동 진행도 열어 준다 (6장)
             code = err.get("code")

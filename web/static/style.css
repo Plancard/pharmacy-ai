@@ -160,6 +160,7 @@ table.items tr.selected { outline: 2px solid var(--accent); outline-offset: -2px
 table.tray-grid { table-layout: fixed; }
 table.tray-grid th { font-size: 13px; color: var(--muted); font-weight: 500; text-align: center; padding: 4px; }
 table.tray-grid th[scope="row"] { text-align: right; width: 4.5em; }
+table.tray-grid thead th:first-child { width: 4.5em; }
 table.tray-grid td { padding: 3px; border: 0; }
 .cell { width: 100%; min-height: 58px; display: grid; gap: 2px; align-content: center; padding: 6px; border-radius: 6px;
   border: 2px solid transparent; color: var(--ink); font-size: 13px; text-align: center; }
@@ -329,3 +330,7 @@ table.plan th, table.plan td:first-child, table.plan td:nth-child(2) { white-spa
   .stepper { grid-template-columns: 1fr 1fr; row-gap: 12px; }
   .stepper-item::after { display: none; }
 }
+/* 칸 배치 (트레이 대기 때) */
+.plan-cell { align-content: start; background: #fff; border: 1px solid var(--line); cursor: default; }
+.plan-item { font-size: 13px; line-height: 1.4; }
+.plan-grid { margin-top: 8px; }

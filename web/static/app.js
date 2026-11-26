@@ -723,7 +723,35 @@
       retake ? null : h("p", { class: "muted", id: "tray-help" }, "트레이 전체가 보이고 아침 줄이 위로 오게 찍어 주세요."),
       form,
       retake && retake.manual_allowed ? manualInspection(rx) : null,
-      order ? h("details", {}, h("summary", {}, "승인한 조제지시서 보기"), itemsTable(order, {})) : null);
+      trayReference(rx, order));
+  }
+
+  // 트레이 대기 때 펼쳐 볼 것 (11/26): 처음 채울 때는 칸 배치, 재조제로 돌아왔으면 직전 검수 결과 (틀린 칸을 보고 고쳐 담게)
+  // 승인한 조제지시서는 위 '조제지시서 승인' 단계에 있으므로 여기서 되풀이하지 않는다
+  function trayReference(rx, order) {
+    const card = rx.card || {};
+    const names = drugNames(order);
+    if (card.previous && card.previous.inspection) {
+      const prev = { display_no: rx.display_no, card: card.previous };
+      return h("details", {}, h("summary", {}, "이전 검수 결과 보기"), trayLayout(prev, card.previous.inspection, names));
+    }
+    if (card.plan) return h("details", {}, h("summary", {}, "칸 배치 보기"), planGrid(card.plan, names));
+    return null;
+  }
+
+  // 조제 계획(A.4)을 트레이 모양(4행 시간 × 3열 일)으로: 칸마다 넣을 약과 알 수
+  function planGrid(plan, names) {
+    const byKey = Object.fromEntries((plan.plan || []).map((c) => [`${c.day}-${c.time}`, c]));
+    const body = TIME_ORDER.map((t) => h("tr", {}, h("th", { scope: "row" }, TIMES[t]), DAYS.map((d) => {
+      const c = byKey[`${d}-${t}`];
+      const items = (c && c.items) || [];
+      return h("td", {}, h("div", { class: `cell plan-cell${items.length ? "" : " cell-empty"}` },
+        items.length ? items.map((i) => h("span", { class: "plan-item" }, `${names[i.item_code] || i.item_code} ${i.count}정`))
+          : h("span", { class: "muted" }, d > (plan.days || 3) ? "-" : "빈 칸")));
+    })));
+    return h("table", { class: "tray-grid plan-grid" },
+      h("thead", {}, h("tr", {}, h("th", {}, ""), DAYS.map((d) => h("th", { scope: "col" }, `${d}일`)))),
+      h("tbody", {}, body));
   }
 
   // 6장 E_CV_INFER: 검출 모델 오류로 자동 검수를 못 할 때 약사가 트레이를 직접 보고 사유를 적어 완료한다
