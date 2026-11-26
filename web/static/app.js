@@ -620,7 +620,8 @@
       err.hidden = true;
       btn.disabled = true;
       try {
-        const confirmed = needsConfirm ? document.getElementById("confirm-risk").checked : false;
+        // 위험(danger)이면 확인란을 그리지 않고 사유로 대신한다 (경고가 함께 있어도 needs_confirm은 true)
+        const confirmed = needsConfirm && !isDanger ? document.getElementById("confirm-risk").checked : false;
         const payload = isDanger
           ? { action: "manual", reason: reasonBox.value.trim() }
           : { confirmed };
