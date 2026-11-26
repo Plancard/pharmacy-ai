@@ -1,0 +1,30 @@
+{# 아이콘 묶음 (11/26 화면 디자인, 기능분석서 [S]). 템플릿은 icon() 매크로, app.js는 icon(이름)으로 같은 그림을 쓴다.
+   외부 글꼴·CDN 없이 그린다 (시연 PC가 인터넷이 없어도 깨지지 않게). 선 굵기·색은 style.css의 .icon이 정한다. #}
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.3l1.5-2.2h7.4L17.2 7h2.3A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m14.5 7.5 3 3"/></symbol>
+  <symbol id="i-retry" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-tray" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9.5h16M4 15h16M9.3 3v18M14.7 3v18"/></symbol>
+  <symbol id="i-calc" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".8"/><circle cx="4.5" cy="12" r=".8"/><circle cx="4.5" cy="18" r=".8"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 9h8M8 12h8M8 15h5"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6z"/><path d="M12 8v5M12 16v.01"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+  {# 로고: 손바닥에 캡슐 하나 (약손). 선이 아니라 면으로 칠한다 (.logo가 색을 정함) #}
+  <symbol id="i-logo" viewBox="0 0 32 32">
+    <rect width="32" height="32" rx="8" fill="currentColor"/>
+    <path fill="#fff" d="M8.5 19.5c0-1 .8-1.8 1.8-1.8h2.4l4.6-1.6c1.2-.4 2.2.9 1.4 1.9l-1 1.2h4.6c.9 0 1.7-.4 2.3-1l1.3-1.3c.6-.6 1.6-.5 2 .3.3.5.2 1.2-.2 1.6l-3.4 3.6c-.9.9-2.1 1.4-3.3 1.4H10.3c-1 0-1.8-.8-1.8-1.8z"/>
+    <g transform="rotate(-35 16.5 10)"><rect x="11" y="7.6" width="11" height="4.8" rx="2.4" fill="#fff"/><rect x="16.5" y="7.6" width="5.5" height="4.8" rx="2.4" fill="#bfdbfe"/><rect x="16.5" y="7.6" width="2.4" height="4.8" fill="#bfdbfe"/></g>
+  </symbol>
+</svg>
+{% macro icon(name, cls="icon") %}<svg class="{{ cls }}" aria-hidden="true"><use href="#i-{{ name }}"/></svg>{% endmacro %}

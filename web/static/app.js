@@ -36,6 +36,54 @@
     return el;
   }
 
+  // 아이콘 (11/26 화면 디자인): base.html의 아이콘 묶음(_icons.html)을 <use>로 쓴다
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function icon(name) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "icon");
+    svg.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", `#i-${name}`);
+    svg.append(use);
+    return svg;
+  }
+  function setLabel(btn, name, text) { btn.replaceChildren(...(name ? [icon(name)] : []), text); }
+
+  // 사진 고르기 칸: 눌러서 고르거나 끌어다 놓는다. 고른 사진은 이름 · 크기 · 미리보기로 보인다.
+  // input은 화면에서만 숨긴다 (display:none이면 required 안내가 뜨지 않는다)
+  function fileDrop(input, hint = "눌러서 고르거나 사진을 끌어다 놓으세요") {
+    input.classList.add("drop-input");
+    const name = h("span", { class: "drop-name" });
+    const thumb = h("img", { class: "drop-thumb", alt: "", hidden: true });
+    const zone = h("label", { class: "drop" }, input, icon("camera"),
+      h("span", { class: "drop-text" }, h("strong", {}, "사진 선택"), name), thumb);
+    function update() {
+      const f = input.files && input.files[0];
+      if (thumb.getAttribute("src")) URL.revokeObjectURL(thumb.src);
+      if (f) {
+        name.textContent = `${f.name} · ${Math.max(1, Math.round(f.size / 1024))}KB`;
+        thumb.src = URL.createObjectURL(f);
+        thumb.hidden = false;
+      } else {
+        name.textContent = hint;
+        thumb.removeAttribute("src");
+        thumb.hidden = true;
+      }
+      zone.classList.toggle("has-file", Boolean(f));
+    }
+    input.addEventListener("change", update);
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("over");
+      if (e.dataTransfer && e.dataTransfer.files.length) { input.files = e.dataTransfer.files; update(); }
+    });
+    document.addEventListener("reset", (e) => { if (e.target === input.form) setTimeout(update); });
+    update();
+    return zone;
+  }
+
   async function api(path, opts = {}) {
     const res = await fetch(path, {
       ...opts,
@@ -89,12 +137,15 @@
   // ---------------------------------------------------------- 업로드
   const form = document.getElementById("upload-form");
   const uploadError = document.getElementById("upload-error");
+  const rxInput = document.getElementById("rx-image");
+  const rxRow = rxInput.parentNode;                  // fileDrop이 input을 옮기기 전에 자리를 잡아 둔다
+  rxRow.insertBefore(fileDrop(rxInput), rxRow.firstChild);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     uploadError.hidden = true;
     const btn = document.getElementById("upload-btn");
     btn.disabled = true;
-    btn.textContent = "올리는 중…";
+    setLabel(btn, null, "올리는 중…");
     try {
       const rx = await api("/api/prescriptions", { method: "POST", body: new FormData(form) });
       form.reset();
@@ -106,7 +157,7 @@
       uploadError.hidden = false;
     } finally {
       btn.disabled = false;
-      btn.textContent = "올리기";
+      setLabel(btn, "upload", "올리기");
     }
   });
 
@@ -147,7 +198,7 @@
   function cancelButton(rx) {
     if (!CANCELLABLE.includes(rx.status)) return null;
     const isFailed = rx.status === "failed";
-    const btn = h("button", { type: "button", class: "link danger" }, isFailed ? "삭제" : "처방 취소");
+    const btn = h("button", { type: "button", class: "link danger" }, icon(isFailed ? "trash" : "x"), isFailed ? "삭제" : "처방 취소");
     btn.addEventListener("click", async () => {
       const ask = isFailed
         ? `처방 ${rx.display_no}을(를) 삭제할까요? (취소됨으로 남습니다)`
@@ -221,7 +272,7 @@
   function retryButton(rx) {
     if (!rx.retryable) return null;
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
-    const btn = h("button", { type: "button" }, "다시 시도");
+    const btn = h("button", { type: "button" }, icon("retry"), "다시 시도");
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       err.hidden = true;
@@ -243,7 +294,7 @@
   function saveRetryButton(rx) {
     if (!rx.save_retryable) return null;
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
-    const btn = h("button", { type: "button" }, "저장 다시 시도");
+    const btn = h("button", { type: "button" }, icon("save"), "저장 다시 시도");
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       err.hidden = true;
@@ -266,10 +317,10 @@
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const file = h("input", { type: "file", name: "image", accept: "image/jpeg,image/png", required: true,
       id: `retake-${rx.id}` });
-    const btn = h("button", { type: "submit", class: rx.retryable ? "secondary" : null }, "새 사진으로 다시 올리기");
+    const btn = h("button", { type: "submit", class: rx.retryable ? "secondary" : null }, icon("upload"), "새 사진으로 다시 올리기");
     const form = h("form", { class: "upload" },
       h("label", { for: `retake-${rx.id}` }, "처방전을 다시 찍어 올리기 (JPG·PNG)"),
-      h("div", { class: "upload-row" }, file, btn),
+      h("div", { class: "upload-row" }, fileDrop(file), btn),
       h("small", { class: "muted" }, "새 처방 번호로 처음부터 처리하고, 이 처방은 삭제(취소됨)로 남습니다."), err);
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -473,12 +524,12 @@
         h("td", {}, h("input", { type: "number", class: "f-count", min: "1", max: "10", value: it ? it.count_per_dose : 1, "aria-label": "1회 알 수" })),
         h("td", {}, times),
         h("td", {}, h("input", { type: "number", class: "f-days", min: "1", max: "30", value: it ? it.days : 3, "aria-label": "복용 일수" })),
-        h("td", {}, h("button", { type: "button", class: "link", onclick: () => tr.remove() }, "삭제")));
+        h("td", {}, h("button", { type: "button", class: "link", onclick: () => tr.remove(), "aria-label": "이 항목 삭제" }, icon("x"), "삭제")));
       return tr;
     }
     order.items.forEach((it, i) => body.append(row(it, i)));
-    const add = h("button", { type: "button", class: "link", onclick: () => body.append(row(null, null)) }, "+ 항목 추가");
-    const send = h("button", { type: "button" }, "수정 내용으로 다시 계산");
+    const add = h("button", { type: "button", class: "link", onclick: () => body.append(row(null, null)) }, icon("plus"), "항목 추가");
+    const send = h("button", { type: "button" }, icon("calc"), "수정 내용으로 다시 계산");
     send.addEventListener("click", async () => {
       err.hidden = true;
       const items = [...body.children].map((tr) => ({
@@ -502,7 +553,7 @@
         send.disabled = false;
       }
     });
-    const cancel = h("button", { type: "button", class: "link", onclick: onClose }, "수정 취소");
+    const cancel = h("button", { type: "button", class: "link", onclick: onClose }, icon("x"), "수정 취소");
     return h("div", { class: "edit-form" },
       h("p", { class: "muted" }, "이름을 바꾸면 약품을 다시 찾고, 조제 계획과 위험 신호도 다시 계산합니다."),
       h("table", { class: "items" },
@@ -524,7 +575,7 @@
         placeholder: "위험 항목을 확인한 사유 (예: 처방 의사에게 확인함)", "aria-label": "진행 사유" })
       : null;
     const btn = h("button", { type: "button", disabled: blockers.length > 0 },
-      isDanger ? "사유 입력 후 진행" : "조제지시서 승인");
+      icon("check"), isDanger ? "사유 입력 후 진행" : "조제지시서 승인");
     btn.addEventListener("click", async () => {
       err.hidden = true;
       btn.disabled = true;
@@ -601,7 +652,7 @@
           const f = editForm(rx, () => { form.replaceChildren(); });
           form.replaceChildren(f);
           f.querySelector("input").focus();
-        } }, "항목 수정")),
+        } }, icon("edit"), "항목 수정")),
       err, form);
   }
 
@@ -621,15 +672,15 @@
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const file = h("input", { type: "file", name: "image", accept: "image/jpeg,image/png", required: true,
       id: "tray-image", "aria-describedby": retake ? null : "tray-help" });
-    const btn = h("button", { type: "submit" }, retake ? "다시 올리기" : "트레이 사진 올리기");
+    const btn = h("button", { type: "submit" }, icon("upload"), retake ? "다시 올리기" : "트레이 사진 올리기");
     const form = h("form", { class: "upload" },
       h("label", { for: "tray-image" }, "트레이 사진 (JPG·PNG)"),
-      h("div", { class: "upload-row" }, file, btn), err);
+      h("div", { class: "upload-row" }, fileDrop(file, "트레이 전체가 보이는 사진을 눌러서 고르거나 끌어다 놓으세요"), btn), err);
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       err.hidden = true;
       btn.disabled = true;
-      btn.textContent = "올리는 중…";
+      setLabel(btn, null, "올리는 중…");
       try {
         await api(`/api/prescriptions/${rx.id}/tray`, { method: "POST", body: new FormData(form) });
         await refresh();
@@ -637,7 +688,7 @@
         err.textContent = ex.message;
         err.hidden = false;
         btn.disabled = false;
-        btn.textContent = retake ? "다시 올리기" : "트레이 사진 올리기";
+        setLabel(btn, "upload", retake ? "다시 올리기" : "트레이 사진 올리기");
       }
     });
     return h("div", { class: "tray-upload" },
@@ -658,7 +709,7 @@
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
     const reason = h("textarea", { class: "reason-input", rows: 2, maxlength: 500, id: `manual-${rx.id}`,
       placeholder: "예: 조제 계획과 12칸을 육안으로 대조함, 이상 없음" });
-    const btn = h("button", { type: "button", class: "secondary" }, "육안 검수로 완료");
+    const btn = h("button", { type: "button", class: "secondary" }, icon("eye"), "육안 검수로 완료");
     btn.addEventListener("click", async () => {
       err.hidden = true;
       if (!reason.value.trim()) {
@@ -755,8 +806,8 @@
     const extra = [notice ? h("p", { class: "retake", role: "status" }, notice) : null];
     // HITL ② 응답 (F-WEB-09 ③): 확인 완료 → 완료, 재조제 → 트레이를 다시 채워 사진을 다시 올린다
     const err = h("p", { class: "form-error", role: "alert", hidden: true });
-    const redo = h("button", { type: "button", class: "secondary" }, "재조제 (트레이 다시 채우기)");
-    const ok = h("button", { type: "button" }, "확인 완료");
+    const redo = h("button", { type: "button", class: "secondary" }, icon("tray"), "재조제 (트레이 다시 채우기)");
+    const ok = h("button", { type: "button" }, icon("check"), "확인 완료");
     async function reply(action) {
       err.hidden = true;
       redo.disabled = ok.disabled = true;

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ rec.display_no }} 조제 기록 · 조제 보조{% endblock %}
+{% block title %}{{ rec.display_no }} 조제 기록 · 약손{% endblock %}
 {% macro counts(c) -%}
   {%- set parts = [] -%}
   {%- for code, n in (c or {}).items() if n -%}{%- set _ = parts.append((names.get(code) or code) ~ ' ' ~ n ~ '개') -%}{%- endfor -%}

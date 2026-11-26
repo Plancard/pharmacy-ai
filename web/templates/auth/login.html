@@ -1,17 +1,107 @@
 {% extends "base.html" %}
-{% block title %}로그인 · 조제 보조{% endblock %}
-{% block main_class %}center{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}로그인 · 약손{% endblock %}
+{% block main_class %}landing{% endblock %}
+{# 로그인 화면 (11/26 화면 디자인, 기능분석서 [S]): 네비바 · 소개 문구 + 로그인 카드 · 기능 소개 슬라이드 · 기능 소개 · 사용 방법.
+   로고는 처방 조제 메인으로 간다 (로그인하지 않았으면 메인이 이 화면으로 돌려보낸다).
+   슬라이드 사진은 web/static/img/landing/ 에 둔다 (이름은 SLIDES). 사진이 없으면 자리 표시만 보인다. #}
+{% set SLIDES = [
+  {"key": "rx", "title": "처방전 인식", "icon": "scan",
+   "before": "처방전 사진", "after": "인식한 글자와 위치",
+   "text": "처방전 사진 한 장에서 약품 코드 · 1회량 · 횟수 · 일수를 읽어 조제지시서를 만듭니다."},
+  {"key": "risk", "title": "위험 신호 대조", "icon": "shield",
+   "before": "읽어 낸 처방", "after": "위험 신호와 근거",
+   "text": "처방약끼리 성분 중복 · 병용금기를 대조하고, 허가정보 근거와 함께 약사에게 보여 줍니다."},
+  {"key": "tray", "title": "조제 검수", "icon": "tray",
+   "before": "약을 담은 트레이", "after": "칸마다 찾은 약",
+   "text": "트레이 사진에서 알약을 찾아 아침 · 점심 · 저녁 · 취침 전 칸마다 조제지시서와 맞는지 검수합니다."},
+] %}
+{% block flashes %}{% endblock %}
 {% block content %}
-<form class="card login" method="post" action="{{ url_for('auth.login') }}">
-  <h1>조제 보조 서비스</h1>
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <input type="hidden" name="next" value="{{ next }}">
-  <label>아이디
-    <input name="username" autocomplete="username" required autofocus>
-  </label>
-  <label>비밀번호
-    <input name="password" type="password" autocomplete="current-password" required>
-  </label>
-  <button type="submit">로그인</button>
-</form>
+<header class="landing-nav">
+  <a class="brand" href="{{ url_for('main.index') }}" aria-label="약손 처방 조제 메인">{{ icon("logo", "logo") }}<span>약손</span></a>
+  <nav aria-label="소개">
+    <a href="#features">기능 소개</a>
+    <a href="#howto">사용 방법</a>
+  </nav>
+  <a class="nav-login" href="#login-form">로그인</a>
+</header>
+
+<section class="hero">
+  <div class="hero-text">
+    <p class="eyebrow">약국 조제 보조 서비스</p>
+    <h1>조제는 약사가,<br>확인은 약손이</h1>
+    <p class="lead">처방전 사진으로 조제지시서를 만들고, 위험 신호를 대조하고, 트레이에 담긴 약을 칸마다 검수합니다.
+      모든 단계는 약사가 확인하고 승인합니다.</p>
+  </div>
+
+  <form class="card login" id="login-form" method="post" action="{{ url_for('auth.login') }}">
+    <h2>로그인</h2>
+    {% for message in get_flashed_messages() %}<p class="flash" role="alert">{{ message }}</p>{% endfor %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>아이디
+      <input name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>비밀번호
+      <input name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">로그인</button>
+    <p class="muted small">약국에서 받은 계정으로 로그인하세요.</p>
+  </form>
+</section>
+
+<section class="slides" aria-roledescription="carousel" aria-label="기능 소개 슬라이드" data-interval="6000">
+  <div class="slide-tabs" role="tablist">
+    {% for s in SLIDES %}
+    <button type="button" role="tab" class="slide-tab" data-slide="{{ loop.index0 }}" aria-selected="{{ 'true' if loop.first else 'false' }}">
+      {{ icon(s.icon) }}<span>{{ s.title }}</span></button>
+    {% endfor %}
+  </div>
+  <div class="slide-frame">
+    <button type="button" class="slide-nav prev" aria-label="이전 슬라이드">{{ icon("chevron-left") }}</button>
+    {% for s in SLIDES %}
+    <figure class="slide" data-slide="{{ loop.index0 }}" aria-roledescription="slide" aria-label="{{ loop.index }} / {{ SLIDES | length }}: {{ s.title }}" {% if not loop.first %}hidden{% endif %}>
+      <div class="pair">
+        {% for side in ("before", "after") %}
+        <div class="shot">
+          <img data-base="{{ url_for('static', filename='img/landing/' ~ s.key ~ '_' ~ side) }}" alt="{{ s[side] }}" loading="lazy">
+          <div class="shot-missing" hidden>{{ icon("camera") }}<span>img/landing/{{ s.key }}_{{ side }}.jpg</span></div>
+          <span class="shot-label {{ side }}">{{ '탐지 전' if side == 'before' else '탐지 후' }} · {{ s[side] }}</span>
+        </div>
+        {% if side == "before" %}<div class="pair-arrow" aria-hidden="true">{{ icon("arrow-right") }}</div>{% endif %}
+        {% endfor %}
+      </div>
+      <figcaption><strong>{{ s.title }}</strong> {{ s.text }}</figcaption>
+    </figure>
+    {% endfor %}
+    <button type="button" class="slide-nav next" aria-label="다음 슬라이드">{{ icon("chevron-right") }}</button>
+  </div>
+</section>
+
+<section class="intro" id="features">
+  <h2>기능 소개</h2>
+  <div class="feature-grid">
+    {% for s in SLIDES %}
+    <article class="feature">
+      <span class="feature-icon">{{ icon(s.icon) }}</span>
+      <h3>{{ s.title }}</h3>
+      <p>{{ s.text }}</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="intro" id="howto">
+  <h2>사용 방법</h2>
+  <ol class="steps">
+    <li><span class="step-icon">{{ icon("camera") }}</span><strong>처방전 올리기</strong><span>처방전을 찍어 올리면 조제지시서와 칸 배치가 만들어집니다.</span></li>
+    <li><span class="step-icon">{{ icon("check") }}</span><strong>확인 · 승인</strong><span>위험 신호와 근거를 확인하고, 필요하면 항목을 고친 뒤 승인합니다.</span></li>
+    <li><span class="step-icon">{{ icon("tray") }}</span><strong>트레이 올리기</strong><span>칸 배치대로 약을 담은 트레이를 찍어 올립니다.</span></li>
+    <li><span class="step-icon">{{ icon("save") }}</span><strong>검수 · 완료</strong><span>칸마다 맞는지 확인하고 완료하면 조제 이력에 남습니다.</span></li>
+  </ol>
+</section>
+
+<footer class="landing-foot">약손 · 피지컬 AI 약국 조제 보조 서비스 (2조)</footer>
+<script src="{{ url_for('static', filename='landing.js') }}"></script>
 {% endblock %}
