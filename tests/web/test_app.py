@@ -107,7 +107,9 @@ def test_login_success_and_main(client):
     r = login(client)
     assert r.status_code == 302 and r.headers["Location"] == "/"
     html = client.get("/").get_data(as_text=True)
-    assert "테스트약국 · ph1" in html and "P0001" in html and "승인 대기" in html
+    assert 'class="workspace" title="소속 약국">테스트약국<' in html                  # 약국 = 로고 옆 작업 공간 (11/26)
+    assert '<span class="profile-name">ph1</span>' in html and "약사" in html       # 사용자 = 오른쪽 프로필 칩
+    assert "P0001" in html and "승인 대기" in html
     assert "2026-11-06 12:00" in html          # 03:00 UTC → 12:00 KST
 
 
