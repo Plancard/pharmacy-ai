@@ -49,6 +49,13 @@
   }
   function setLabel(btn, name, text) { btn.replaceChildren(...(name ? [icon(name)] : []), text); }
 
+  // 사진 아래 '원본 사진' 버튼 (새 창으로 연다). 설명 글 없이 작은 칩으로만 둔다 (11/26)
+  function originalLink(url, label = "원본 사진") {
+    return h("a", { href: url, target: "_blank", rel: "noopener", class: "chip-link" }, icon("image"), label);
+  }
+  // 사진 위 오른쪽 아래 돋보기 (누르면 크게 보인다는 표시 — 글 대신)
+  function zoomHint() { return h("span", { class: "zoom-hint", "aria-hidden": "true" }, icon("zoom")); }
+
   // 사진 고르기 칸: 눌러서 고르거나 끌어다 놓는다. 고른 사진은 이름 · 크기 · 미리보기로 보인다.
   // input은 화면에서만 숨긴다 (display:none이면 required 안내가 뜨지 않는다)
   function fileDrop(input, hint = "눌러서 고르거나 사진을 끌어다 놓으세요") {
@@ -277,8 +284,8 @@
     return h("figure", { class: "rx-image failed-image" },
       h("div", { class: "img-wrap" },
         h("img", { src: `${rx.image_url}?view=rect`, alt: `처방 ${rx.display_no} 펴진 처방전 사진, 처리하지 못한 줄에 빨간 박스` }), boxes),
-      h("figcaption", { class: "muted" }, "빨간 박스: AI가 처리하지 못한 줄입니다. ",
-        h("a", { href: rx.image_url, target: "_blank", rel: "noopener" }, "원본 보기")));
+      h("figcaption", { class: "img-actions" }, h("span", { class: "muted" }, "빨간 박스: AI가 처리하지 못한 줄"),
+        originalLink(rx.image_url)));
   }
 
   // Q6 [다시 시도]: 일시 오류(E_LLM·E_EXT_API·E_INTERRUPTED)로 실패했을 때만. 같은 처방전 사진으로 새 처방을 만들어 처음부터 다시 돌린다.
@@ -481,8 +488,7 @@
   function riskPanel(risk) {
     const level = risk.level || "none";
     const box = h("div", { class: `risk risk-${level}` },
-      h("div", { class: "risk-head" }, h("strong", {}, `위험 신호: ${RISK[level]}`),
-        risk.scope === "rx_only" ? h("span", { class: "muted" }, "처방약 기준 판단 (복용 약 미등록)") : null));
+      h("div", { class: "risk-head" }, h("strong", {}, `위험 신호: ${RISK[level]}`)));   // 판단 범위(처방약 기준)는 화면에 보이지 않는다 (11/26)
     if (risk.findings && risk.findings.length) {
       // 규칙 문장(굵게) · AI 설명(이름표 붙은 따로 된 칸) · 근거를 줄을 나눠 보인다 (11/26 가독성)
       box.append(h("ul", { class: "findings" }, risk.findings.map((f) =>
@@ -653,10 +659,8 @@
             }
           } },
           h("div", { class: "img-wrap", role: "button", tabindex: "0", "aria-label": "처방전 크게 보기" },
-            h("img", { src: shownUrl, alt: `처방 ${rx.display_no} ${canLocate ? "펴진 처방전" : "원본"} 사진` }), boxes),
-          h("figcaption", { class: "muted" },
-            canLocate ? "펴진 처방전 (누르면 크게 보기) · " : "원본 (누르면 크게 보기)",
-            canLocate ? h("a", { href: rx.image_url, target: "_blank", rel: "noopener" }, "원본 보기") : null)) : null,
+            h("img", { src: shownUrl, alt: `처방 ${rx.display_no} ${canLocate ? "펴진 처방전" : "원본"} 사진` }), boxes, zoomHint()),
+          canLocate ? h("figcaption", { class: "img-actions" }, originalLink(rx.image_url)) : null) : null,
         h("div", { class: "approval-body" },
           h("p", { class: "muted" }, canLocate
             ? "항목을 누르면 처방전에서 읽은 위치를 표시합니다. 노란 줄은 인식 신뢰도가 낮거나 확인이 필요한 항목입니다."
@@ -840,13 +844,11 @@
     return h("div", { class: "approval-grid" },
       overlay ? h("figure", { class: "rx-image" },
         h("a", { href: overlay, target: "_blank", rel: "noopener", class: "img-wrap" },
-          h("img", { src: overlay, alt: `처방 ${rx.display_no} 트레이 검수 결과 그림` })),
-        h("figcaption", { class: "muted" }, "검수 결과: 빨강 불일치 · 주황 확인 필요 · 초록 일치 (누르면 크게 보기) · ",
-          h("a", { href: url, target: "_blank", rel: "noopener" }, "원본 사진"))) :
+          h("img", { src: overlay, alt: `처방 ${rx.display_no} 트레이 검수 결과 그림` }), zoomHint()),
+        url ? h("figcaption", { class: "img-actions" }, originalLink(url)) : null) :
       url ? h("figure", { class: "rx-image" },
         h("a", { href: url, target: "_blank", rel: "noopener", class: "img-wrap" },
-          h("img", { src: url, alt: `처방 ${rx.display_no} 트레이 사진` })),
-        h("figcaption", { class: "muted" }, "올린 트레이 사진 (누르면 크게 보기)")) : null,
+          h("img", { src: url, alt: `처방 ${rx.display_no} 트레이 사진` }), zoomHint())) : null,
       h("div", { class: "approval-body" }, summaryLine(a3), trayGrid(a3, names, detail), detail, ...(extra || [])));
   }
 

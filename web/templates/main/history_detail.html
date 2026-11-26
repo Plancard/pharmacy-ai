@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}{{ rec.display_no }} 조제 기록 · 약손{% endblock %}
 {% macro counts(c) -%}
   {%- set parts = [] -%}
@@ -20,8 +21,7 @@
   <div class="approval-grid">
     {% if rx_image_url %}
     <figure class="rx-image">
-      <a href="{{ rx_image_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ rx_image_url }}" alt="{{ rec.display_no }} 처방전 원본"></a>
-      <figcaption class="muted">처방전 원본 (누르면 크게 보기)</figcaption>
+      <a href="{{ rx_image_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ rx_image_url }}" alt="{{ rec.display_no }} 처방전 원본"><span class="zoom-hint" aria-hidden="true">{{ icon("zoom") }}</span></a>
     </figure>
     {% else %}<p class="muted">처방전 사진이 없습니다.</p>{% endif %}
     <div class="approval-body">
@@ -107,13 +107,12 @@
   <div class="approval-grid">
     {% if overlay_url %}
     <figure class="rx-image">
-      <a href="{{ overlay_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ overlay_url }}" alt="{{ rec.display_no }} 트레이 검수 결과 그림"></a>
-      <figcaption class="muted">검수 결과: 빨강 불일치 · 주황 확인 필요 · 초록 일치 · <a href="{{ tray_image_url }}" target="_blank" rel="noopener">원본 사진</a></figcaption>
+      <a href="{{ overlay_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ overlay_url }}" alt="{{ rec.display_no }} 트레이 검수 결과 그림"><span class="zoom-hint" aria-hidden="true">{{ icon("zoom") }}</span></a>
+      {% if tray_image_url %}<figcaption class="img-actions"><a href="{{ tray_image_url }}" target="_blank" rel="noopener" class="chip-link">{{ icon("image") }}원본 사진</a></figcaption>{% endif %}
     </figure>
     {% elif tray_image_url %}
     <figure class="rx-image">
-      <a href="{{ tray_image_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ tray_image_url }}" alt="{{ rec.display_no }} 트레이 사진"></a>
-      <figcaption class="muted">트레이 사진</figcaption>
+      <a href="{{ tray_image_url }}" target="_blank" rel="noopener" class="img-wrap"><img src="{{ tray_image_url }}" alt="{{ rec.display_no }} 트레이 사진"><span class="zoom-hint" aria-hidden="true">{{ icon("zoom") }}</span></a>
     </figure>
     {% else %}<p class="muted">트레이 사진이 없습니다.</p>{% endif %}
     <div class="approval-body">
