@@ -28,7 +28,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:5000:5000"
+      - "${WEB_BIND:-127.0.0.1}:5000:5000"   # 내부망 공개: .env에 WEB_BIND=0.0.0.0
     volumes:
       - ./var:/app/var          # 업로드 이미지 (DB에는 storage_key만). 처음에는 호스트에 mkdir -p var 해 두기(없으면 root 소유로 생겨 쓰기 오류)
       - ./models:/app/models:ro # 모델 가중치(저장소에 없음). CV_DET_MODEL · CV_SEG_MODEL 경로가 이 폴더 안을 가리킨다
