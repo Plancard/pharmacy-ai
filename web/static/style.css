@@ -5,7 +5,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; font-family: system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; background: var(--bg); color: var(--ink); }
 a { color: var(--accent); }
-.topbar { display: flex; align-items: center; gap: 24px; padding: 12px 24px; background: var(--card); border-bottom: 1px solid var(--line); }
+.topbar { position: sticky; top: 0; z-index: 50; box-shadow: 0 4px 12px rgba(15, 23, 42, .06); display: flex; align-items: center; gap: 24px; padding: 12px 24px; background: var(--card); border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 18px; text-decoration: none; color: var(--ink); letter-spacing: -.02em; }
 .topbar nav { display: flex; gap: 4px; }
 .topbar nav a { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; text-decoration: none; color: var(--muted); }
@@ -219,8 +219,12 @@ button.link .icon, .topbar .icon { width: 16px; height: 16px; }
 .upload-row > button { flex: none; }
 
 /* 로그인 화면 */
-.landing { max-width: 1160px; margin: 0 auto; padding: 0 24px 48px; }
-.landing-nav { display: flex; align-items: center; gap: 28px; padding: 18px 0; }
+.landing { max-width: 1160px; margin: 0 auto; padding: 0 24px 96px; }
+body:has(> main.landing) { overflow-x: clip; }   /* 메뉴 띠(100vw)가 세로 스크롤바 폭만큼 넘치지 않게 */
+/* 상단 메뉴: 화면 폭 전체 흰 띠 + 아래 그림자로 내용과 나눈다. 스크롤해도 위에 붙어 있다 */
+.landing-nav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 28px;
+  margin: 0 calc(50% - 50vw); padding: 12px calc(50vw - 50%); background: var(--card);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, .06), 0 4px 12px rgba(15, 23, 42, .06); }
 .landing-nav nav { display: flex; gap: 4px; }
 .landing-nav nav a { padding: 8px 12px; border-radius: 6px; color: var(--ink); text-decoration: none; font-weight: 500; }
 .landing-nav nav a:hover { background: #eef2f7; }
@@ -235,7 +239,7 @@ button.link .icon, .topbar .icon { width: 16px; height: 16px; }
 .login button[type=submit] { padding: 12px; border-radius: 999px; font-size: 16px; }
 .login .flash { margin: 0; }
 .small { font-size: 13px; margin: 0; }
-.slides { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px 22px; box-shadow: 0 10px 30px rgba(15, 23, 42, .05); }
+.slides { scroll-margin-top: 88px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px 22px; box-shadow: 0 10px 30px rgba(15, 23, 42, .05); }
 .slide-tabs { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
 .slide-tab { background: none; color: var(--muted); border-radius: 999px; padding: 8px 14px; font-weight: 600; }
 .slide-tab:hover:not(:disabled) { background: #eef2f7; }
@@ -259,7 +263,7 @@ button.link .icon, .topbar .icon { width: 16px; height: 16px; }
 .slide-nav:hover:not(:disabled) { background: #eff6ff; color: var(--accent); }
 .slide-nav.prev { left: 0; }
 .slide-nav.next { right: 0; }
-.intro { padding: 88px 0 0; scroll-margin-top: 16px; }
+.intro { padding: 88px 0 0; scroll-margin-top: 72px; }
 .intro > h2 { font-size: clamp(28px, 3.4vw, 40px); margin: 0; letter-spacing: -.03em; }
 .intro-lead { margin: 10px 0 32px; font-size: 18px; color: #4b5563; }
 /* 화면 캡처: 연한 격자 배경 위에 캡처를 띄운다 */
@@ -283,7 +287,6 @@ button.link .icon, .topbar .icon { width: 16px; height: 16px; }
 .tour-no { display: block; font-size: 56px; font-weight: 800; line-height: 1; color: #c7d7f5; letter-spacing: -.04em; }
 .tour-text h3 { margin: 12px 0 10px; font-size: clamp(24px, 2.6vw, 32px); letter-spacing: -.03em; }
 .tour-text p { margin: 0; font-size: 17px; line-height: 1.75; color: #374151; max-width: 440px; }
-.landing-foot { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; text-align: center; }
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; gap: 28px; }
   .login { max-width: none; }
