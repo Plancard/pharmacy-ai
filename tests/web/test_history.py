@@ -88,7 +88,8 @@ def test_list_shows_records_with_a_link_to_the_detail(client, db_history):
     assert "2026-11-20 10:00" in html                                   # 화면 시간대(KST)
     assert "경고" in html and "전 칸 일치" in html and "ph1" in html
     pharmacy_id, kw = db_history["list"]
-    assert pharmacy_id == 1 and kw == {"since": None, "until": None, "risk": None, "review": None, "page": 1}
+    assert pharmacy_id == 1 and (kw["risk"], kw["review"], kw["page"]) == (None, None, 1)
+    assert kw["since"] is not None and kw["until"] is not None             # 처음엔 최근 한 달 (11/26)
 
 
 def test_filters_become_kst_day_bounds_and_are_kept_in_the_form(client, db_history):
@@ -179,3 +180,16 @@ def test_unknown_or_other_pharmacy_record_is_404(client, db_history, path):
 
 def test_history_needs_login(client, db_history):
     assert client.get(f"/history/{RX_ID}").status_code == 302
+
+
+def test_without_any_period_the_last_month_is_shown_by_default(client, db_history):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    login(client)
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    _, html = page(client, "/history")
+    kw = db_history["list"][1]
+    assert kw["since"].date() == today - timedelta(days=30) and kw["until"].date() == today + timedelta(days=1)
+    assert f'value="{today.isoformat()}"' in html and "조건 지우기" not in html      # 기본값은 '거른 상태'가 아니다
+    page(client, "/history?from=&to=")                                              # 날짜를 비우고 조회하면 전체 기간
+    assert db_history["list"][1]["since"] is None and db_history["list"][1]["until"] is None

@@ -55,9 +55,20 @@ def _day(value: str | None) -> date | None:
         return None
 
 
-def _filters(args) -> dict:
-    """화면 필터(기간 · 위험 단계 · 검수 결과 · 쪽). 잘못된 값은 버린다 (조건 없이 보임)."""
-    since, until = _day(args.get("from")), _day(args.get("to"))
+DEFAULT_DAYS = 30   # 기간을 하나도 주지 않으면 오늘부터 한 달 전까지 (11/26)
+
+
+def _filters(args, today: date | None = None) -> dict:
+    """화면 필터(기간 · 위험 단계 · 검수 결과 · 쪽). 잘못된 값은 버린다 (조건 없이 보임).
+
+    기간 칸이 주소에 아예 없으면(처음 들어올 때 · 조건 지우기) 오늘 기준 최근 DEFAULT_DAYS일로 채운다 (defaulted).
+    사용자가 날짜 칸을 비우고 조회하면 칸은 있지만 비어 있으므로 기간 없이 전체를 본다.
+    """
+    defaulted = today is not None and "from" not in args and "to" not in args
+    if defaulted:
+        since, until = today - timedelta(days=DEFAULT_DAYS), today
+    else:
+        since, until = _day(args.get("from")), _day(args.get("to"))
     if since and until and since > until:
         since, until = until, since
     try:
@@ -67,7 +78,7 @@ def _filters(args) -> dict:
     risk = args.get("risk") if args.get("risk") in RISK else ""
     review = args.get("review") if args.get("review") in REVIEW else ""
     return {"from": since.isoformat() if since else "", "to": until.isoformat() if until else "",
-            "risk": risk, "review": review, "page": page}
+            "risk": risk, "review": review, "page": page, "defaulted": defaulted}
 
 
 @bp.route("/history")
@@ -78,14 +89,16 @@ def history():
     이력에는 완료된 처방만 있으므로(F-5) 처방 상태 대신 최종 위험 단계와 검수 결과로 거른다 (미확정요소 F-2).
     기간은 화면 시간대(DISPLAY_TZ, 기본 KST)의 날짜로 받아 시작일 0시 ~ 끝일 다음날 0시로 바꾼다.
     """
-    f = _filters(request.args)
     tz = ZoneInfo(current_app.config["DISPLAY_TZ"])
+    f = _filters(request.args, today=datetime.now(tz).date())
     since = datetime.combine(date.fromisoformat(f["from"]), time(), tz) if f["from"] else None
     until = datetime.combine(date.fromisoformat(f["to"]) + timedelta(days=1), time(), tz) if f["to"] else None
     records, total = rx.dispense_list(g.user["pharmacy_id"], since=since, until=until, risk=f["risk"] or None,
                                       review=f["review"] or None, page=f["page"])
     pages = max(math.ceil(total / rx.HISTORY_PAGE_SIZE), 1)
-    query = {k: v for k, v in f.items() if v and k != "page"}
+    # 쪽 이동 주소에 남길 조건. 기본 기간은 넣지 않는다 (다음 쪽에서도 같은 기본값이 다시 채워진다)
+    query = {k: v for k, v in f.items() if v and k not in ("page", "defaulted")
+             and not (f["defaulted"] and k in ("from", "to"))}
     return render_template("main/history.html", records=records, total=total, f=f, pages=pages, query=query,
                            labels=LABELS, filtered=bool(query))
 

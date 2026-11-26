@@ -2,7 +2,7 @@
 {% from "_icons.html" import icon %}
 {% block title %}조제 이력 · 약손{% endblock %}
 {# 조제 이력 (F-WEB-13, REQ-WEB-10). 11/26 화면 디자인: 제목 + 건수 한 줄, 필터 상자, 표 헤더 · 행 강조, 검수 결과 배지.
-   위험 단계 '해당 없음'은 배지 대신 회색 글자로 낮춰 경고 · 위험만 눈에 띄게 한다. 행 어디를 눌러도 상세로 간다. #}
+   위험 단계는 칸 폭만큼의 가운데 정렬 알약 모양(해당 없음은 옅은 회색)이라 경고 · 위험만 눈에 띈다. 행 어디를 눌러도 상세로 간다. #}
 {% set REVIEW_ICON = {"auto": "check", "checked": "approve", "manual": "eye"} %}
 {% block content %}
 <section class="card history">
@@ -41,7 +41,7 @@
   {% if records %}
   <div class="table-wrap">
   <table class="items history-table">
-    <thead><tr><th>처방 번호</th><th>접수 시각</th><th>완료 시각</th><th>위험 단계</th><th>검수 결과</th><th>완료 약사</th></tr></thead>
+    <thead><tr><th>처방 번호</th><th>접수 시각</th><th>완료 시각</th><th class="risk-cell">위험 단계</th><th>검수 결과</th><th>완료 약사</th></tr></thead>
     <tbody>
       {% for r in records %}
       {% set level = r.risk_level or 'none' %}
@@ -50,7 +50,7 @@
         <td><a class="rx-no" href="{{ url_for('main.history_detail', rx_id=r.id) }}">{{ r.display_no }}</a></td>
         <td class="num">{{ r.created_at | kst }}</td>
         <td class="num">{{ r.completed_at | kst }}</td>
-        <td>{% if level == 'none' %}<span class="muted">{{ labels.risk[level] }}</span>{% else %}<span class="chip {{ level }}">{{ labels.risk[level] }}</span>{% endif %}</td>
+        <td class="risk-cell"><span class="risk-pill {{ level }}">{{ labels.risk[level] }}</span></td>
         <td><span class="review review-{{ review }}">{{ icon(REVIEW_ICON[review]) }}{{ labels.review[review] }}</span>{% if r.attempts and r.attempts > 1 %} <span class="muted small-note">촬영 {{ r.attempts }}회</span>{% endif %}</td>
         <td>{{ r.username }}</td>
       </tr>

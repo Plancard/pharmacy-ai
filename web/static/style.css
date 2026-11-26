@@ -371,7 +371,14 @@ button.chip-link:hover:not(:disabled) { filter: none; background: #eff6ff; color
 .history-table tbody tr { cursor: pointer; transition: background .12s; }
 .history-table tbody tr:hover { background: #f5f8ff; }
 .history-table td.num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; color: #374151; }
-.history-table .chip { padding: 3px 10px; font-size: 13px; font-weight: 600; }
+/* 위험 단계: 글자 길이와 상관없이 칸 폭을 거의 채우고 가운데 정렬 */
+.history-table .risk-cell { width: 120px; text-align: center; }
+.risk-pill { display: block; padding: 4px 0; border-radius: 999px; font-size: 13px; font-weight: 600; text-align: center; white-space: nowrap;
+  background: #f3f4f6; color: var(--muted); }
+.risk-pill.none { font-weight: 500; }
+.risk-pill.caution { background: #eff6ff; color: var(--accent); }
+.risk-pill.warning { background: #fffbeb; color: var(--warn); }
+.risk-pill.danger { background: #fef2f2; color: var(--bad); }
 .rx-no { font-weight: 700; color: var(--accent); text-decoration: none; }
 .rx-no:hover { text-decoration: underline; }
 .review { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
