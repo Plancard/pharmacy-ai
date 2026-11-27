@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import logging
 import os
 import sys
 import threading
@@ -37,12 +38,23 @@ if TYPE_CHECKING:
 
 # mcp 패키지는 연결할 때만 불러온다. 그래서 MCP를 쓰지 않는 실행(웹 · 테스트)은 mcp가 없어도 이 파일을 불러올 수 있다.
 ROOT = Path(__file__).resolve().parents[1]
+log = logging.getLogger(__name__)
 CONNECT_TIMEOUT_SECONDS = 30.0     # 서버를 띄우고 연결하기까지 (첫 실행은 import가 길다)
 CALL_TIMEOUT_SECONDS = 60.0        # 도구 하나 (DUR API를 약마다 여러 쪽 부르는 check_duplicate · check_interaction이 가장 길다)
 
 
 class McpToolError(Exception):
     """도구가 실패를 돌려주었거나(서버의 ToolError) 서버와 연결하지 못했다."""
+
+
+def reason(e: BaseException) -> str:
+    """예외를 로그에 남길 한 줄로. anyio가 감싼 ExceptionGroup은 안쪽 첫 예외를 꺼낸다 (11/27).
+
+    'ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)'만으로는 무엇이 끊겼는지 알 수 없다.
+    """
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:
+        e = e.exceptions[0]
+    return f"{type(e).__name__}: {e}"
 
 
 class DrugTools:
@@ -109,9 +121,10 @@ class DrugTools:
                         answer.set_exception(e)
         except Exception as e:
             if not self._ready.done():
-                self._ready.set_exception(McpToolError(f"MCP 서버에 연결하지 못했습니다 ({type(e).__name__}: {e})."))
-            else:
-                self._broken = f"MCP 서버와 연결이 끊겼습니다 ({type(e).__name__}: {e})."
+                self._ready.set_exception(McpToolError(f"MCP 서버에 연결하지 못했습니다 ({reason(e)})."))
+            else:                                  # 화면(조제지시서 경고)에는 짧게, 원인은 로그에 (11/27)
+                log.warning("MCP 서버와 연결이 끊겼습니다: %s", reason(e))
+                self._broken = "MCP 서버와 연결이 끊겼습니다."
         finally:
             self._broken = self._broken or "MCP 연결이 닫혔습니다."
             while not self._queue.empty():                     # 끊긴 뒤 남은 요청은 바로 실패로 돌려준다
@@ -143,8 +156,9 @@ class DrugTools:
             return answer.result(timeout=CALL_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
             raise McpToolError(f"{what} {name}이(가) {CALL_TIMEOUT_SECONDS:.0f}초 안에 답하지 않았습니다.") from None
-        except Exception as e:
-            raise McpToolError(f"{what} {name}을(를) 부르지 못했습니다 ({type(e).__name__}: {e}).") from None
+        except Exception as e:                    # 화면에는 짧게, 원인은 로그에 (11/27)
+            log.warning("MCP %s %s을(를) 부르지 못했습니다: %s", what, name, reason(e))
+            raise McpToolError(f"MCP {what} {name}을(를) 부르지 못했습니다.") from None
 
     def read_resource(self, uri: str) -> str:
         """서버의 리소스 하나를 글로 읽는다 (pharmacy://dictionary 등). 없으면 McpToolError."""

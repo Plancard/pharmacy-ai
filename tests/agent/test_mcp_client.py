@@ -9,7 +9,7 @@ import pytest
 
 from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import load_dictionary
-from agent.mcp_client import ROOT, DrugTools, McpToolError, child_env, in_process, stdio_params
+from agent.mcp_client import ROOT, DrugTools, McpToolError, child_env, in_process, reason, stdio_params
 
 ROOT_DIR = RESOURCES_DIR.parents[1]
 
@@ -120,3 +120,31 @@ def test_the_server_does_not_need_the_working_directory_of_the_caller(tmp_path):
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "7"
+
+
+def test_the_reason_unwraps_the_task_group_error():
+    """anyio가 감싼 ExceptionGroup은 안쪽 첫 예외로 적는다 (11/27, 57번 경고 문구)."""
+    inner = ConnectionResetError("서버가 연결을 끊었습니다")
+    wrapped = ExceptionGroup("unhandled errors in a TaskGroup", [ExceptionGroup("inner", [inner])])
+    assert reason(wrapped) == "ConnectionResetError: 서버가 연결을 끊었습니다"
+    assert reason(ValueError("x")) == "ValueError: x"
+
+
+def test_a_failed_call_is_short_on_screen_and_detailed_in_the_log(caplog):
+    """조제지시서 경고(약사 화면)에는 짧은 문장만, 원인은 로그에 (11/27)."""
+    import logging
+    from types import SimpleNamespace
+
+    tools = DrugTools("http://127.0.0.1:9/mcp")
+
+    class Loop:                                   # 요청을 받으면 바로 실패로 답하는 가짜 연결 스레드
+        def call_soon_threadsafe(self, put, request):
+            request[2].set_exception(ExceptionGroup("unhandled errors in a TaskGroup", [OSError("끊김")]))
+
+    tools._loop, tools._queue = Loop(), SimpleNamespace(put_nowait=None)
+    with caplog.at_level(logging.WARNING, logger="agent.mcp_client"):
+        with pytest.raises(McpToolError) as error:
+            tools.call("match_drug", order={})
+    assert str(error.value) == "MCP 도구 match_drug을(를) 부르지 못했습니다."
+    assert "ExceptionGroup" not in str(error.value)
+    assert "OSError: 끊김" in caplog.text

@@ -33,12 +33,13 @@ HITL ①(rx_approval)의 응답은 {"action": "approve" | "edit" | "manual", "or
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from agent import config
 from agent.graph import build_graph, resume_run, run_message, thread_config
-from agent.mcp_client import DrugTools, from_settings as mcp_from_settings
+from agent.mcp_client import DrugTools, McpToolError, from_settings as mcp_from_settings
 from agent.inspection import HITL_INSPECTION, read_inspection_reply
 from agent.nodes import HITL_APPROVAL, ocr_size, read_reply
 from agent.schema import DispensingOrder
@@ -46,6 +47,8 @@ from agent.schema import DispensingOrder
 # 승인된 조제지시서가 있는 단계 (approved_order가 돌려준다)
 APPROVED_STATUSES = ("planned", "inspecting", "inspected")
 STAGE_AFTER_PLAN = "await_tray"     # 조제 계획까지 끝나 트레이 사진을 기다리는 단계 (웹의 FakeGateway와 같은 이름)
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -77,9 +80,14 @@ class AgentApi:
         .env AGENT_USE_MCP(기본 1)이 켜져 있으면 약품 매칭 · DUR 대조 · 조제 계획 · 근거 검색을 MCP 도구로 부른다 (0이면 함수로 직접). AGENT_MCP_URL이 있으면 따로 띄운 서버에 그 주소로 붙고,
         없으면 서버(python -m agent.mcp_server)를 하위 프로세스로 띄운다.
         api=None을 주면 서버도 의약품 API 없이 띄운다.
+        MCP 서버에 연결하지 못하면 멈추지 않고 MCP 없이(함수로 직접) 시작하며 로그에 남긴다 (11/27, REQ-NF-06).
+        AGENT_MCP_URL의 서버가 꺼져 있으면 웹이 시작하다 죽던 문제(중간 통합 57번 준비 중 발견).
         """
         if kwargs.get("tools") is None and config.use_mcp():
-            kwargs["tools"] = mcp_from_settings(no_api="api" in kwargs and kwargs["api"] is None)
+            try:
+                kwargs["tools"] = mcp_from_settings(no_api="api" in kwargs and kwargs["api"] is None)
+            except McpToolError as e:
+                log.warning("MCP 서버에 연결하지 못해 MCP 없이(함수로 직접) 시작합니다: %s", e)
         return cls(build_graph(**kwargs), kwargs.get("tools"))
 
     def close(self) -> None:

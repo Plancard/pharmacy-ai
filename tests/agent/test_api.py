@@ -334,3 +334,23 @@ def test_send_is_refused_while_the_conversation_waits_for_the_pharmacist(backend
 
 
 
+
+
+def test_from_settings_starts_without_mcp_when_the_server_cannot_be_reached(backend, monkeypatch, caplog):
+    """AGENT_MCP_URL의 서버가 꺼져 있어도 시작은 한다: MCP 없이 함수로 직접 부르고 로그에 남긴다 (11/27, REQ-NF-06)."""
+    import logging
+
+    from agent import api as api_module, graph
+    from agent.mcp_client import McpToolError
+
+    def unreachable(**kwargs):
+        raise McpToolError("MCP 서버에 연결하지 못했습니다 (ConnectError: All connection attempts failed).")
+
+    monkeypatch.setattr(api_module.config, "use_mcp", lambda: True)
+    monkeypatch.setattr(api_module, "mcp_from_settings", unreachable)
+    monkeypatch.setattr(graph, "default_checkpointer", memory_checkpointer)
+    with caplog.at_level(logging.WARNING, logger="agent.api"):
+        api = AgentApi.from_settings(dictionary=DICT, structure=Counting(), api=None)
+    assert api.tools is None
+    assert "MCP 없이(함수로 직접) 시작합니다" in caplog.text and "ConnectError" in caplog.text
+    assert api.start("P0001", load("rx8_a1", "rx8_04")).hitl_point == "rx_approval"
