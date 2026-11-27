@@ -98,9 +98,10 @@ def explanations_from(result: ReactResult, findings: Sequence[RiskFinding], name
     out = []
     for n, f in enumerate(findings, start=1):
         text, cited = texts.get(n, (None, []))
-        keep = text if text and acceptable(text, f, names) else None
         evidence = [row_evidence(e, ids, rows, finding_terms(f)) for e in dict.fromkeys(cited)]
-        out.append(f.model_copy(update={"explanation": keep, "evidence": evidence}))
+        cited_f = f.model_copy(update={"evidence": evidence})       # 인용한 근거를 붙인 뒤 거른다 (uses_evidence가 근거를 보게)
+        keep = text if text and acceptable(text, cited_f, names) else None
+        out.append(cited_f.model_copy(update={"explanation": keep}))
     return out
 
 

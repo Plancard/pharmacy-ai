@@ -77,16 +77,24 @@ INDEX = RagIndex(chunk_docs([
 
 def test_the_evidence_tool_searches_only_the_flagged_drugs_and_numbers_the_results():
     chat = Scripted(uses(call("search_evidence", {"query": "아세트아미노펜 함께 복용", "item_codes": [TYLENOL, "999999999"]})),
-                    answer({"items": [{"index": 1, "text": GOOD, "evidence": ["E1", "E9"]}]}))
+                    answer({"items": [{"index": 1, "text": WITH_EVIDENCE, "evidence": ["E1", "E9"]}]}))
     (found, note) = investigate_risks([DUP], NAMES, local_evidence(INDEX), chat, PROMPT)
     results = json.loads(chat.seen[1][0][-1]["content"])["results"]
     assert [r["drug"] for r in results] == ["타이레놀정500mg"] and results[0]["id"] == "E1"   # 걸리지 않은 약(999999999)은 찾지 않는다
-    assert found[0].explanation == GOOD                                                       # 근거는 설명 뒤가 아니라 evidence 칸에 (A.5)
+    assert found[0].explanation == WITH_EVIDENCE                                              # 근거는 설명 뒤가 아니라 evidence 칸에 (A.5)
     assert [e.title for e in found[0].evidence] == ["타이레놀정500mg · 상호작용"]                # 없는 번호(E9)는 버린다
     assert "아세트아미노펜 과량" in found[0].evidence[0].excerpt
     assert (found[0].level, found[0].message) == (DUP.level, DUP.message)
     assert note == "AI 위험 신호 조사: search_evidence(성공)"
     assert "[1] 단계: 경고" in chat.seen[0][0][1]["content"]
+
+
+def test_an_explanation_that_cites_evidence_but_uses_none_of_it_is_dropped():
+    """근거를 인용했는데 설명에 근거의 내용이 없으면 버린다 (11/27, 한 번 부르는 설명과 같은 기준). 인용한 근거는 남는다."""
+    chat = Scripted(uses(call("search_evidence", {"query": "아세트아미노펜 함께 복용", "item_codes": [TYLENOL]})),
+                    answer({"items": [{"index": 1, "text": GOOD, "evidence": ["E1"]}]}))
+    found = investigate_risks([DUP], NAMES, local_evidence(INDEX), chat, PROMPT)[0][0]
+    assert found.explanation is None and [e.title for e in found.evidence] == ["타이레놀정500mg · 상호작용"]
 
 
 def test_an_explanation_without_evidence_is_kept_without_sources():
@@ -155,10 +163,10 @@ def test_the_match_node_does_not_investigate_when_everything_matched():
 def test_the_risk_node_uses_the_investigation_and_falls_back_to_the_one_shot_explanation():
     order = order_with("타이레놀정500mg", "게보린정").model_dump(mode="json")
     chat = Scripted(uses(call("search_evidence", {"query": "아세트아미노펜"})),
-                    answer({"items": [{"index": 1, "text": GOOD, "evidence": ["E1"]}]}))
+                    answer({"items": [{"index": 1, "text": WITH_EVIDENCE, "evidence": ["E1"]}]}))
     update = risk_node({"order": order}, deps(rag=INDEX, react=chat, explain=lambda t: pytest.fail("조사가 끝났으면 부르지 않는다")))
     finding = update["order"]["risk_check"]["findings"][0]
-    assert finding["explanation"] == GOOD and finding["evidence"] and set(finding["evidence"][0]) == {"title", "source", "excerpt"}
+    assert finding["explanation"] == WITH_EVIDENCE and finding["evidence"] and set(finding["evidence"][0]) == {"title", "source", "excerpt"}
     assert finding["level"] == "warning" and update["notes"] == ["AI 위험 신호 조사: search_evidence(성공)"]
 
     broken = Scripted({"content": None, "tool_calls": []})
@@ -168,6 +176,20 @@ def test_the_risk_node_uses_the_investigation_and_falls_back_to_the_one_shot_exp
     update = risk_node({"order": order}, deps(rag=INDEX, react=broken, explain=lambda t: {"items": [{"index": 1, "text": GOOD}]}))
     finding = update["order"]["risk_check"]["findings"][0]
     assert finding["explanation"] is None and finding["evidence"]    # 근거가 있는데 근거 내용이 없는 설명은 붙이지 않는다 (11/26)
+
+
+def test_the_investigation_is_held_to_the_same_bar_once_the_evidence_is_attached():
+    """AI 조사가 근거를 인용하지 않은 설명도, 노드가 근거를 붙인 뒤 같은 기준으로 다시 거른다 (11/27)."""
+    order = order_with("타이레놀정500mg", "게보린정").model_dump(mode="json")
+    no_fail = dict(explain=lambda t: pytest.fail("조사가 끝났으면 부르지 않는다"))
+    chat = Scripted(answer({"items": [{"index": 1, "text": GOOD, "evidence": []}]}))
+    finding = risk_node({"order": order}, deps(rag=INDEX, react=chat, **no_fail))["order"]["risk_check"]["findings"][0]
+    assert finding["explanation"] is None and finding["evidence"]            # 규칙 문장을 말만 바꾼 설명은 버리고 근거만
+    assert finding["level"] == "warning"
+
+    chat = Scripted(answer({"items": [{"index": 1, "text": WITH_EVIDENCE, "evidence": []}]}))
+    finding = risk_node({"order": order}, deps(rag=INDEX, react=chat, **no_fail))["order"]["risk_check"]["findings"][0]
+    assert finding["explanation"] == WITH_EVIDENCE                           # 붙은 근거의 내용을 쓴 설명은 남는다
 
 
 def test_the_test_graph_never_uses_the_react_llm_and_it_can_be_switched_off(monkeypatch):

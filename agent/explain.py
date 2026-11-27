@@ -4,6 +4,7 @@
     apply_explanations(findings, got, names)     LLM 결과를 거른 뒤 항목의 explanation에 담은 새 목록
     explain_findings(findings, names, explain_fn, passages) -> (새 목록, 안내)   위 둘을 합친 것. 실패해도 항목은 그대로
     attach_evidence(findings, passages)         항목마다 관련 약의 근거 조각을 evidence(A.5)에 담는다 (설명 성공과 상관없이)
+    recheck(findings, names)                    근거를 다 붙인 뒤 설명을 같은 기준으로 다시 거른다 (AI 조사 경로, 11/27)
 
 규칙 (명세서 2.8절 · REQ-AG-07: 분류는 규칙, LLM은 설명만)
 - 단계(level) · 유형(type) · 관련 약(item_codes) · 규칙 문장(message)은 그대로다. 설명은 explanation 칸에만 들어간다.
@@ -134,6 +135,16 @@ def apply_explanations(findings: Sequence[RiskFinding], got: dict[str, Any], nam
         keep = text if text and acceptable(text, f, names) else None
         out.append(f.model_copy(update={"explanation": keep}))
     return out
+
+
+def recheck(findings: Sequence[RiskFinding], names: dict[str, str]) -> list[RiskFinding]:
+    """근거를 다 붙인 뒤 설명을 한 번 더 거른다 (11/27). 거르지 못한 설명은 지워 규칙 문장만 보이게 한다.
+
+    AI 조사(ReAct)는 설명을 받을 때 항목에 근거가 아직 없어 uses_evidence가 언제나 통과였다.
+    화면에 보일 근거가 정해진 다음 같은 기준(acceptable)으로 거른다. 근거는 그대로 둔다.
+    """
+    return [f.model_copy(update={"explanation": None})
+            if f.explanation and not acceptable(f.explanation, f, names) else f for f in findings]
 
 
 def finding_terms(f: RiskFinding) -> tuple[tuple[str, int], ...]:

@@ -40,7 +40,7 @@ from agent.inspection import (
 )
 from agent.mcp_client import DrugTools, McpToolError
 from agent.plan import NOT_TARGET_PLAN, PlanError, build_plan, not_target_lines
-from agent.explain import ExplainFn, attach_evidence, explain_findings, passages_for
+from agent.explain import ExplainFn, attach_evidence, explain_findings, passages_for, recheck
 from agent.investigate import investigate_risks, local_evidence
 from agent.llm import load_prompt
 from agent.react import ToolChatFn, ToolFailure
@@ -338,7 +338,8 @@ def _explain(deps: Deps, findings, names: dict[str, str]):
         got = investigate_risks(findings, names, _evidence_search(deps), deps.react, load_prompt("react_risk"))
         if got is not None:
             explained, note = got
-            return attach_evidence(explained, passages), note     # AI가 인용하지 않은 항목도 근거를 받는다
+            # AI가 인용하지 않은 항목도 근거를 받고, 받은 근거로 설명을 한 번 더 거른다 (11/27, 한 번 부르는 설명과 같은 기준)
+            return recheck(attach_evidence(explained, passages), names), note
     if deps.explain is None:
         return attach_evidence(findings, passages), None
 
