@@ -50,7 +50,7 @@ def test_a_message_with_an_unknown_key_is_refused():
     with pytest.raises(ValueError, match="모르는 키"):
         read_message({"kind": "tray", "photo": b"..."})          # 원본 바이트는 담지 않는다 (image_id만)
     with pytest.raises(ValueError, match="모르는 키"):
-        read_message({"kind": "prescription", "text": "게보린 빼 주세요"})   # v0.8: 글 입력 없음
+        read_message({"kind": "prescription", "text": "게보린 빼 주세요"})   # 글 입력 없음
     with pytest.raises(ValueError, match="모르는 키"):
         read_message({"kind": "tray", "message_id": "m2"})        # 변경요청 11/16: message_id 칸 삭제
 
@@ -85,7 +85,7 @@ def test_errors_and_notes_are_added_up_and_other_fields_are_overwritten():
 
 
 def test_the_values_the_state_can_take():
-    assert PHOTO_KINDS == ("prescription", "tray")                 # v0.8: 약봉투 · 포장 제외
+    assert PHOTO_KINDS == ("prescription", "tray")                 # 약봉투 · 포장 제외
     assert FLOWS == ("prescription", "tray")
     assert STATUSES == (
         "received", "structured", "matched", "checked", "edited", "planned", "inspecting", "inspected",

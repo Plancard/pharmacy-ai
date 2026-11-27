@@ -1,4 +1,4 @@
-"""라우터 (11단계, 명세서 v0.8 2.2절 · REQ-AG-01) — 사진 한 장을 어느 흐름으로 보낼지 정한다.
+"""라우터 (11단계, 명세서 2.2절 · REQ-AG-01) — 사진 한 장을 어느 흐름으로 보낼지 정한다.
 
 v0.8에서 범위가 처방 단일 흐름으로 줄었다 (11/16). 글 입력 · 복합 입력 · 상담 · 복용 약 재대조 · 약봉투 · 포장 사진 ·
 사진 종류 판별(되묻기)은 없다. 흐름은 둘이고 이 순서다 (FLOW_ORDER).
@@ -22,10 +22,9 @@ from typing import Any
 
 from agent.state import PHOTO_KINDS
 
-# 실행 순서 (명세서 v0.8 2.2절: 처방 흐름 1~6단계 → 트레이 검수 7~9단계)
+# 실행 순서 (명세서 2.2절: 처방 흐름 1~6단계 → 트레이 검수 7~9단계)
 FLOW_ORDER: tuple[str, ...] = ("prescription", "tray")
 
-KIND_LABELS = {"prescription": "처방전", "tray": "트레이"}
 DOC_KINDS = ("prescription",)                # OCR(A.1)의 doc_type이 가질 수 있는 값
 
 NO_KIND_NOTICE = "사진 종류 정보가 없습니다. 처방전 사진은 새 처방으로, 트레이 사진은 승인된 처방에 올려 주세요."

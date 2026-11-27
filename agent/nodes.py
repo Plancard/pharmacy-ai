@@ -1,4 +1,4 @@
-"""그래프의 노드 (7 ~ 11단계, 명세서 v0.8 2.2절, REQ-AG-01 · 04 · 05, REQ-WEB-02 · 03).
+"""그래프의 노드 (7 ~ 11단계, 명세서 2.2절, REQ-AG-01 · 04 · 05, REQ-WEB-02 · 03).
 
 노드는 상태를 받아 바꿀 칸만 dict로 돌려준다. LangGraph 없이도 함수로 불러 시험할 수 있다.
 실제 일은 agent/ 의 다른 파일이 하고, 노드는 상태에서 꺼내 넘기고 결과를 다시 담기만 한다.
@@ -11,7 +11,7 @@
                    deps.tools(MCP)가 있으면 DUR 도구 check_interaction · check_duplicate로 부른다 (13단계)
     approve        약사 승인 대기 (HITL ①). interrupt로 멈추고, 약사 응답(승인 · 고치기)을 받아 이어 간다.
                    승인하면 승인 카드의 조제 계획을 그대로 확정해 planned(트레이 대기)로 끝난다
-    make_plan      조제지시서로 칸별 조제 계획(A.4)을 만든다. 승인 전에 만들어 승인 카드에 함께 보인다 (명세서 v0.8 2.2절 5단계).
+    make_plan      조제지시서로 칸별 조제 계획(A.4)을 만든다. 승인 전에 만들어 승인 카드에 함께 보인다 (명세서 2.2절 5단계).
                    만들 수 없으면(3일 초과 E_PLAN_RANGE · 약을 정하지 못한 줄) 계획 없이 승인 대기로 가서 이유를 보인다
                    deps.tools(MCP)가 있으면 조제 도구 build_plan으로 부른다 (14단계)
     tray           트레이 검수: CV(deps.inspect)로 트레이 사진을 조제 계획과 대조한 A.3을 받아 확인한다 (14단계).
@@ -249,7 +249,7 @@ NOT_TARGET_REASON = "대상 8종이 아닌 약품입니다. 8종 중 하나로 �
 
 
 def _mark_not_target(order: DispensingOrder, dictionary) -> DispensingOrder:
-    """대상 8종이 아닌 약 줄에 약사 확인 표시와 이유를 붙인다 (명세서 v0.9 REQ-AG-03: 대상 외 약품은 승인 불가)."""
+    """대상 8종이 아닌 약 줄에 약사 확인 표시와 이유를 붙인다 (명세서 REQ-AG-03: 대상 외 약품은 승인 불가)."""
     items = []
     for d in order.items:
         if d.item_code is not None and dictionary.by_item_code(d.item_code) is None and NOT_TARGET_REASON not in d.check_reasons:
@@ -328,7 +328,7 @@ def _evidence_search(deps: Deps):
 
 def _explain(deps: Deps, findings, names: dict[str, str]):
     """위험 신호 항목에 AI 설명과 근거(evidence, A.5)를 붙인다 (18단계). 단계 · 유형 · 규칙 문장은 그대로.
-    키가 없거나 실패하면 설명 없이 + 안내. 근거는 색인(deps.rag)이 있으면 설명과 상관없이 붙인다 (명세서 v0.8 REQ-AG-06).
+    키가 없거나 실패하면 설명 없이 + 안내. 근거는 색인(deps.rag)이 있으면 설명과 상관없이 붙인다 (명세서 REQ-AG-06).
 
     AI 조사(deps.react)와 근거 색인이 있으면 LLM이 근거 검색 도구로 찾아 가며 설명한다 (11/16 ReAct).
     조사를 끝내지 못하면 한 번 부르는 설명(deps.explain)으로 대신한다.
@@ -390,7 +390,7 @@ def ocr_size(ocr: Any) -> dict[str, int] | None:
 def approval_payload(state: dict[str, Any]) -> dict[str, Any]:
     """HITL ①에서 웹에 보일 내용 (web/agent_gateway.Pause의 payload와 같은 모양에 계획 · 안내를 더했다).
 
-    plan은 승인 카드의 칸 배치(A.4, 명세서 v0.8 REQ-AG-04)다. 만들지 못했으면 None이고 error_code(E_PLAN_RANGE 등)와
+    plan은 승인 카드의 칸 배치(A.4, 명세서 REQ-AG-04)다. 만들지 못했으면 None이고 error_code(E_PLAN_RANGE 등)와
     notice에 이유가 있다. 그때는 승인할 수 없고 고치기(edit)만 받는다.
     """
     order = DispensingOrder.model_validate(state["order"])
@@ -487,7 +487,7 @@ def approve_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
 
 
 def plan_node(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
-    """조제지시서로 칸별 조제 계획(A.4)을 만든다 (REQ-AG-04). 승인 전에 만들어 승인 카드에 함께 보인다 (명세서 v0.8 2.2절).
+    """조제지시서로 칸별 조제 계획(A.4)을 만든다 (REQ-AG-04). 승인 전에 만들어 승인 카드에 함께 보인다 (명세서 2.2절).
 
     위험 신호 대조를 거치지 않은 조제지시서로 불리면 ValueError (그래프를 잘못 이은 것이다).
     계획을 만들 수 없으면(3일 초과 E_PLAN_RANGE · 약을 정하지 못한 줄) 계획 없이 이유와 코드를 남긴다. 그래프는 그대로

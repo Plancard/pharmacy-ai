@@ -191,7 +191,7 @@ def checked(sample_id):
 
 
 def with_plan(state):
-    """그래프 순서대로 조제 계획까지 만든 상태 (v0.8: 계획은 승인 전에 만든다)."""
+    """그래프 순서대로 조제 계획까지 만든 상태 (계획은 승인 전에 만든다)."""
     return merged(state, plan_node(state, deps()))
 
 
@@ -702,7 +702,7 @@ def test_plan_does_not_change_the_state_it_was_given():
     assert state == before
 
 
-# ------------------------------------------------------------ 라우터 (v0.8: 처방전 / 트레이)
+# ------------------------------------------------------------ 라우터 (처방전 / 트레이)
 
 
 def test_router_sends_a_prescription_photo_to_the_prescription_flow():

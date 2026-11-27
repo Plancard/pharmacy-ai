@@ -64,13 +64,6 @@ NO_DUR = "DUR API를 쓰지 않는 서버입니다 (.env에 DRUG_API_KEY가 없�
 NO_RAG = "근거 색인이 없는 서버입니다 (scripts/agent/build_rag_index.py로 agent/resources/rag_corpus를 만드세요)."
 
 
-def _product(product: Any, score: float | None = None) -> dict[str, Any]:
-    found = {"item_code": product.item_code, "name": product.name, "company": getattr(product, "company", None)}
-    if score is not None:
-        found["score"] = round(score, 3)
-    return found
-
-
 def _refs(items: list[dict[str, Any]]) -> list[Ref]:
     try:
         return [Ref(item_code=i.get("item_code") or None, name=str(i["name"])) for i in items]

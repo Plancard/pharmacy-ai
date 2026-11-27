@@ -177,7 +177,7 @@ def test_the_router_can_start_any_flow_and_the_flows_only_go_forward():
     _, after_review = TOP_CHART.branches["tray_review"]               # 검수 확인 뒤에는 트레이 다음 흐름으로만
     assert set(after_review) == {*FLOW_ORDER[FLOW_ORDER.index("tray") + 1:], "end"}
     assert [n for n, targets in TOP_CHART.successors().items() if "tray_review" in targets] == ["tray"]
-    assert TOP_CHART.nodes == ("router", "prescription", "tray", "tray_review")   # v0.8: 처방 · 트레이 흐름만
+    assert TOP_CHART.nodes == ("router", "prescription", "tray", "tray_review")   # 처방 · 트레이 흐름만
 
 
 def test_the_prescription_flow_is_a_subgraph_that_goes_structure_match_risk_plan_approve():
@@ -189,7 +189,7 @@ def test_the_prescription_flow_is_a_subgraph_that_goes_structure_match_risk_plan
 
 
 def test_the_plan_is_made_right_before_the_approval():
-    nxt = PRESCRIPTION_CHART.successors()                              # 명세서 v0.8 2.2절: 계획은 승인 카드에 함께 보인다
+    nxt = PRESCRIPTION_CHART.successors()                              # 명세서 2.2절: 계획은 승인 카드에 함께 보인다
     assert [name for name, targets in nxt.items() if "make_plan" in targets] == ["risk"]
     assert [name for name, targets in nxt.items() if "approve" in targets] == ["make_plan"]
 
@@ -487,7 +487,7 @@ def test_a_plan_that_cannot_be_made_shows_the_reason_on_the_approval_and_only_ed
     compiled = make(structure=structure_of("타이레놀정500mg", "게보린정", days=5))          # 트레이(3일)를 넘는다
     state = send(compiled, "P0001", load("cv_a1", "rx_001"))
     shown = paused(state)
-    assert shown["plan"] is None and shown["error_code"] == E_PLAN_RANGE   # 승인 전에 알린다 (명세서 v0.8 A.7)
+    assert shown["plan"] is None and shown["error_code"] == E_PLAN_RANGE   # 승인 전에 알린다 (명세서 A.7)
     assert shown["notice"].startswith("조제 계획을 만들 수 없습니다. 투약 일수가 트레이(3일)를 넘습니다")
     assert "고친 뒤 다시 승인해 주세요. 약사 승인을 기다립니다." in shown["notice"]
       # 계획 없이는 승인할 수 없다. 잘못된 응답은 그래프에 넣기 전에 거른다 (api.check_reply → read_reply).
@@ -585,7 +585,7 @@ ROUTES = [
     # photo_kind, ocr, 지난 노드, 흐름, 상태
     ("tray", None, ["router", "tray"], "tray", "noted"),         # 조제 계획이 없으면 검수하지 않고 안내만 (14단계)
 ]
-NOT_RUN = [                                                          # v0.8: 흐름을 돌리지 않고 안내만
+NOT_RUN = [                                                          # 흐름을 돌리지 않고 안내만
     (None, None, "사진 종류 정보가 없습니다."),
     ("med_bag", None, "받을 수 없는 사진 종류입니다: med_bag"),
     ("receipt", None, "받을 수 없는 사진 종류입니다: receipt"),

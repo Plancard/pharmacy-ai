@@ -1,4 +1,4 @@
-"""데이터 형식 (명세서 v0.8 부록 A). CV·웹과 주고받는 값의 모양을 이 파일에만 적는다.
+"""데이터 형식 (명세서 부록 A). CV·웹과 주고받는 값의 모양을 이 파일에만 적는다.
 
     A.1 OcrResult         CV → Agent     처방전 OCR 결과
     A.3 Inspection        CV → Agent·웹   트레이 검수 결과 (12칸)
@@ -88,7 +88,7 @@ class OcrResult(_Model):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     lines: list[OcrLine]                     # 비어 있어도 형식은 맞다. 글자가 없는 사진(E_OCR_EMPTY)은 구조화 단계가 가려낸다
-    # 종이 가장자리가 사진 끝에 닿았는가 (선택, 명세서 v0.9 A.1 · 11/17 회의). 재찍기 판단은 Agent가 약 줄과 함께 한다 (pipeline.py)
+    # 종이 가장자리가 사진 끝에 닿았는가 (선택, 명세서 A.1 · 11/17 회의). 재찍기 판단은 Agent가 약 줄과 함께 한다 (pipeline.py)
     paper_edge_cut: bool | None = None
 
     @model_validator(mode="after")
@@ -191,7 +191,7 @@ class Plan(_Model):
 # ------------------------------------------------------------------ 근거 (A.5 risk_check 항목의 evidence)
 
 class Evidence(_Model):
-    """위험 신호 항목의 RAG 검색 근거 하나 (명세서 v0.8 A.5: 제목 · 출처 · 발췌)."""
+    """위험 신호 항목의 RAG 검색 근거 하나 (명세서 A.5: 제목 · 출처 · 발췌)."""
 
     title: str = Field(min_length=1)
     source: str = Field(min_length=1)
@@ -209,7 +209,7 @@ class RiskFinding(_Model):
     message: str = Field(min_length=1)       # 약사에게 그대로 보이는 한국어 문장 (규칙이 만든 고정 문장)
     # AI가 덧붙인 설명 (18단계, REQ-AG-07: LLM은 설명만, 단계 · 유형은 바꾸지 않는다). 만들지 못했거나 쓰지 않으면 None.
     explanation: str | None = Field(default=None, min_length=1)
-    # RAG 검색 근거 (명세서 v0.8 A.5, F-AG-06). 찾지 못했으면 빈 목록 (화면은 '근거 없음'). 단계 · 유형은 근거와 상관없이 규칙이 정한다
+    # RAG 검색 근거 (명세서 A.5, F-AG-06). 찾지 못했으면 빈 목록 (화면은 '근거 없음'). 단계 · 유형은 근거와 상관없이 규칙이 정한다
     evidence: list[Evidence] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -309,7 +309,7 @@ class DispensingOrder(_Model):
     warnings: list[str] = Field(default_factory=list)   # 구조화 중 생긴, 약사가 알아야 할 경고 (약사에게 그대로 보인다)
 
     # None = 아직 위험 신호 대조 전 (구조화 직후). 웹에 넘기는 조제지시서에는 반드시 들어 있다.
-    # 이 대조는 처방약끼리만 본다(scope=rx_only, 명세서 v0.8 2.2절).
+    # 이 대조는 처방약끼리만 본다(scope=rx_only, 명세서 2.2절).
     risk_check: RiskCheck | None = None
 
     @model_validator(mode="after")

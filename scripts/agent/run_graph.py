@@ -9,7 +9,7 @@
     python scripts/agent/run_graph.py --all --mcp           # 약품 매칭을 MCP 도구로 부른다 (python -m agent.mcp_server를 띄운다)
     python scripts/agent/run_graph.py --all --mcp-url http://127.0.0.1:8765/mcp   # 따로 띄운 MCP 서버에 붙는다
 
-라우터의 분기를 보려면 사진 종류를 지정한다 (명세서 v0.8: 처방전 · 트레이만). --no-ocr 은 OCR 없이 사진 종류만 보낸다.
+라우터의 분기를 보려면 사진 종류를 지정한다 (명세서: 처방전 · 트레이만). --no-ocr 은 OCR 없이 사진 종류만 보낸다.
     python scripts/agent/run_graph.py --kind tray --no-ocr      # 조제 계획 전의 트레이 사진 -> 안내만
     python scripts/agent/run_graph.py --no-ocr                  # 종류도 OCR도 없음 -> 안내만
 
@@ -94,7 +94,7 @@ def show(sample_id: str, state: dict[str, Any], out: Callable[[str], None]) -> N
             out(f"         - [{LEVEL_LABELS[finding.level]}] {finding.message}")
     for warning in order.warnings:
         out(f"    경고: {warning}")
-    plan = paused.get("plan") if paused else state.get("plan")     # v0.8: 계획은 승인 전에 만들어 승인 카드에 보인다
+    plan = paused.get("plan") if paused else state.get("plan")     # 계획은 승인 전에 만들어 승인 카드에 보인다
     if plan is not None:
         names = {d.item_code: d.name for d in order.items if d.item_code}
         out("    조제 계획:" + (" (승인 카드에 보임)" if paused else ""))

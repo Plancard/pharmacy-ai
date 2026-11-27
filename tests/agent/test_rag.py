@@ -11,7 +11,7 @@ import pytest
 from agent import config
 from agent.config import RESOURCES_DIR
 from agent.drug_dictionary import load_dictionary
-from agent.errors import ConfigError, StructureError
+from agent.errors import StructureError
 from agent.rag import RagIndex, chunk_docs, load_index, tokens
 from agent.rag_sources import DETAIL_SOURCE, EASY_SOURCE, clean_text, detail_docs, doc_xml_text, easy_docs
 

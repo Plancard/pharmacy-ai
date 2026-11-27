@@ -1,15 +1,14 @@
-"""Agent가 함께 쓰는 에러와 오류 코드 (명세서 v0.3 부록 A.7)."""
+"""Agent가 함께 쓰는 에러와 오류 코드 (명세서 부록 A.7)."""
 
 # A.7 오류 코드. 웹은 이 코드를 보고 화면 문구와 약사 선택지(재시도·수동 진행)를 정한다 (기능분석서 6장).
 E_OCR_EMPTY = "E_OCR_EMPTY"            # 글자 없음: OCR 결과가 비었거나, 약품 표에서 읽을 글자를 찾지 못함
 E_TRAY_NOT_FOUND = "E_TRAY_NOT_FOUND"  # (CV) 트레이 미검출
 E_CV_INFER = "E_CV_INFER"              # (CV) 검출 모델 오류
 E_PLAN_RANGE = "E_PLAN_RANGE"          # 조제 계획이 트레이 범위(1~3일, 4시점)를 넘음
-E_BARCODE_FAIL = "E_BARCODE_FAIL"      # (CV) 바코드 판독 실패
 E_LLM = "E_LLM"                        # AI 응답 오류: LLM이 끝내 읽지 못함
 E_EXT_API = "E_EXT_API"                # 외부 API 실패 (의약품 정보·DUR)
 E_DB = "E_DB"                          # (웹) 저장 실패
-ERROR_CODES = (E_OCR_EMPTY, E_TRAY_NOT_FOUND, E_CV_INFER, E_PLAN_RANGE, E_BARCODE_FAIL, E_LLM, E_EXT_API, E_DB)
+ERROR_CODES = (E_OCR_EMPTY, E_TRAY_NOT_FOUND, E_CV_INFER, E_PLAN_RANGE, E_LLM, E_EXT_API, E_DB)
 
 
 class StructureError(Exception):

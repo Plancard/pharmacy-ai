@@ -1,6 +1,6 @@
 """시험용 줄임 함수: 처방(대화 ID = 처방 ID)에 사진 한 장을 넣는 호출 모양 (id, ocr, 사진 종류).
 
-메시지는 {image_id, kind}로 들어온다 (명세서 v0.8: 글 입력 없음).
+메시지는 {image_id, kind}로 들어온다 (명세서: 글 입력 없음).
 """
 from __future__ import annotations
 

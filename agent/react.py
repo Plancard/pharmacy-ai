@@ -2,9 +2,8 @@
 
     run_react(system, user, tools, chat)  ->  ReactResult(final, steps, stopped)
 
-LLM이 '생각 → 도구 호출 → 결과 보기'를 되풀이하다가 최종 답(JSON)을 낸다. 쓰는 곳은 두 군데다 (agent/investigate.py).
-- 약품 매칭 실패: search_drug · check_item_code로 후보만 찾는다 (약은 정하지 않는다).
-- 위험 신호 조사: 근거 검색 도구로 허가정보를 찾아 설명한다 (단계는 바꾸지 않는다).
+LLM이 '생각 → 도구 호출 → 결과 보기'를 되풀이하다가 최종 답(JSON)을 낸다. 쓰는 곳은 위험 신호 조사 한 군데다 (agent/investigate.py):
+근거 검색 도구로 허가정보를 찾아 설명한다 (단계는 바꾸지 않는다). 약품 매칭 실패 줄의 후보 조사는 11/18에 뺐다.
 
 지키는 것
 - 도구는 허용 목록(tools)에 있는 것만 부른다. 없는 이름 · 틀린 인자는 실행하지 않고 오류를 LLM에게 돌려준다.

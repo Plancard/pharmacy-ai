@@ -1,4 +1,4 @@
-"""라우터의 계획 (agent/router.py) — 사진 한 장의 흐름 (명세서 v0.8: 처방전 / 트레이). 그래프 없이 함수로 시험한다."""
+"""라우터의 계획 (agent/router.py) — 사진 한 장의 흐름 (명세서: 처방전 / 트레이). 그래프 없이 함수로 시험한다."""
 import pytest
 
 from agent.router import (
@@ -13,7 +13,7 @@ RX = {"doc_type": "prescription", "lines": []}
 
 
 def test_the_order_of_the_flows():
-    assert FLOW_ORDER == ("prescription", "tray")      # v0.8: 상담 · 복용 약 · 되묻기 흐름 없음
+    assert FLOW_ORDER == ("prescription", "tray")      # 상담 · 복용 약 · 되묻기 흐름 없음
 
 
 @pytest.mark.parametrize("photo_kind, ocr, route", [

@@ -19,7 +19,7 @@ from agent.pipeline import structure_prescription
 from agent.plan import PlanError, build_plan
 from agent.risk import NO_DUR_WARNING, UNCHECKED_TAIL, check_order
 from agent.schema import TRAY_DAYS, OcrResult
-from graph_calls import first_state, send
+from graph_calls import send
 
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES = RESOURCES_DIR / "samples"
@@ -134,7 +134,7 @@ def test_each_prescription_stops_for_approval_and_then_plans(monkeypatch, rx_id)
     shown = send(graph, f"P-{rx_id}", load("rx8_a1", rx_id))["__interrupt__"][0].value
     expected = load("rx8_expected", rx_id)
     assert ("확인이 필요한 약품" in shown["notice"]) is bool(expected["flagged"])
-    if expected["plan"] == "ok":                                      # 승인 카드에 조제 계획이 함께 있다 (v0.8)
+    if expected["plan"] == "ok":                                      # 승인 카드에 조제 계획이 함께 있다
         assert shown["notice"].startswith("약사 승인을 기다립니다.") and shown["plan"] is not None
         final = resume_run(graph, f"P-{rx_id}", {"action": "approve", "order": shown["order"]})
         assert final["status"] == "planned" and final["plan"] == shown["plan"]   # 보인 계획을 그대로 확정

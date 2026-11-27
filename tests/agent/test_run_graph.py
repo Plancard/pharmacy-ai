@@ -222,7 +222,7 @@ def test_the_subgraph_alone_cannot_be_given_a_photo_kind(sub_graph, capsys):
     (["--kind", "prescription"], WAITING, "prescription", "약사 승인을 기다립니다."),
     (["--no-ocr"], "noted", "-", "사진 종류 정보가 없습니다."),
     (["--kind", "receipt"], "noted", "-", "받을 수 없는 사진 종류입니다: receipt"),
-    (["--kind", "med_bag"], "noted", "-", "받을 수 없는 사진 종류입니다: med_bag"),     # v0.8: 약봉투 제외
+    (["--kind", "med_bag"], "noted", "-", "받을 수 없는 사진 종류입니다: med_bag"),     # 약봉투 제외
 ])
 def test_the_photo_kind_decides_the_flow(graph, argv, status, flow, notice):
     code, text = run(argv, graph)

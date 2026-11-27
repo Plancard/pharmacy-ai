@@ -214,7 +214,7 @@ def focused_excerpt(text: str, terms: Terms, limit: int | None = None) -> str | 
 
 
 def evidence_item(title: str, source: str, url: str | None, text: str, terms: Terms = ()) -> Evidence:
-    """근거 하나 (명세서 v0.8 A.5: 제목 · 출처 · 발췌). 출처에는 사람이 열어 볼 수 있는 주소를 함께 적는다.
+    """근거 하나 (명세서 A.5: 제목 · 출처 · 발췌). 출처에는 사람이 열어 볼 수 있는 주소를 함께 적는다.
 
     terms(finding_terms)를 주면 발췌는 질문과 맞는 문장들이다 (focused_excerpt). 맞는 문장이 없거나 terms가 없으면
     앞에서부터 EXCERPT_CHARS 글자다.

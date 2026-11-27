@@ -68,7 +68,7 @@ def test_start_stops_at_the_approval_with_what_the_web_shows(backend):
     pause = api.start("P0001", load("rx8_a1", "rx8_01"))
     assert isinstance(pause, Pause) and pause.hitl_point == "rx_approval"
     assert set(pause.payload) == {"order", "plan", "error_code", "ocr_lines", "ocr_size", "notice", "changed_items"}   # 웹 FakeGateway의 payload(order · ocr_lines)에 더했다
-    assert len(pause.payload["plan"]["plan"]) == 9 and pause.payload["error_code"] is None   # 조제 계획은 승인 전에 보인다 (v0.8)
+    assert len(pause.payload["plan"]["plan"]) == 9 and pause.payload["error_code"] is None   # 조제 계획은 승인 전에 보인다
     order = DispensingOrder.model_validate(pause.payload["order"])
     assert [d.item_code for d in order.items] == ["202106092", "197900277"]
     assert order.risk_check.level == "warning"

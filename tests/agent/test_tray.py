@@ -118,7 +118,7 @@ def test_the_cells_that_are_not_ok_are_described_with_names():
 
 
 def test_the_low_conf_reason_is_no_longer_accepted():
-    """명세서 v0.9 A.3: 칸 사유는 boundary · overlap · rotated만. low_conf가 오면 형식 오류다 (CV stub 수정 요청)."""
+    """명세서 A.3: 칸 사유는 boundary · overlap · rotated만. low_conf가 오면 형식 오류다 (CV stub 수정 요청)."""
     raw = cv_stub_inspect("review")("tray-1", PLAN.model_dump(mode="json"))
     for cell in raw["cells"]:                                       # stub는 boundary를 낸다: 옛 사유로 바꿔 거절되는지 본다
         if cell["reasons"]:

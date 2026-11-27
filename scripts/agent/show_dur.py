@@ -4,7 +4,7 @@
     python scripts/agent/show_dur.py --cases      # 병용금기 시험 조합(agent/resources/dur_cases.json)이 검출되는지 (약 두 개만 대조)
     python scripts/agent/show_dur.py --no-save    # 저장하지 않는다
 
-복용 약과의 병용금기를 그래프 전체로 보던 --flow는 명세서 v0.8에서 복용 약 재대조가 빠져 없앴다 (11/16).
+복용 약과의 병용금기를 그래프 전체로 보던 --flow는 명세서에서 복용 약 재대조가 빠져 없앴다 (11/16).
 pytest가 아니다. 저장소 루트의 .env의 DRUG_API_KEY로 실제 DUR API(DURPrdlstInfoService03)를 부른다.
 키는 화면에도 파일에도 적지 않는다. 오퍼레이션 이름이나 응답 필드가 다르면 agent/dur_api.py 위쪽 상수를 고친다.
   - 응답 원본을 <폴더>/dur_<번호>_<오퍼레이션>.json 으로 저장한다 (기본 var/api/, git에 올라가지 않는다).

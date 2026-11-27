@@ -37,7 +37,7 @@ def test_the_story_shows_the_risk_the_plan_and_the_tray_checks(backend):
     _, text = run()
     assert "위험 신호(warning): 트리스펜연질캡슐 · 아르펜정에 이부프로펜 성분이 함께 들어 있습니다." in text
     assert "계획 아침: 1일 타이레놀정500mg 1 · 게보린정 1" in text
-    assert "계획(승인 카드) 아침: 1일 타이레놀정500mg 1 · 게보린정 1" in text   # 계획은 승인 전에 보인다 (v0.8)
+    assert "계획(승인 카드) 아침: 1일 타이레놀정500mg 1 · 게보린정 1" in text   # 계획은 승인 전에 보인다
     assert "근거: 아르펜정 · 상호작용 (식약처" in text                           # RAG 근거 (A.5 evidence)
     assert "계획: 만들 수 없음 (E_PLAN_RANGE) - 고치기(edit)만 할 수 있음" in text
     assert "거절: 조제 계획을 만들지 못해 승인할 수 없습니다." in text

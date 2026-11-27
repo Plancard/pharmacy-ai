@@ -521,7 +521,7 @@ def test_inspection_allows_every_reason():
 def test_inspection_refuses_the_low_conf_reason():
     d = load("a3_inspection", "i02_mismatch")
     review = next(c for c in d["cells"] if c["status"] == "need_review")
-    review["reasons"] = ["low_conf"]                      # 명세서 v0.9: 검출 기준선 0.70 하나로, 저신뢰 사유는 폐기
+    review["reasons"] = ["low_conf"]                      # 명세서: 검출 기준선 0.70 하나로, 저신뢰 사유는 폐기
     with pytest.raises(ValidationError):
         Inspection.model_validate(d)
 

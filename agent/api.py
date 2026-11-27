@@ -1,4 +1,4 @@
-"""웹이 부르는 Agent 입구 (10 · 11단계, 명세서 v0.8 2.2절, REQ-AG-01, REQ-WEB-02 · 03) — 처방 하나를 시작 · 멈춤 확인 · 이어 가기.
+"""웹이 부르는 Agent 입구 (10 · 11단계, 명세서 2.2절, REQ-AG-01, REQ-WEB-02 · 03) — 처방 하나를 시작 · 멈춤 확인 · 이어 가기.
 
 웹의 web/agent_gateway.py가 이미 이 모양을 쓴다 (지금은 FakeGateway). 웹 담당이 LangGraphGateway를 만들어 이것을 부르면
 AGENT_BACKEND=langgraph로 같은 화면이 돈다.
@@ -12,13 +12,13 @@ AGENT_BACKEND=langgraph로 같은 화면이 돈다.
     approved_order(rx_id)              약사가 승인한 조제지시서 (트레이 대기 카드)
     check_reply(rx_id, hitl_point, reply)  응답이 지금 멈춘 지점에 맞는지만 본다 (웹이 요청을 받을 때 400으로 거르기)
 
-처방 1건 = 대화 1개 = thread 1개다 (명세서 v0.8 REQ-WEB-07). 아래의 rx_id는 처방 ID이자 thread_id다.
+처방 1건 = 대화 1개 = thread 1개다 (명세서 REQ-WEB-07). 아래의 rx_id는 처방 ID이자 thread_id다.
 v0.8에서 글 입력 · 상담 · 복용 약 등록 · 재대조(HITL ③) · 사진 종류 되묻기는 범위에서 빠졌다 (11/16).
 메서드의 image_id · prescription_id는 웹이 아는 값을 넘긴다 (없으면 None).
 멈춘 곳은 체크포인터(checkpoint.py)에 저장되므로 프로세스를 꺼도 같은 곳에서 이어 간다.
 HITL ①(rx_approval)의 응답은 {"action": "approve" | "edit" | "manual", "order": 조제지시서, "reason": 사유}다.
   manual: 위험(danger) 항목이 있을 때 사유를 적고 진행한다 (기능분석서 F-WEB-07 ③). 위험이 있으면 approve는 거절된다.
-  승인 카드(Pause.payload)에는 조제 계획(plan, A.4)이 함께 있다 (v0.8: 계획은 승인 앞). 만들지 못했으면 plan은 None이고
+  승인 카드(Pause.payload)에는 조제 계획(plan, A.4)이 함께 있다 (계획은 승인 앞). 만들지 못했으면 plan은 None이고
   error_code(E_PLAN_RANGE 등)와 notice에 이유가 있다.
   approve: 약품 줄이 그대로면 승인 카드의 계획을 그대로 확정하고 끝난다 → None, stage는 await_tray.
            약을 정하지 못한 줄이 있거나 계획이 없으면 거절된다 (ValueError, 고치기만 가능).

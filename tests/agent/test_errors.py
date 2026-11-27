@@ -1,4 +1,4 @@
-"""오류 코드 (agent/errors.py, 명세서 v0.3 부록 A.7)."""
+"""오류 코드 (agent/errors.py, 명세서 부록 A.7)."""
 import pytest
 
 from agent import errors
@@ -8,9 +8,10 @@ from agent.errors import ERROR_CODES, DrugApiError, StructureError
 def test_the_error_codes_of_the_spec():
     assert ERROR_CODES == (
         "E_OCR_EMPTY", "E_TRAY_NOT_FOUND", "E_CV_INFER", "E_PLAN_RANGE",
-        "E_BARCODE_FAIL", "E_LLM", "E_EXT_API", "E_DB",
+        "E_LLM", "E_EXT_API", "E_DB",
     )
     assert all(getattr(errors, code) == code for code in ERROR_CODES)     # 이름과 값이 같다
+    assert not hasattr(errors, "E_BARCODE_FAIL")                         # 약봉투 · 포장 판독 제외로 삭제 (웹은 11/25에 삭제)
 
 
 def test_a_structure_error_keeps_its_message_and_code():

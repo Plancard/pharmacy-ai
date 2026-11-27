@@ -5,7 +5,7 @@
 
 pytest가 아니다. 웹이 부르는 입구(agent/api.py)를 그대로 써서, 웹 화면에서 일어날 일을 글로 보여 준다.
 시연용 가상 처방전(agent/resources/samples/rx8_a1)을 쓰고, 멈춘 곳은 메모리에 저장한다. 의약품 API와 LLM은 부르지 않는다
-(시연용 처방전은 규칙 경로로 읽힌다). 명세서 v0.8의 처방 단일 흐름만 돈다 (글 입력 · 상담 · 복용 약 재대조는 범위 밖).
+(시연용 처방전은 규칙 경로로 읽힌다). 명세서의 처방 단일 흐름만 돈다 (글 입력 · 상담 · 복용 약 재대조는 범위 밖).
 트레이 검수는 CV 가짜 모듈(cv/stub.py)로 한다. 사진 ID 끝이 결과를 정한다: tray-ok(전 칸 일치) · tray-mismatch(1칸 불일치) ·
 tray-no_tray(트레이 못 찾음) 등 (cv.stub.SCENARIOS).
 기대와 다른 시나리오가 있으면 1로 끝난다. langgraph가 설치되어 있어야 한다 (pip install -r agent/requirements.txt).
@@ -82,7 +82,7 @@ def show_pause(pause: Pause | None, out: Out) -> None:
         for e in f.get("evidence", []):
             out(f"        근거: {e['title']} ({e['source']})")
     plan = pause.payload.get("plan")
-    if plan is not None:                                            # v0.8: 조제 계획은 승인 전에 승인 카드에 보인다
+    if plan is not None:                                            # 조제 계획은 승인 전에 승인 카드에 보인다
         names = {d["item_code"]: d["name"] for d in pause.payload["order"]["items"] if d.get("item_code")}
         for line in plan_lines(Plan.model_validate(plan), names):
             out(f"      계획(승인 카드) {line}")
@@ -227,7 +227,7 @@ SCENARIOS: list[tuple[str, Callable[[AgentApi, Out], bool]]] = [
 
 
 def main(argv: list[str] | None = None, *, out: Out = print, api_factory: Callable[[], AgentApi] = make_api) -> int:
-    parser = argparse.ArgumentParser(description="뼈대 그래프 동작 확인 (명세서 v0.8 처방 흐름)")
+    parser = argparse.ArgumentParser(description="뼈대 그래프 동작 확인 (명세서 처방 흐름)")
     parser.add_argument("--quiet", action="store_true", help="시나리오마다 결과 한 줄만")
     args = parser.parse_args(argv)
     try:
