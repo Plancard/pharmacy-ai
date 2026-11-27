@@ -143,7 +143,7 @@ def test_detail_shows_every_part_of_the_record(client, db_history):
     # 처방전 원본
     assert f'src="/api/prescriptions/{RX_ID}/images/{RX_IMG}"' in html
     # 최종 조제지시서 (복용 시점 문구 · 확인 이유 · 경고)
-    assert "타이레놀정500mg" in html and "아침 · 저녁" in html and "1회량 칸 OCR 신뢰도 낮음" in html
+    assert "타이레놀정500mg" in html and '<div class="time">아침</div><div class="time">저녁</div>' in html and "1회량 칸 OCR 신뢰도 낮음" in html
     assert "복용 시점이 처방전에 없어" in html
     assert "인식한 글자: 타이레놀정 50Orng" in html                    # 표준 이름으로 바꾼 줄은 원래 글자도 (Agent printed_name)
     assert html.count("인식한 글자") == 1                               # 이름이 같았던 줄(게보린)에는 없다

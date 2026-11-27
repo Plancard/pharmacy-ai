@@ -76,6 +76,7 @@ table.items td.mono { font-size: 14px; color: #4b5563; }
 .table-wrap { overflow-x: auto; }
 table.items th { white-space: nowrap; }
 table.items td { vertical-align: top; }
+table.items .time { white-space: nowrap; }   /* 복용 시점 한 줄에 하나 ("취침 전"이 끊기지 않게) */
 table.items .num { text-align: right; font-variant-numeric: tabular-nums; }
 table.items tr.flagged { background: #fffbeb; }
 table.items tr.lowconf { background: #fef9c3; }

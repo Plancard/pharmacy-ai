@@ -460,7 +460,8 @@
     const rows = order.items.map((it, idx) => {
       const confs = (it.source_line_ids || []).map((i) => lines[String(i)]).filter(Boolean).map((l) => l.conf);
       const low = confs.length && Math.min(...confs) < LOW_CONF;
-      const times = TIME_ORDER.filter((t) => it.times.includes(t)).map((t) => TIMES[t]).join(" · ");
+      // 복용 시점은 한 줄에 하나씩 (11/27: " · "로 이으면 좁은 칸에서 '아침 · 저 / 녁'처럼 글자 중간이 끊겼다)
+      const times = TIME_ORDER.filter((t) => it.times.includes(t)).map((t) => h("div", { class: "time" }, TIMES[t]));
       const flagged = it.needs_pharmacist_check || !it.item_code;
       const cls = [low ? "lowconf" : (flagged ? "flagged" : ""), onSelect ? "selectable" : ""].join(" ").trim();
       const tr = h("tr", { class: cls || null, tabindex: onSelect ? "0" : null,
@@ -472,7 +473,7 @@
           changedSet.has(idx) ? h("div", {}, h("span", { class: "chip caution" }, "수정 후 다시 검수")) : null,
           ...(it.check_reasons || []).map((r) => h("div", { class: "reason" }, r))),
         h("td", { class: "num" }, it.count_per_dose),
-        h("td", {}, times),
+        h("td", {}, ...(times.length ? times : ["-"])),
         h("td", { class: "num" }, `${it.days}일`),
         h("td", {}, low ? h("span", { class: "chip low" }, "낮음")
           : (confs.length ? h("span", { class: "chip ok" }, "정상")

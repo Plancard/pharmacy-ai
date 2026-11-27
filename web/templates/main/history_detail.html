@@ -58,7 +58,7 @@
               <td>{{ it.name }}{% if it.get('printed_name') %}<div class="muted printed-name">인식한 글자: {{ it.printed_name }}</div>{% endif %}{% for r in it.get('check_reasons') or [] %}<div class="reason">{{ r }}</div>{% endfor %}</td>
               <td class="mono">{{ it.item_code or '-' }}</td>
               <td class="num">{{ it.count_per_dose }}</td>
-              <td>{{ (it.get('times') or []) | map('label', labels.times) | join(' · ') }}</td>
+              <td>{% for t in it.get('times') or [] %}<div class="time">{{ t | label(labels.times) }}</div>{% else %}-{% endfor %}</td>
               <td class="num">{{ it.days }}</td>
             </tr>
           {% else %}
